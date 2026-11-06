@@ -1,0 +1,27 @@
+cabal-version:      2.4
+name:               hutian-shell
+version:            0.1.0.0
+synopsis:           A small interactive shell for the hutian sandbox
+license:            MIT
+build-type:         Simple
+
+executable hutian-shell
+  main-is:          Main.hs
+  hs-source-dirs:   app
+  build-depends:
+      aeson
+    , base >=4.14 && <5
+    , bytestring
+    , containers
+    , directory
+    , exceptions
+    , filepath
+    , haskeline
+    , http-client
+    , http-types
+    , process
+    , text
+    , unix
+    , vector
+  default-language: Haskell2010
+  ghc-options:      -Wall
