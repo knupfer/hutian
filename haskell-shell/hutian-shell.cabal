@@ -1,12 +1,18 @@
 cabal-version:      2.4
 name:               hutian-shell
 version:            0.1.0.0
-synopsis:           A small interactive shell for the hutian sandbox
+synopsis:           Interactive shell for the hutian sandbox
+description:        A small Haskeline-based shell with command completion and
+                    a streaming llama.cpp prompt.
 license:            MIT
 build-type:         Simple
 
 executable hutian-shell
   main-is:          Main.hs
+  other-modules:
+      Hutian.Interrupt
+      Hutian.Llm
+      Hutian.Terminal
   hs-source-dirs:   app
   build-depends:
       aeson
