@@ -48,7 +48,7 @@ tests =
         withTemporaryDirectory "hutian-shell-cd" $ \directory -> do
           original <- getCurrentDirectory
           changed <-
-            (changeDirectory [directory] >> getCurrentDirectory)
+            (changeDirectory (Just directory) >> getCurrentDirectory)
               `finally` setCurrentDirectory original
           changed @?= directory
     , testCase "changeDirectory with no arguments uses HOME" $ do
@@ -57,7 +57,7 @@ tests =
         changed <-
           ( do
               setEnv "HOME" originalDirectory
-              changeDirectory []
+              changeDirectory Nothing
               getCurrentDirectory
           )
             `finally` do
@@ -65,10 +65,10 @@ tests =
               setCurrentDirectory originalDirectory
         changed @?= originalDirectory
     , testCase "resolveDirectoryTarget expands home and defaults to it" $ do
-        resolveDirectoryTarget "/home/user" [] @?= "/home/user"
-        resolveDirectoryTarget "/home/user" ["~/project"] @?= "/home/user/project"
-        resolveDirectoryTarget "/home/user" ["/tmp"] @?= "/tmp"
-        resolveDirectoryTarget "/home/user" ["a", "b"] @?= "a b"
+        resolveDirectoryTarget "/home/user" Nothing @?= "/home/user"
+        resolveDirectoryTarget "/home/user" (Just "~/project") @?= "/home/user/project"
+        resolveDirectoryTarget "/home/user" (Just "/tmp") @?= "/tmp"
+        resolveDirectoryTarget "/home/user" (Just "a b") @?= "a b"
     , testCase "withBuiltins removes duplicates and keeps builtins" $
         withBuiltins ["pwd", "ls", "ls"]
           @?= ["cd", "exit", "help", "llm", "pwd", "quit", "ls"]

@@ -38,6 +38,7 @@ hasTrailingSlash value =
     _ -> False
 
 -- | Add a trailing slash to completed directory entries.
+{-@ formatCompletion :: candidate:FilePath -> Bool -> {v:FilePath | len v >= len candidate} @-}
 formatCompletion :: FilePath -> Bool -> FilePath
 formatCompletion candidate isDirectory =
   if isDirectory then candidate ++ "/" else candidate

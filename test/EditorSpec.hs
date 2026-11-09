@@ -101,15 +101,24 @@ unitTests =
                 (storePrompt TermMode termDraft (storePrompt LlmMode llmDraft initialPromptBuffers))
         promptText (activePrompt LlmMode buffers) @?= "llm draft\n"
         promptText (activePrompt TermMode buffers) @?= "\n"
-    , testCase "submitIntent follows the mode-specific keys" $ do
-        let quoted = runText "echo 'open"
-            continued = runText "echo \\"
-        submitIntent LlmMode KeySubmit initialPrompt @?= SubmitNow
-        submitIntent TermMode KeySubmit initialPrompt @?= NotSubmit
-        submitIntent LlmMode KeyEnter initialPrompt @?= NotSubmit
-        submitIntent TermMode KeyEnter initialPrompt @?= SubmitNow
-        submitIntent TermMode KeyEnter quoted @?= ContinueLine
-        submitIntent TermMode KeyEnter continued @?= ContinueLine
+    , testCase "promptAction routes editing, history, mode, and completion keys" $ do
+        let lower = run (text "a" ++ [KeyEnter] ++ text "b")
+            upper = run (text "a" ++ [KeyEnter] ++ text "b" ++ [KeyUp])
+        promptAction LlmMode initialPrompt KeySubmit @?= PromptSubmit
+        promptAction TermMode initialPrompt KeySubmit @?= PromptEdit KeySubmit
+        promptAction LlmMode initialPrompt KeyEnter @?= PromptEdit KeyEnter
+        promptAction TermMode initialPrompt KeyEnter @?= PromptSubmit
+        promptAction TermMode (runText "echo 'open") KeyEnter @?= PromptContinue
+        promptAction TermMode (runText "echo \\") KeyEnter @?= PromptContinue
+        promptAction LlmMode initialPrompt KeyCancel @?= PromptClear
+        promptAction LlmMode upper KeyUp @?= PromptHistoryUp
+        promptAction LlmMode lower KeyUp @?= PromptEdit KeyUp
+        promptAction LlmMode upper KeyDown @?= PromptEdit KeyDown
+        promptAction LlmMode lower KeyDown @?= PromptHistoryDown
+        promptAction LlmMode initialPrompt KeyToggleMode @?= PromptSwitchMode
+        promptAction TermMode initialPrompt KeyComplete @?= PromptComplete
+        promptAction LlmMode initialPrompt KeyComplete @?= PromptEdit KeyComplete
+        promptAction LlmMode initialPrompt (KeyChar 'x') @?= PromptEdit (KeyChar 'x')
     , testCase "prompt text contains all lines" $ do
         let prompt = run (text "a" ++ [KeyEnter] ++ text "b")
         promptText prompt @?= "a\nb\n"
@@ -200,11 +209,6 @@ unitTests =
         commandCompletionTarget (runText "ec") @?= Just (0, "ec")
         commandCompletionTarget (runText "echo fi") @?= Nothing
         commandCompletionTarget (runText "") @?= Just (0, "")
-    , testCase "longestCommonPrefix handles empty and shared prefixes" $ do
-        longestCommonPrefix [] @?= ""
-        longestCommonPrefix ["alpha"] @?= "alpha"
-        longestCommonPrefix ["alpha", "alpine"] @?= "alp"
-        longestCommonPrefix ["alpha", "beta"] @?= ""
     , testCase "atMay is total for negative and out-of-range indices" $ do
         atMay [1, 2, 3 :: Int] (-1) @?= Nothing
         atMay [1, 2, 3 :: Int] 0 @?= Just 1

@@ -62,6 +62,7 @@ unitTests =
         inputDestination TermMode "" @?= DiscardInput
         inputDestination TermMode "   " @?= DiscardInput
         inputDestination TermMode "ls" @?= TermHistoryEntry
+        inputDestination LlmMode "" @?= DiscardInput
         inputDestination LlmMode "hello" @?= LlmHistoryEntry
     , testCase "history encoding round-trips entries" $ do
         encodeHistory [] @?= ""

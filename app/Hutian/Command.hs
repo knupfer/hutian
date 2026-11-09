@@ -13,8 +13,8 @@ data Command
   | CommandExit
   | CommandHelp
   | CommandPrintDirectory
-  | CommandChangeDirectory [String]
-  | CommandLlm [String]
+  | CommandChangeDirectory (Maybe String)
+  | CommandLlm (Maybe String)
   | CommandShell String
   deriving stock (Eq, Show)
 
@@ -26,9 +26,13 @@ parseCommandLine line =
     "quit" : _ -> CommandExit
     "help" : _ -> CommandHelp
     "pwd" : _ -> CommandPrintDirectory
-    "cd" : args -> CommandChangeDirectory args
-    "llm" : args -> CommandLlm args
+    "cd" : args -> CommandChangeDirectory (joinedArgs args)
+    "llm" : args -> CommandLlm (joinedArgs args)
     _ -> CommandShell line
+
+joinedArgs :: [String] -> Maybe String
+joinedArgs [] = Nothing
+joinedArgs args = Just (unwords args)
 
 -- | The shape of submitted term-mode text.
 data TerminalInput

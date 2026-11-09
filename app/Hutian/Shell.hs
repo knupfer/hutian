@@ -41,16 +41,16 @@ runShellCommand interruptFlag line =
     )
       `catch` \(err :: IOException) -> hPutStrLn stderr ("sh: " ++ show err)
 
-changeDirectory :: [String] -> IO ()
-changeDirectory args = do
+changeDirectory :: Maybe String -> IO ()
+changeDirectory target = do
   home <- fromMaybe "/" <$> lookupEnv "HOME"
-  setCurrentDirectory (resolveDirectoryTarget home args)
+  setCurrentDirectory (resolveDirectoryTarget home target)
     `catch` \(err :: IOException) -> hPutStrLn stderr ("cd: " ++ show err)
 
--- | Resolve a @cd@ argument list against the home directory.
-resolveDirectoryTarget :: FilePath -> [String] -> FilePath
-resolveDirectoryTarget home args =
-  expandHome home (if null args then home else unwords args)
+-- | Resolve an optional @cd@ target against the home directory.
+resolveDirectoryTarget :: FilePath -> Maybe String -> FilePath
+resolveDirectoryTarget home Nothing = home
+resolveDirectoryTarget home (Just target) = expandHome home target
 
 executableCommands :: IO [String]
 executableCommands = do

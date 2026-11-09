@@ -19,8 +19,8 @@ module Hutian.Editor
   , storePrompt
   , clearPrompt
   , Key (..)
-  , SubmitIntent (..)
-  , submitIntent
+  , PromptAction (..)
+  , promptAction
   , applyKey
   , toggleMode
   , currentLine
@@ -36,7 +36,6 @@ module Hutian.Editor
   , applyCompletion
   , applyCompletionChoice
   , completeCommand
-  , longestCommonPrefix
   , setSuggestions
   , clearSuggestions
   , setPromptText
@@ -51,7 +50,7 @@ import Data.List (intercalate, isPrefixOf)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, listToMaybe)
-import Hutian.Completion (Completion (..), chooseCompletion, longestCommonPrefix)
+import Hutian.Completion (Completion (..), chooseCompletion)
 
 {-@ type Pos = {v:Int | v > 0} @-}
 
@@ -133,18 +132,37 @@ data Key
   | KeyIgnore
   deriving stock (Eq, Show)
 
-data SubmitIntent
-  = SubmitNow
-  | ContinueLine
-  | NotSubmit
+-- | What the terminal loop should do in response to a key press.
+data PromptAction
+  = PromptSubmit
+  | PromptContinue
+  | PromptClear
+  | PromptEdit Key
+  | PromptHistoryUp
+  | PromptHistoryDown
+  | PromptSwitchMode
+  | PromptComplete
   deriving stock (Eq, Show)
 
-submitIntent :: PromptMode -> Key -> Prompt -> SubmitIntent
-submitIntent LlmMode KeySubmit _ = SubmitNow
-submitIntent TermMode KeyEnter prompt
-  | needsContinuation prompt = ContinueLine
-  | otherwise = SubmitNow
-submitIntent _ _ _ = NotSubmit
+promptAction :: PromptMode -> Prompt -> Key -> PromptAction
+promptAction LlmMode _ KeySubmit = PromptSubmit
+promptAction TermMode prompt KeyEnter
+  | needsContinuation prompt = PromptContinue
+  | otherwise = PromptSubmit
+promptAction mode prompt key =
+  case key of
+    KeyCancel -> PromptClear
+    KeyUp
+      | mode == LlmMode && unRow (promptRow prompt) > 0 -> PromptEdit KeyUp
+      | otherwise -> PromptHistoryUp
+    KeyDown
+      | mode == LlmMode && unRow (promptRow prompt) < length (promptLines prompt) - 1 ->
+          PromptEdit KeyDown
+      | otherwise -> PromptHistoryDown
+    KeyToggleMode -> PromptSwitchMode
+    KeyComplete
+      | mode == TermMode -> PromptComplete
+    _ -> PromptEdit key
 
 applyKey :: Key -> Prompt -> Prompt
 applyKey key prompt =

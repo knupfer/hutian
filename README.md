@@ -226,7 +226,8 @@ The code keeps pure logic separate from IO:
 
 - `Hutian.Command` parses term-mode input into a typed `Command` and classifies
   single-line versus multi-line input.
-- `Hutian.Editor` owns prompt state, key semantics, and layout.
+- `Hutian.Editor` owns prompt state, key semantics, layout, and the pure
+  `PromptAction` routing used by the terminal loop.
 - `Hutian.Completion` selects command and path completions.
 - `Hutian.Render` turns a prompt into ANSI output and cursor movement.
 - `Hutian.History`, `Hutian.Conversation`, and `Hutian.Paths` are pure models;

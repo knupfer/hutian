@@ -16,9 +16,8 @@ import Hutian.Editor
   ( Key (..)
   , Prompt
   , PromptBuffers
+  , PromptAction (..)
   , PromptMode (..)
-  , Row (unRow)
-  , SubmitIntent (..)
   , activePrompt
   , applyCompletionChoice
   , applyKey
@@ -33,12 +32,11 @@ import Hutian.Editor
   , cursorPosition
   , cursorToEnd
   , initialPromptBuffers
+  , promptAction
   , promptLines
-  , promptRow
   , promptSuggestions
   , promptText
   , storePrompt
-  , submitIntent
   , toggleMode
   )
 import Hutian.Completion (chooseCompletion)
@@ -160,37 +158,28 @@ readPrompt context state = do
     loop position currentState = do
       let current = activePrompt mode (readBuffers currentState)
       key <- readKey
-      case submitIntent mode key current of
-        SubmitNow -> submit position currentState
-        ContinueLine ->
+      case promptAction mode current key of
+        PromptSubmit -> submit position currentState
+        PromptContinue ->
           redraw
             position
             (nextState initialHistoryState (storePrompt mode (applyKey KeyEnter (cursorToEnd current)) (readBuffers currentState)) currentState)
-        NotSubmit -> case key of
-          KeyCancel ->
-            redraw
-              position
-              (nextState initialHistoryState (clearPrompt mode (readBuffers currentState)) currentState)
-          KeyUp
-            | mode == LlmMode && unRow (promptRow current) > 0 ->
-                editKey position currentState KeyUp
-            | otherwise -> navigate historyUp position currentState
-          KeyDown
-            | mode == LlmMode && unRow (promptRow current) < length (promptLines current) - 1 ->
-                editKey position currentState KeyDown
-            | otherwise -> navigate historyDown position currentState
-          KeyToggleMode ->
-            readPrompt
-              context { contextMode = toggleMode mode }
-              (ReadState initialHistoryState (fst position) (storePrompt mode (clearSuggestions current) (readBuffers currentState)))
-          KeyComplete
-            | mode == TermMode -> do
-                completed <- completeInput commands current
-                redraw
-                  position
-                  (nextState initialHistoryState (storePrompt mode completed (readBuffers currentState)) currentState)
-            | otherwise -> loop position currentState
-          _ -> editKey position currentState key
+        PromptClear ->
+          redraw
+            position
+            (nextState initialHistoryState (clearPrompt mode (readBuffers currentState)) currentState)
+        PromptEdit key' -> editKey position currentState key'
+        PromptHistoryUp -> navigate historyUp position currentState
+        PromptHistoryDown -> navigate historyDown position currentState
+        PromptSwitchMode ->
+          readPrompt
+            context { contextMode = toggleMode mode }
+            (ReadState initialHistoryState (fst position) (storePrompt mode (clearSuggestions current) (readBuffers currentState)))
+        PromptComplete -> do
+          completed <- completeInput commands current
+          redraw
+            position
+            (nextState initialHistoryState (storePrompt mode completed (readBuffers currentState)) currentState)
 
     nextState historyState buffers currentState =
       ReadState historyState (readPreviousRow currentState) buffers

@@ -20,13 +20,13 @@ tests =
         parseCommandLine "help me" @?= CommandHelp
         parseCommandLine "pwd" @?= CommandPrintDirectory
         parseCommandLine "pwd extra" @?= CommandPrintDirectory
-    , testCase "cd keeps its arguments" $ do
-        parseCommandLine "cd" @?= CommandChangeDirectory []
-        parseCommandLine "cd /tmp" @?= CommandChangeDirectory ["/tmp"]
-        parseCommandLine "cd a b" @?= CommandChangeDirectory ["a", "b"]
-    , testCase "llm keeps its prompt words" $ do
-        parseCommandLine "llm" @?= CommandLlm []
-        parseCommandLine "llm explain this" @?= CommandLlm ["explain", "this"]
+    , testCase "cd keeps its optional target" $ do
+        parseCommandLine "cd" @?= CommandChangeDirectory Nothing
+        parseCommandLine "cd /tmp" @?= CommandChangeDirectory (Just "/tmp")
+        parseCommandLine "cd a b" @?= CommandChangeDirectory (Just "a b")
+    , testCase "llm keeps its optional prompt" $ do
+        parseCommandLine "llm" @?= CommandLlm Nothing
+        parseCommandLine "llm explain this" @?= CommandLlm (Just "explain this")
     , testCase "unknown lines are passed to the shell unchanged" $ do
         parseCommandLine "ls -la" @?= CommandShell "ls -la"
         parseCommandLine "  printf 'hi'\t" @?= CommandShell "  printf 'hi'\t"

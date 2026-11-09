@@ -1,8 +1,10 @@
 module PathsSpec (tests) where
 
 import Hutian.Paths
+import Test.QuickCheck (Property, counterexample, property)
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests =
@@ -34,4 +36,10 @@ tests =
     , testCase "formatCompletion marks directories with a slash" $ do
         formatCompletion "dir" True @?= "dir/"
         formatCompletion "file" False @?= "file"
+    , testProperty "formatCompletion never shortens a path" prop_formatCompletionLength
     ]
+
+prop_formatCompletionLength :: FilePath -> Bool -> Property
+prop_formatCompletionLength candidate isDirectory =
+  counterexample (show (candidate, isDirectory)) $
+    property (length (formatCompletion candidate isDirectory) >= length candidate)

@@ -47,10 +47,10 @@ data InputDestination
   deriving stock (Eq, Show)
 
 inputDestination :: PromptMode -> String -> InputDestination
-inputDestination mode text
+inputDestination _ text
   | all isSpace text = DiscardInput
-  | mode == TermMode = TermHistoryEntry
-  | otherwise = LlmHistoryEntry
+inputDestination TermMode _ = TermHistoryEntry
+inputDestination LlmMode _ = LlmHistoryEntry
 
 -- | Encode history entries into the on-disk line format.
 encodeHistory :: [String] -> String

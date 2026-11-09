@@ -14,7 +14,8 @@ All notable changes to Hutian are documented here. The format follows
 - Pure history encoding/decoding and input routing.
 - Pure terminal-input classification, shell directory resolution, and SSE
   stream parsing.
-- LiquidHaskell invariants for completion selection and common-prefix bounds.
+- LiquidHaskell invariants for completion selection, common-prefix bounds, and
+  completion path lengths.
 - Shared `TestSupport` helpers and additional unit and property tests for
   command parsing, path completion, prompt layout, and completion targets.
 - MIT `LICENSE` and package metadata for the changelog and README.
@@ -36,6 +37,9 @@ All notable changes to Hutian are documented here. The format follows
   `Column`, and `GoalColumn` constructors.
 - Reduced the IO surface by moving history codecs, completion selection,
   prompt rendering, shell resolution, and SSE parsing into pure modules.
+- Added pure `PromptAction` key routing so the terminal loop only performs IO.
+- Made `cd` and `llm` command payloads optional strings, removing empty-list
+  handling from the interpreter.
 - Read and wrote history files strictly to avoid lazy IO errors.
 - Simplified LLM choice/delta traversal and Markdown chunk accumulation.
 - Switched the default language to `GHC2021`.

@@ -149,14 +149,13 @@ runTerminalLine interruptFlag conversation line =
     CommandPrintDirectory -> do
       putStrLn =<< getCurrentDirectory
       pure (True, appendTerminal line conversation)
-    CommandChangeDirectory args -> do
-      changeDirectory args
+    CommandChangeDirectory target -> do
+      changeDirectory target
       pure (True, appendTerminal line conversation)
-    CommandLlm [] -> do
+    CommandLlm Nothing -> do
       putStrLn "Press Ctrl+X to switch to llm mode."
       pure (True, appendTerminal line conversation)
-    CommandLlm args -> do
-      let prompt = unwords args
+    CommandLlm (Just prompt) -> do
       reply <- runLlm interruptFlag conversation prompt
       pure (True, appendExchange prompt reply conversation)
     CommandShell commandLine -> do
