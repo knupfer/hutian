@@ -224,13 +224,20 @@ configured package closures.
 
 The code keeps pure logic separate from IO:
 
-- `Hutian.Command` parses term-mode input into a typed `Command`.
-- `Hutian.Editor` owns prompt state, key semantics, completion, and layout.
-- `Hutian.History`, `Hutian.Conversation`, and `Hutian.Paths` are pure models.
+- `Hutian.Command` parses term-mode input into a typed `Command` and classifies
+  single-line versus multi-line input.
+- `Hutian.Editor` owns prompt state, key semantics, and layout.
+- `Hutian.Completion` selects command and path completions.
+- `Hutian.Render` turns a prompt into ANSI output and cursor movement.
+- `Hutian.History`, `Hutian.Conversation`, and `Hutian.Paths` are pure models;
+  `Hutian.History` also owns the pure on-disk history codec.
 - `Hutian.Markdown` is a pure streaming renderer for Markdown and ANSI styles.
-- `Hutian.Terminal`, `Hutian.Shell`, `Hutian.Llm`, and `Hutian.Interrupt`
-  adapt those models to the terminal, processes, HTTP, and signals.
-- `Main` is a small interpreter over `Command` and `ShellState`.
+- `Hutian.Llm` keeps SSE parsing and request building pure, with IO limited to
+  HTTP and terminal output.
+- `Hutian.Terminal`, `Hutian.Shell`, and `Hutian.Interrupt` are thin IO adapters
+  over those pure cores.
+- `Main` is a small interpreter over `Command`, `TerminalInput`, and
+  `ShellState`.
 
 The package uses `GHC2021` and compiles with strict warnings and `-Werror`.
 
@@ -243,6 +250,8 @@ nix/hutian-shell.nix      Haskell package definition
 nix/lint.nix              Shared lint and LiquidHaskell checks
 app/                      Haskell shell source
 app/Hutian/Command.hs     Typed term-mode command parsing
+app/Hutian/Completion.hs  Pure completion selection
+app/Hutian/Render.hs      Pure ANSI prompt rendering
 test/                     Unit and property tests
 test/TestSupport.hs       Shared test helpers
 hutian-shell.cabal        Haskell package manifest
@@ -254,9 +263,10 @@ CHANGELOG.md              Release notes
 ## Testing
 
 The test suite combines HUnit tests with QuickCheck properties for the editor
-state machine, prompt layout, command parsing, conversation history, LLM
-requests, Markdown rendering, code highlighting, path and shell helpers, and
-interrupt handling. It also includes integration tests for:
+state machine, prompt layout and rendering, command parsing, completion
+selection, history codecs, conversation history, LLM requests and SSE parsing,
+Markdown rendering, code highlighting, path and shell helpers, and interrupt
+handling. It also includes integration tests for:
 
 - streaming LLM responses through a local HTTP server
 - history file persistence
@@ -292,8 +302,8 @@ DeadNix over the flake and Nix files. These linters also run automatically in
 the package check phase, so a normal `nix build` fails on lint errors.
 `nix flake check` runs the explicit checks along with the package build.
 
-LiquidHaskell verifies the pure `Hutian.Paths`, `Hutian.Conversation`,
-`Hutian.Editor`, and `Hutian.History` modules:
+LiquidHaskell verifies the pure `Hutian.Completion`, `Hutian.Paths`,
+`Hutian.Conversation`, `Hutian.Editor`, and `Hutian.History` modules:
 
 ```console
 $ nix build .#checks.x86_64-linux.liquid

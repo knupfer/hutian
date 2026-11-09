@@ -7,6 +7,8 @@ module Hutian.Llm
   , Api (..)
   , apiFor
   , requestBodyFor
+  , StreamEvent (..)
+  , parseStreamLine
   , splitLines
   , extractContent
   , extractReasoning
@@ -225,36 +227,57 @@ processLines (line : lines') state
       state' <- processLine line state
       processLines lines' state'
 
+-- | A parsed server-sent event from a streaming response.
+data StreamEvent = StreamEvent
+  { eventReasoning :: Maybe Text.Text
+  , eventContent :: Maybe Text.Text
+  , eventError :: Maybe Text.Text
+  , eventStop :: Bool
+  }
+  deriving stock (Eq, Show)
+
 processLine :: BS.ByteString -> StreamState -> IO StreamState
-processLine rawLine state
-  | BS.null line = pure state
-  | "data:" `BS.isPrefixOf` line = do
-      let payload = Text.strip (decode (BS.drop 5 line))
-      if payload == "[DONE]"
-        then pure state { streamSawData = True, streamDone = True }
-        else processJson payload state { streamSawData = True }
-  | otherwise = processJson (Text.strip (decode line)) state
-  where
-    line = BS.dropWhileEnd isCarriageReturn rawLine
-
-isCarriageReturn :: Word8 -> Bool
-isCarriageReturn = (== 13)
-
-processJson :: Text.Text -> StreamState -> IO StreamState
-processJson payload state =
-  case Aeson.decodeStrict' (TextEncoding.encodeUtf8 payload) of
-    Just (Object value) -> do
-      reasoningState <- renderReasoning (extractReasoning value) state
-      contentState <- renderContent (extractContent value) reasoningState
-      case extractError value of
+processLine rawLine state =
+  case parseStreamLine rawLine of
+    Nothing -> pure state
+    Just event -> do
+      reasoningState <- renderReasoning (eventReasoning event) state
+      contentState <- renderContent (eventContent event) reasoningState
+      case eventError event of
         Just message -> hPutStrLn stderr ("llm: " ++ Text.unpack message)
         Nothing -> pure ()
       pure
         contentState
           { streamSawData = True
-          , streamDone = streamDone contentState || isStop value
+          , streamDone = streamDone contentState || eventStop event
           }
-    _ -> pure state
+
+-- | Parse one SSE line, or a bare JSON line, into a stream event.
+parseStreamLine :: BS.ByteString -> Maybe StreamEvent
+parseStreamLine rawLine
+  | BS.null line = Nothing
+  | "data:" `BS.isPrefixOf` line = parsePayload (Text.strip (decode (BS.drop 5 line)))
+  | otherwise = parsePayload (Text.strip (decode line))
+  where
+    line = BS.dropWhileEnd isCarriageReturn rawLine
+
+parsePayload :: Text.Text -> Maybe StreamEvent
+parsePayload payload
+  | payload == "[DONE]" = Just (StreamEvent Nothing Nothing Nothing True)
+  | otherwise =
+      case Aeson.decodeStrict' (TextEncoding.encodeUtf8 payload) of
+        Just (Object value) ->
+          Just
+            StreamEvent
+              { eventReasoning = extractReasoning value
+              , eventContent = extractContent value
+              , eventError = extractError value
+              , eventStop = isStop value
+              }
+        _ -> Nothing
+
+isCarriageReturn :: Word8 -> Bool
+isCarriageReturn = (== 13)
 
 renderReasoning :: Maybe Text.Text -> StreamState -> IO StreamState
 renderReasoning Nothing state = pure state

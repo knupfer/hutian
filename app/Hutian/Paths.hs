@@ -4,6 +4,7 @@ module Hutian.Paths
   , expandHome
   , splitPathWord
   , hasTrailingSlash
+  , formatCompletion
   ) where
 
 import Data.List (stripPrefix)
@@ -35,3 +36,8 @@ hasTrailingSlash value =
   case reverse value of
     '/' : _ -> True
     _ -> False
+
+-- | Add a trailing slash to completed directory entries.
+formatCompletion :: FilePath -> Bool -> FilePath
+formatCompletion candidate isDirectory =
+  if isDirectory then candidate ++ "/" else candidate

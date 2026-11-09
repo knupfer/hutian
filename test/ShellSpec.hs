@@ -2,7 +2,13 @@ module ShellSpec (tests) where
 
 import Control.Exception (finally)
 import Hutian.Interrupt (newInterruptFlag)
-import Hutian.Shell (changeDirectory, executableCommands, runShellCommand)
+import Hutian.Shell
+  ( changeDirectory
+  , executableCommands
+  , resolveDirectoryTarget
+  , runShellCommand
+  , withBuiltins
+  )
 import System.Directory
   ( Permissions (..)
   , getCurrentDirectory
@@ -58,6 +64,14 @@ tests =
               maybe (unsetEnv "HOME") (setEnv "HOME") originalHome
               setCurrentDirectory originalDirectory
         changed @?= originalDirectory
+    , testCase "resolveDirectoryTarget expands home and defaults to it" $ do
+        resolveDirectoryTarget "/home/user" [] @?= "/home/user"
+        resolveDirectoryTarget "/home/user" ["~/project"] @?= "/home/user/project"
+        resolveDirectoryTarget "/home/user" ["/tmp"] @?= "/tmp"
+        resolveDirectoryTarget "/home/user" ["a", "b"] @?= "a b"
+    , testCase "withBuiltins removes duplicates and keeps builtins" $
+        withBuiltins ["pwd", "ls", "ls"]
+          @?= ["cd", "exit", "help", "llm", "pwd", "quit", "ls"]
     ]
 
 shellQuote :: String -> String

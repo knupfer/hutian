@@ -1,12 +1,16 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- | Pure command-history navigation and history-file encoding.
+-- | Pure command-history navigation, input routing, and history-file encoding.
 module Hutian.History
   ( HistoryState
   , initialHistoryState
   , historyUp
   , historyDown
   , historyForMode
+  , InputDestination (..)
+  , inputDestination
+  , encodeHistory
+  , decodeHistory
   , escapeHistory
   , unescapeHistory
   , loadHistoryFile
@@ -14,6 +18,7 @@ module Hutian.History
   ) where
 
 import Control.Exception (IOException, catch)
+import Data.Char (isSpace)
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
@@ -33,6 +38,27 @@ initialHistoryState = HistoryState Nothing ""
 historyForMode :: PromptMode -> [String] -> [String] -> [String]
 historyForMode LlmMode _ llmHistory = llmHistory
 historyForMode TermMode termHistory _ = termHistory
+
+-- | Where submitted input should be remembered. Blank input is not stored.
+data InputDestination
+  = DiscardInput
+  | TermHistoryEntry
+  | LlmHistoryEntry
+  deriving stock (Eq, Show)
+
+inputDestination :: PromptMode -> String -> InputDestination
+inputDestination mode text
+  | all isSpace text = DiscardInput
+  | mode == TermMode = TermHistoryEntry
+  | otherwise = LlmHistoryEntry
+
+-- | Encode history entries into the on-disk line format.
+encodeHistory :: [String] -> String
+encodeHistory = concatMap (\entry -> escapeHistory entry ++ "\n")
+
+-- | Decode the on-disk line format into history entries.
+decodeHistory :: String -> [String]
+decodeHistory = map unescapeHistory . lines
 
 historyUp :: [String] -> HistoryState -> Prompt -> Maybe (HistoryState, Prompt)
 historyUp entries state prompt
@@ -87,9 +113,9 @@ unescapeHistory (char : rest) = char : unescapeHistory rest
 loadHistoryFile :: FilePath -> IO [String]
 loadHistoryFile path = do
   contents <- TextIO.readFile path `catch` \(_ :: IOException) -> pure Text.empty
-  pure (map unescapeHistory (lines (Text.unpack contents)))
+  pure (decodeHistory (Text.unpack contents))
 
 appendHistoryFile :: FilePath -> String -> IO ()
 appendHistoryFile path text =
-  TextIO.appendFile path (Text.pack (escapeHistory text ++ "\n"))
+  TextIO.appendFile path (Text.pack (encodeHistory [text]))
     `catch` \(_ :: IOException) -> pure ()

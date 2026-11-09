@@ -31,4 +31,10 @@ tests =
         parseCommandLine "ls -la" @?= CommandShell "ls -la"
         parseCommandLine "  printf 'hi'\t" @?= CommandShell "  printf 'hi'\t"
         parseCommandLine "exitcode" @?= CommandShell "exitcode"
+    , testCase "terminal input is classified by line count" $ do
+        classifyTerminalInput "" @?= NoTerminalInput
+        classifyTerminalInput "echo hi" @?= SingleLineInput "echo hi"
+        classifyTerminalInput "echo hi\n" @?= SingleLineInput "echo hi"
+        classifyTerminalInput "echo hi\npwd" @?= MultiLineInput "echo hi\npwd"
+        classifyTerminalInput "\n" @?= SingleLineInput ""
     ]

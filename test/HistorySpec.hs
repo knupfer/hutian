@@ -58,6 +58,15 @@ unitTests =
     , testCase "history selection is mode specific" $ do
         historyForMode LlmMode ["term"] ["llm"] @?= ["llm"]
         historyForMode TermMode ["term"] ["llm"] @?= ["term"]
+    , testCase "input destinations follow mode and blank input" $ do
+        inputDestination TermMode "" @?= DiscardInput
+        inputDestination TermMode "   " @?= DiscardInput
+        inputDestination TermMode "ls" @?= TermHistoryEntry
+        inputDestination LlmMode "hello" @?= LlmHistoryEntry
+    , testCase "history encoding round-trips entries" $ do
+        encodeHistory [] @?= ""
+        encodeHistory ["a"] @?= "a\n"
+        decodeHistory (encodeHistory ["a\nb", "c\\d"]) @?= ["a\nb", "c\\d"]
     , testCase "multiline history entries are restored" $ do
         let start = initialPrompt
             (_, prompt) = recallUp ["line one\nline two"] initialHistoryState start
@@ -83,6 +92,7 @@ propertyTests =
   testGroup
     "properties"
     [ testProperty "history encoding round-trips" prop_escapeRoundTrip
+    , testProperty "history codec round-trips lists" prop_historyCodec
     , testProperty "encoded history has no newlines" prop_escapeNoNewlines
     , testProperty "recalling every entry and returning restores the draft" prop_historyRoundTrip
     ]
@@ -98,6 +108,10 @@ recallDown history state prompt =
 prop_escapeRoundTrip :: String -> Property
 prop_escapeRoundTrip text =
   unescapeHistory (escapeHistory text) === text
+
+prop_historyCodec :: [String] -> Property
+prop_historyCodec entries =
+  decodeHistory (encodeHistory entries) === entries
 
 prop_escapeNoNewlines :: String -> Property
 prop_escapeNoNewlines text =

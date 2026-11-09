@@ -10,7 +10,7 @@ module Hutian.Terminal
   ) where
 
 import Control.Exception (IOException, catch, finally, try)
-import Control.Monad (forM_, unless, when)
+import Control.Monad (unless, when)
 import Data.List (isPrefixOf)
 import Hutian.Editor
   ( Key (..)
@@ -20,7 +20,7 @@ import Hutian.Editor
   , Row (unRow)
   , SubmitIntent (..)
   , activePrompt
-  , applyCompletion
+  , applyCompletionChoice
   , applyKey
   , classifyChar
   , clearPrompt
@@ -33,19 +33,15 @@ import Hutian.Editor
   , cursorPosition
   , cursorToEnd
   , initialPromptBuffers
-  , longestCommonPrefix
-  , physicalRows
-  , prefixCharacterCounts
   , promptLines
   , promptRow
   , promptSuggestions
   , promptText
-  , setSuggestions
   , storePrompt
   , submitIntent
-  , suggestionRowCount
   , toggleMode
   )
+import Hutian.Completion (chooseCompletion)
 import Hutian.History
   ( HistoryState
   , historyDown
@@ -53,7 +49,8 @@ import Hutian.History
   , historyUp
   , initialHistoryState
   )
-import Hutian.Paths (hasTrailingSlash, splitPathWord)
+import Hutian.Paths (formatCompletion, hasTrailingSlash, splitPathWord)
+import Hutian.Render (moveCursorText, prefixFor, promptRenderText, startPromptText)
 import System.Console.Terminal.Size (Window (Window), size)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.IO
@@ -250,14 +247,8 @@ promptPosition termPrompt mode prompt = do
   pure (cursorPosition width prefix prompt)
 
 moveCursor :: (Int, Int) -> (Int, Int) -> IO ()
-moveCursor (oldRow, _) (newRow, newColumn) = do
-  when (newRow < oldRow) $
-    putStr ("\ESC[" ++ show (oldRow - newRow) ++ "A")
-  when (newRow > oldRow) $
-    putStr ("\ESC[" ++ show (newRow - oldRow) ++ "B")
-  putStr "\r"
-  when (newColumn > 0) $
-    putStr ("\ESC[" ++ show newColumn ++ "C")
+moveCursor oldPosition newPosition = do
+  putStr (moveCursorText oldPosition newPosition)
   hFlush stdout
 
 completeInput :: [String] -> Prompt -> IO Prompt
@@ -274,26 +265,15 @@ completePath prompt = do
       directory = if null directoryPart then "." else directoryPart
   entries <- listDirectory directory `catch` \(_ :: IOException) -> pure []
   completions <- mapM (completeEntry directoryPart) (filter (base `isPrefixOf`) entries)
-  pure $
-    case completions of
-      [] -> clearSuggestions prompt
-      _ ->
-        let common = longestCommonPrefix completions
-            afterCursor = drop (start + length word) (currentLine prompt)
-            replacement
-              | [only] <- completions =
-                  only ++ if null afterCursor && not (hasTrailingSlash only) then " " else ""
-              | length common > length word = common
-              | otherwise = word
-         in if replacement == word
-              then setSuggestions completions prompt
-              else clearSuggestions (applyCompletion start replacement prompt)
+  let afterCursor = drop (start + length word) (currentLine prompt)
+      completion = chooseCompletion (not . hasTrailingSlash) word afterCursor completions
+  pure (applyCompletionChoice start word completion prompt)
 
 completeEntry :: FilePath -> FilePath -> IO FilePath
 completeEntry directoryPart entry = do
   let candidate = directoryPart ++ entry
   isDirectory <- doesDirectoryExist candidate
-  pure (if isDirectory then candidate ++ "/" else candidate)
+  pure (formatCompletion candidate isDirectory)
 
 readKey :: IO Key
 readKey = do
@@ -335,41 +315,10 @@ renderPrompt interactive termPrompt mode previousRow prompt
   | not interactive = pure (0, 0)
   | otherwise = do
       width <- terminalWidth
-      let prefix = prefixFor termPrompt mode
-          rows = physicalRows width prefix prompt
-          (cursorRow, cursorColumn) = cursorPosition width prefix prompt
-          total = length rows
-          suggestionCount = suggestionRowCount width prompt
-          inputRowCount = total - suggestionCount
-          prefixCounts = prefixCharacterCounts (length prefix) rows
-      -- Move relative to the cursor rather than relying on a saved absolute
-      -- position. Relative rows stay correct even when the terminal scrolls.
-      when (previousRow > 0) $
-        putStr ("\ESC[" ++ show previousRow ++ "A")
-      putStr "\r"
-      putStr "\ESC[0m"
-      putStr clearToEnd
-      putStr (backgroundFor mode)
-      forM_ (zip3 [0 :: Int ..] rows prefixCounts) $ \(index, row, prefixCount) -> do
-        when (suggestionCount > 0 && index == inputRowCount) $
-          putStr "\ESC[0m"
-        let (prefixPart, rest) = splitAt prefixCount row
-        when (prefixCount > 0) $ do
-          putStr tealForeground
-          putStr prefixPart
-          putStr defaultForeground
-        putStr rest
-        -- Paint the rest of the row explicitly. Relying on ESC[K to fill
-        -- with the current background is not portable across terminals.
-        putStr (replicate (width - length row) ' ')
-        when (index < total - 1) (putStr "\n")
-      when (cursorRow < total - 1) $
-        putStr ("\ESC[" ++ show (total - 1 - cursorRow) ++ "A")
-      putStr "\r"
-      when (cursorColumn > 0) $
-        putStr ("\ESC[" ++ show cursorColumn ++ "C")
+      let (output, position) = promptRenderText termPrompt mode previousRow width prompt
+      putStr output
       hFlush stdout
-      pure (cursorRow, cursorColumn)
+      pure position
 
 finishPrompt :: Bool -> String -> PromptMode -> Int -> Prompt -> IO ()
 finishPrompt interactive termPrompt mode previousRow prompt
@@ -391,31 +340,8 @@ terminalWidth = do
 
 startPromptLine :: PromptMode -> IO ()
 startPromptLine mode = do
-  putStr (backgroundFor mode)
-  putStr clearLine
+  putStr (startPromptText mode)
   hFlush stdout
-
-clearToEnd :: String
-clearToEnd = "\ESC[0J"
-
-clearLine :: String
-clearLine = "\ESC[K"
-
-prefixFor :: String -> PromptMode -> String
-prefixFor termPrompt TermMode = termPrompt
-prefixFor _ LlmMode = ""
-
-backgroundFor :: PromptMode -> String
-backgroundFor mode =
-  case mode of
-    LlmMode -> "\ESC[48;2;24;0;24m"
-    TermMode -> "\ESC[48;2;0;0;40m"
-
-tealForeground :: String
-tealForeground = "\ESC[38;2;0;255;200m"
-
-defaultForeground :: String
-defaultForeground = "\ESC[39m"
 
 escape :: Char
 escape = '\ESC'

@@ -5,17 +5,26 @@ module Main (main) where
 
 import Control.Exception (IOException, catch, finally)
 import Control.Monad (when)
-import Data.Char (isSpace)
 import Data.Maybe (fromMaybe)
 import GHC.IO.Encoding (setLocaleEncoding)
-import Hutian.Command (Command (..), parseCommandLine)
+import Hutian.Command
+  ( Command (..)
+  , TerminalInput (..)
+  , classifyTerminalInput
+  , parseCommandLine
+  )
 import Hutian.Conversation
   ( Conversation
   , appendExchange
   , appendTerminal
   , emptyConversation
   )
-import Hutian.History (appendHistoryFile, loadHistoryFile)
+import Hutian.History
+  ( InputDestination (..)
+  , appendHistoryFile
+  , inputDestination
+  , loadHistoryFile
+  )
 import Hutian.Interrupt (InterruptFlag, clearInterrupt, newInterruptFlag)
 import Hutian.Llm (runLlm)
 import Hutian.Paths (displayPath)
@@ -105,12 +114,13 @@ shellLoop state = do
             }
 
 rememberInput :: PromptMode -> String -> [String] -> [String] -> IO ([String], [String])
-rememberInput mode text termHistory llmHistory
-  | all isSpace text = pure (termHistory, llmHistory)
-  | mode == TermMode = do
+rememberInput mode text termHistory llmHistory =
+  case inputDestination mode text of
+    DiscardInput -> pure (termHistory, llmHistory)
+    TermHistoryEntry -> do
       appendHistoryFile termHistoryFile text
       pure (termHistory ++ [text], llmHistory)
-  | otherwise = do
+    LlmHistoryEntry -> do
       appendHistoryFile llmHistoryFile text
       pure (termHistory, llmHistory ++ [text])
 
@@ -123,12 +133,12 @@ runInput interruptFlag TermMode text conversation =
 
 runTerminalInput :: InterruptFlag -> Conversation -> String -> IO (Bool, Conversation)
 runTerminalInput interruptFlag conversation text =
-  case lines text of
-    [] -> pure (True, conversation)
-    [line] -> runTerminalLine interruptFlag conversation line
-    _ -> do
-      runShellCommand interruptFlag text
-      pure (True, appendTerminal text conversation)
+  case classifyTerminalInput text of
+    NoTerminalInput -> pure (True, conversation)
+    SingleLineInput line -> runTerminalLine interruptFlag conversation line
+    MultiLineInput script -> do
+      runShellCommand interruptFlag script
+      pure (True, appendTerminal script conversation)
 
 runTerminalLine :: InterruptFlag -> Conversation -> String -> IO (Bool, Conversation)
 runTerminalLine interruptFlag conversation line =

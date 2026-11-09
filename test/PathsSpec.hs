@@ -31,4 +31,7 @@ tests =
         hasTrailingSlash "/" @?= True
         hasTrailingSlash "dir" @?= False
         hasTrailingSlash "" @?= False
+    , testCase "formatCompletion marks directories with a slash" $ do
+        formatCompletion "dir" True @?= "dir/"
+        formatCompletion "file" False @?= "file"
     ]

@@ -1,7 +1,9 @@
--- | Pure parsing of term-mode builtin commands.
+-- | Pure parsing of term-mode input.
 module Hutian.Command
   ( Command (..)
   , parseCommandLine
+  , TerminalInput (..)
+  , classifyTerminalInput
   ) where
 
 -- | A parsed line of user input in term mode. Anything that is not a builtin
@@ -27,3 +29,17 @@ parseCommandLine line =
     "cd" : args -> CommandChangeDirectory args
     "llm" : args -> CommandLlm args
     _ -> CommandShell line
+
+-- | The shape of submitted term-mode text.
+data TerminalInput
+  = NoTerminalInput
+  | SingleLineInput String
+  | MultiLineInput String
+  deriving stock (Eq, Show)
+
+classifyTerminalInput :: String -> TerminalInput
+classifyTerminalInput text =
+  case lines text of
+    [] -> NoTerminalInput
+    [line] -> SingleLineInput line
+    _ -> MultiLineInput text

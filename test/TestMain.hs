@@ -1,6 +1,7 @@
 module Main (main) where
 
 import qualified CommandSpec
+import qualified CompletionSpec
 import qualified ConversationSpec
 import qualified EditorSpec
 import qualified HistorySpec
@@ -9,6 +10,7 @@ import qualified LlmIntegrationSpec
 import qualified LlmSpec
 import qualified MarkdownSpec
 import qualified PathsSpec
+import qualified RenderSpec
 import qualified ShellSpec
 import Test.Tasty
 
@@ -18,6 +20,7 @@ main =
     testGroup
       "hutian-shell"
       [ CommandSpec.tests
+      , CompletionSpec.tests
       , ConversationSpec.tests
       , EditorSpec.tests
       , HistorySpec.tests
@@ -25,6 +28,7 @@ main =
       , LlmIntegrationSpec.tests
       , MarkdownSpec.tests
       , PathsSpec.tests
+      , RenderSpec.tests
       , ShellSpec.tests
       , InterruptSpec.tests
       ]

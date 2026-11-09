@@ -8,7 +8,13 @@ All notable changes to Hutian are documented here. The format follows
 ### Added
 
 - `Hutian.Command`, a pure parser for term-mode builtins.
+- `Hutian.Completion`, a pure completion selector shared by commands and paths.
+- `Hutian.Render`, a pure ANSI prompt renderer.
 - `ChatRole` for typed OpenAI-compatible chat messages.
+- Pure history encoding/decoding and input routing.
+- Pure terminal-input classification, shell directory resolution, and SSE
+  stream parsing.
+- LiquidHaskell invariants for completion selection and common-prefix bounds.
 - Shared `TestSupport` helpers and additional unit and property tests for
   command parsing, path completion, prompt layout, and completion targets.
 - MIT `LICENSE` and package metadata for the changelog and README.
@@ -28,6 +34,8 @@ All notable changes to Hutian are documented here. The format follows
   is now the only `head` use and is total.
 - Made prompt layout total for non-positive widths and hid the `Row`,
   `Column`, and `GoalColumn` constructors.
+- Reduced the IO surface by moving history codecs, completion selection,
+  prompt rendering, shell resolution, and SSE parsing into pure modules.
 - Read and wrote history files strictly to avoid lazy IO errors.
 - Simplified LLM choice/delta traversal and Markdown chunk accumulation.
 - Switched the default language to `GHC2021`.

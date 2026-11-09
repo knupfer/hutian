@@ -5,6 +5,8 @@ module Hutian.Shell
   ( runShellCommand
   , executableCommands
   , changeDirectory
+  , resolveDirectoryTarget
+  , withBuiltins
   ) where
 
 import Control.Exception (IOException, catch)
@@ -42,15 +44,19 @@ runShellCommand interruptFlag line =
 changeDirectory :: [String] -> IO ()
 changeDirectory args = do
   home <- fromMaybe "/" <$> lookupEnv "HOME"
-  let target = expandHome home (if null args then home else unwords args)
-  setCurrentDirectory target
+  setCurrentDirectory (resolveDirectoryTarget home args)
     `catch` \(err :: IOException) -> hPutStrLn stderr ("cd: " ++ show err)
+
+-- | Resolve a @cd@ argument list against the home directory.
+resolveDirectoryTarget :: FilePath -> [String] -> FilePath
+resolveDirectoryTarget home args =
+  expandHome home (if null args then home else unwords args)
 
 executableCommands :: IO [String]
 executableCommands = do
   searchPath <- fromMaybe "" <$> lookupEnv "PATH"
   names <- concat <$> mapM commandsIn (splitSearchPath searchPath)
-  pure (nub (builtinCommands ++ names))
+  pure (withBuiltins names)
   where
     commandsIn dir = do
       entries <- listDirectory dir `catch` \(_ :: IOException) -> pure []
@@ -64,6 +70,10 @@ executableCommands = do
         if not isDirectory && executable permissions
           then Just entry
           else Nothing
+
+-- | Add builtins and remove duplicate command names.
+withBuiltins :: [String] -> [String]
+withBuiltins names = nub (builtinCommands ++ names)
 
 builtinCommands :: [String]
 builtinCommands = ["cd", "exit", "help", "llm", "pwd", "quit"]

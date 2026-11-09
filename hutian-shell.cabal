@@ -52,6 +52,7 @@ executable hutian-shell
   main-is:          Main.hs
   other-modules:
       Hutian.Command
+      Hutian.Completion
       Hutian.Conversation
       Hutian.Editor
       Hutian.History
@@ -59,6 +60,7 @@ executable hutian-shell
       Hutian.Llm
       Hutian.Markdown
       Hutian.Paths
+      Hutian.Render
       Hutian.Shell
       Hutian.Terminal
   hs-source-dirs:   app
@@ -71,10 +73,12 @@ test-suite hutian-shell-test
   main-is:          TestMain.hs
   other-modules:
       CommandSpec
+      CompletionSpec
       ConversationSpec
       EditorSpec
       HistorySpec
       Hutian.Command
+      Hutian.Completion
       Hutian.Conversation
       Hutian.Editor
       Hutian.History
@@ -82,12 +86,14 @@ test-suite hutian-shell-test
       Hutian.Llm
       Hutian.Markdown
       Hutian.Paths
+      Hutian.Render
       Hutian.Shell
       InterruptSpec
       LlmIntegrationSpec
       LlmSpec
       MarkdownSpec
       PathsSpec
+      RenderSpec
       ShellSpec
       TestSupport
   hs-source-dirs:   test app

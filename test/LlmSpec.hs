@@ -94,6 +94,22 @@ unitTests =
             KeyMap.lookup "stream" body @?= Just (Bool True)
             KeyMap.lookup "messages" body @?= Nothing
           other -> assertFailure ("unexpected request body: " ++ show other)
+    , testCase "parseStreamLine parses SSE and bare JSON lines" $ do
+        parseStreamLine "" @?= Nothing
+        parseStreamLine "   " @?= Nothing
+        parseStreamLine "data: [DONE]" @?= Just (StreamEvent Nothing Nothing Nothing True)
+        parseStreamLine "data: [DONE]\r" @?= Just (StreamEvent Nothing Nothing Nothing True)
+        parseStreamLine "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}"
+          @?= Just (StreamEvent Nothing (Just "hi") Nothing False)
+        parseStreamLine "data: {\"reasoning_content\":\"thinking\"}"
+          @?= Just (StreamEvent (Just "thinking") Nothing Nothing False)
+        parseStreamLine "data: {\"error\":\"boom\"}"
+          @?= Just (StreamEvent Nothing Nothing (Just "boom") False)
+        parseStreamLine "data: {\"choices\":[{\"finish_reason\":\"stop\"}]}"
+          @?= Just (StreamEvent Nothing Nothing Nothing True)
+        parseStreamLine "{\"content\":\"direct\"}"
+          @?= Just (StreamEvent Nothing (Just "direct") Nothing False)
+        parseStreamLine "data: not-json" @?= Nothing
     , testCase "splitLines keeps partial data in the remainder" $ do
         splitLines "a\nb\n" @?= (["a", "b"], "")
         splitLines "a\nb" @?= (["a"], "b")

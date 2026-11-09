@@ -34,6 +34,7 @@ module Hutian.Editor
   , completionTarget
   , commandCompletionTarget
   , applyCompletion
+  , applyCompletionChoice
   , completeCommand
   , longestCommonPrefix
   , setSuggestions
@@ -50,6 +51,7 @@ import Data.List (intercalate, isPrefixOf)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, listToMaybe)
+import Hutian.Completion (Completion (..), chooseCompletion, longestCommonPrefix)
 
 {-@ type Pos = {v:Int | v > 0} @-}
 
@@ -469,20 +471,21 @@ applyCompletion start replacement prompt =
 completeCommand :: [String] -> Prompt -> Prompt
 completeCommand commands prompt =
   case commandCompletionTarget prompt of
-    Just (start, word)
+    Just (_, word)
       | null word -> setSuggestions (filter (word `isPrefixOf`) commands) prompt
-      | otherwise ->
-          let matches = filter (word `isPrefixOf`) commands
-              afterCursor = drop (unColumn (promptColumn prompt)) (currentLine prompt)
-              common = longestCommonPrefix matches
-              replacement
-                | [match] <- matches = match ++ if null afterCursor then " " else ""
-                | length common > length word = common
-                | otherwise = word
-           in if replacement == word
-                then setSuggestions matches prompt
-                else clearSuggestions (applyCompletion start replacement prompt)
+    Just (start, word) ->
+      let matches = filter (word `isPrefixOf`) commands
+          afterCursor = drop (unColumn (promptColumn prompt)) (currentLine prompt)
+          completion = chooseCompletion (const True) word afterCursor matches
+       in applyCompletionChoice start word completion prompt
     Nothing -> clearSuggestions prompt
+
+applyCompletionChoice :: Int -> String -> Completion -> Prompt -> Prompt
+applyCompletionChoice start word completion prompt
+  | completionReplacement completion == word =
+      setSuggestions (completionMatches completion) prompt
+  | otherwise =
+      clearSuggestions (applyCompletion start (completionReplacement completion) prompt)
 
 setSuggestions :: [String] -> Prompt -> Prompt
 setSuggestions matches prompt =
@@ -493,12 +496,6 @@ clearSuggestions prompt = prompt { promptSuggestions = [] }
 
 maxSuggestions :: Int
 maxSuggestions = 20
-
-longestCommonPrefix :: [String] -> String
-longestCommonPrefix [] = ""
-longestCommonPrefix (first : rest) = foldl' commonPrefix first rest
-  where
-    commonPrefix a b = map fst (takeWhile (uncurry (==)) (zip a b))
 
 classifyChar :: Char -> Key
 classifyChar char
