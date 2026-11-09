@@ -5,20 +5,17 @@ import Hutian.Interrupt (newInterruptFlag)
 import Hutian.Shell (changeDirectory, executableCommands, runShellCommand)
 import System.Directory
   ( Permissions (..)
-  , createDirectory
   , getCurrentDirectory
   , getPermissions
-  , getTemporaryDirectory
-  , removeDirectoryRecursive
   , removeFile
   , setCurrentDirectory
   , setPermissions
   )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.FilePath ((</>))
-import System.IO (hClose, openTempFile)
 import Test.Tasty
 import Test.Tasty.HUnit
+import TestSupport (temporaryFilePath, withEnv, withTemporaryDirectory)
 
 tests :: TestTree
 tests =
@@ -62,26 +59,6 @@ tests =
               setCurrentDirectory originalDirectory
         changed @?= originalDirectory
     ]
-
-temporaryFilePath :: String -> IO FilePath
-temporaryFilePath template = do
-  directory <- getTemporaryDirectory
-  (path, handle) <- openTempFile directory template
-  hClose handle
-  removeFile path
-  pure path
-
-withTemporaryDirectory :: String -> (FilePath -> IO a) -> IO a
-withTemporaryDirectory template action = do
-  path <- temporaryFilePath template
-  createDirectory path
-  action path `finally` removeDirectoryRecursive path
-
-withEnv :: String -> String -> IO a -> IO a
-withEnv name value action = do
-  original <- lookupEnv name
-  setEnv name value
-  action `finally` maybe (unsetEnv name) (setEnv name) original
 
 shellQuote :: String -> String
 shellQuote value =

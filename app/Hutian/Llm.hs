@@ -16,6 +16,7 @@ module Hutian.Llm
   , defaultEndpoint
   ) where
 
+import Control.Applicative ((<|>))
 import Control.Exception (SomeException, try)
 import Control.Monad (unless)
 import Data.Aeson (Value (..), object, (.=))
@@ -35,6 +36,7 @@ import Hutian.Conversation
   , Conversation
   , completionPrompt
   , requestMessages
+  , roleName
   )
 import Hutian.Interrupt (InterruptFlag, isInterrupted, withInterruptFlag)
 import Hutian.Markdown
@@ -100,7 +102,7 @@ requestBodyFor api model systemPrompt conversation prompt =
   where
     messageValue message =
       object
-        [ "role" .= chatRole message
+        [ "role" .= roleName (chatRole message)
         , "content" .= chatContent message
         ]
 
@@ -128,7 +130,7 @@ streamCompletion interruptFlag url model systemPrompt conversation prompt = do
       else do
         finalState <-
           consumeResponse interruptFlag (responseBody response) BS.empty initialState
-        endState <- finishReasoning finalState
+        endState <- flushReasoning finalState
         let trailing = finishMarkdown (streamMarkdown endState)
         putStr trailing
         unless (null trailing) (putStrLn "")
@@ -163,8 +165,8 @@ initialState = StreamState
 thinkingGrey :: String
 thinkingGrey = "\ESC[38;5;245m"
 
-finishReasoning :: StreamState -> IO StreamState
-finishReasoning state
+flushReasoning :: StreamState -> IO StreamState
+flushReasoning state
   | not (streamReasoningStarted state) = pure state
   | otherwise = do
       let trailing = finishMarkdownWith thinkingGrey (streamReasoning state)
@@ -174,6 +176,12 @@ finishReasoning state
       putStr "\ESC[0m"
       hFlush stdout
       pure state { streamReasoning = initialMarkdownState }
+
+emit :: String -> IO ()
+emit output =
+  unless (null output) $ do
+    putStr output
+    hFlush stdout
 
 readBody :: BodyReader -> [BS.ByteString] -> IO BS.ByteString
 readBody reader chunks = do
@@ -254,9 +262,7 @@ renderReasoning (Just text) state
   | otherwise = do
       let (markdown', output) =
             renderMarkdownWith thinkingGrey (streamReasoning state) text
-      unless (null output) $ do
-        putStr output
-        hFlush stdout
+      emit output
       pure
         state
           { streamReasoning = markdown'
@@ -271,9 +277,7 @@ renderContent (Just text) state
       startingAnswer <- transitionFromReasoning state
       let (markdown', output) =
             renderMarkdown (streamMarkdown startingAnswer) text
-      unless (null output) $ do
-        putStr output
-        hFlush stdout
+      emit output
       pure
         startingAnswer
           { streamMarkdown = markdown'
@@ -284,15 +288,7 @@ renderContent (Just text) state
 transitionFromReasoning :: StreamState -> IO StreamState
 transitionFromReasoning state
   | streamAnswerStarted state = pure state
-  | not (streamReasoningStarted state) = pure state
-  | otherwise = do
-      let trailing = finishMarkdownWith thinkingGrey (streamReasoning state)
-      unless (null trailing) $ do
-        putStr trailing
-        putStrLn ""
-      putStr "\ESC[0m"
-      hFlush stdout
-      pure state { streamReasoning = initialMarkdownState }
+  | otherwise = flushReasoning state
 
 extractContent :: KeyMap.KeyMap Value -> Maybe Text.Text
 extractContent value =
@@ -315,7 +311,7 @@ extractContent value =
 extractReasoning :: KeyMap.KeyMap Value -> Maybe Text.Text
 extractReasoning value =
   firstString reasoningKeys value
-    `orElse` choicesReasoning
+    <|> choicesReasoning
   where
     choicesReasoning =
       case KeyMap.lookup "choices" value of
@@ -337,9 +333,6 @@ extractReasoning value =
         | key <- keys
         , Just (String text) <- [KeyMap.lookup key fields]
         ]
-
-    orElse (Just result) _ = Just result
-    orElse Nothing fallback = fallback
 
 extractError :: KeyMap.KeyMap Value -> Maybe Text.Text
 extractError value =

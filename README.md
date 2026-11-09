@@ -220,6 +220,20 @@ configured package closures.
 - The sandbox uses the `systrap` platform by default. Set
   `GVISOR_PLATFORM=ptrace` if your host needs the `ptrace` platform.
 
+## Architecture
+
+The code keeps pure logic separate from IO:
+
+- `Hutian.Command` parses term-mode input into a typed `Command`.
+- `Hutian.Editor` owns prompt state, key semantics, completion, and layout.
+- `Hutian.History`, `Hutian.Conversation`, and `Hutian.Paths` are pure models.
+- `Hutian.Markdown` is a pure streaming renderer for Markdown and ANSI styles.
+- `Hutian.Terminal`, `Hutian.Shell`, `Hutian.Llm`, and `Hutian.Interrupt`
+  adapt those models to the terminal, processes, HTTP, and signals.
+- `Main` is a small interpreter over `Command` and `ShellState`.
+
+The package uses `GHC2021` and compiles with strict warnings and `-Werror`.
+
 ## Project layout
 
 ```text
@@ -228,18 +242,21 @@ nix/hutian.nix            Sandbox rootfs, launcher, and wrapper
 nix/hutian-shell.nix      Haskell package definition
 nix/lint.nix              Shared lint and LiquidHaskell checks
 app/                      Haskell shell source
+app/Hutian/Command.hs     Typed term-mode command parsing
 test/                     Unit and property tests
+test/TestSupport.hs       Shared test helpers
 hutian-shell.cabal        Haskell package manifest
 example.nix               Minimal consumer flake
+LICENSE                   MIT license
 CHANGELOG.md              Release notes
 ```
 
 ## Testing
 
 The test suite combines HUnit tests with QuickCheck properties for the editor
-state machine, prompt layout, conversation history, LLM requests, Markdown
-rendering, code highlighting, path and shell helpers, and interrupt handling.
-It also includes integration tests for:
+state machine, prompt layout, command parsing, conversation history, LLM
+requests, Markdown rendering, code highlighting, path and shell helpers, and
+interrupt handling. It also includes integration tests for:
 
 - streaming LLM responses through a local HTTP server
 - history file persistence

@@ -5,10 +5,28 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `Hutian.Command`, a pure parser for term-mode builtins.
+- `ChatRole` for typed OpenAI-compatible chat messages.
+- Shared `TestSupport` helpers and additional unit and property tests for
+  command parsing, path completion, prompt layout, and completion targets.
+- MIT `LICENSE` and package metadata for the changelog and README.
+
 ### Changed
 
 - Simplified the flake outputs and package definition, and factored the lint
   and LiquidHaskell checks into a shared `mkCheck` helper.
+- Replaced stringly-typed chat roles with `ChatRole`.
+- Bundled the main loop and terminal prompt loop into records.
+- Made `completionTarget` return a non-optional target.
+- Moved path completion helpers to `Hutian.Paths` and prompt-prefix layout to
+  `Hutian.Editor`.
+- Simplified history navigation, Markdown prefix matching, and streaming
+  reasoning output.
+- Switched the default language to `GHC2021`.
+- Fixed `displayPath` incorrectly abbreviating sibling directories such as
+  `/home/user2` for a home of `/home/user`.
 
 ## [0.2.0.0] - 2026-11-09
 

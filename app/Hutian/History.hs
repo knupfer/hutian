@@ -36,16 +36,15 @@ historyUp :: [String] -> HistoryState -> Prompt -> Maybe (HistoryState, Prompt)
 historyUp entries state prompt
   | null entries = Nothing
   | otherwise =
-      let draft =
-            case historyOffset state of
-              Nothing -> promptText prompt
-              Just _ -> historyDraft state
-          offset =
-            case historyOffset state of
-              Nothing -> 0
-              Just current -> min (current + 1) (length entries - 1)
-          entry = fromMaybe "" (atMay entries (length entries - 1 - offset))
-       in Just (HistoryState (Just offset) draft, setPromptText entry prompt)
+      Just
+        ( HistoryState (Just offset) draft
+        , setPromptText (entryAt entries offset) prompt
+        )
+  where
+    offset =
+      maybe 0 (\current -> min (current + 1) (length entries - 1)) (historyOffset state)
+    draft =
+      maybe (promptText prompt) (const (historyDraft state)) (historyOffset state)
 
 historyDown :: [String] -> HistoryState -> Prompt -> Maybe (HistoryState, Prompt)
 historyDown entries state prompt =
@@ -59,13 +58,16 @@ historyDown entries state prompt =
             )
       | otherwise ->
           let nextOffset = offset - 1
-              entry = fromMaybe "" (atMay entries (length entries - 1 - nextOffset))
            in Just
                 ( HistoryState (Just nextOffset) draft
-                , setPromptText entry prompt
+                , setPromptText (entryAt entries nextOffset) prompt
                 )
   where
     draft = historyDraft state
+
+entryAt :: [String] -> Int -> String
+entryAt entries offset =
+  fromMaybe "" (atMay entries (length entries - 1 - offset))
 
 escapeHistory :: String -> String
 escapeHistory = concatMap escapeChar

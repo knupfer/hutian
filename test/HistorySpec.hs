@@ -13,12 +13,12 @@ import Hutian.Editor
   )
 import Data.Maybe (fromMaybe)
 import Hutian.History
-import System.Directory (getTemporaryDirectory, removeFile)
-import System.IO (hClose, openTempFile)
+import System.FilePath ((</>))
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck (testProperty)
+import TestSupport (withTemporaryDirectory)
 
 tests :: TestTree
 tests =
@@ -69,15 +69,13 @@ unitTests =
         escapeHistory "a\\b" @?= "a\\\\b"
         escapeHistory "a\nb" @?= "a\\nb"
         unescapeHistory (escapeHistory "a\\n\nb") @?= "a\\n\nb"
-    , testCase "history files round-trip through disk" $ do
-        temporaryDirectory <- getTemporaryDirectory
-        (path, handle) <- openTempFile temporaryDirectory "hutian-history"
-        hClose handle
-        appendHistoryFile path "first command"
-        appendHistoryFile path "multi\nline"
-        loaded <- loadHistoryFile path
-        loaded @?= ["first command", "multi\nline"]
-        removeFile path
+    , testCase "history files round-trip through disk" $
+        withTemporaryDirectory "hutian-history" $ \directory -> do
+          let path = directory </> "history"
+          appendHistoryFile path "first command"
+          appendHistoryFile path "multi\nline"
+          loaded <- loadHistoryFile path
+          loaded @?= ["first command", "multi\nline"]
     ]
 
 propertyTests :: TestTree

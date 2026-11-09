@@ -35,6 +35,7 @@ import Hutian.Editor
   , initialPromptBuffers
   , longestCommonPrefix
   , physicalRows
+  , prefixCharacterCounts
   , promptLines
   , promptRow
   , promptSuggestions
@@ -52,6 +53,7 @@ import Hutian.History
   , historyUp
   , initialHistoryState
   )
+import Hutian.Paths (hasTrailingSlash, splitPathWord)
 import System.Console.Terminal.Size (Window (Window), size)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.IO
@@ -80,18 +82,33 @@ import System.Posix.Terminal
 promptForInput :: [String] -> String -> PromptMode -> [String] -> [String] -> PromptBuffers -> IO (PromptMode, Maybe String, PromptBuffers)
 promptForInput commands termPrompt mode termHistory llmHistory buffers = do
   interactive <- hIsTerminalDevice stdout
+  let context =
+        PromptContext
+          { contextInteractive = interactive
+          , contextCommands = commands
+          , contextTermPrompt = termPrompt
+          , contextMode = mode
+          , contextTermHistory = termHistory
+          , contextLlmHistory = llmHistory
+          }
   withRawTerminal $ do
     when interactive (startPromptLine mode)
-    readPrompt
-      interactive
-      commands
-      termPrompt
-      mode
-      termHistory
-      llmHistory
-      initialHistoryState
-      0
-      buffers
+    readPrompt context (ReadState initialHistoryState 0 buffers)
+
+data PromptContext = PromptContext
+  { contextInteractive :: Bool
+  , contextCommands :: [String]
+  , contextTermPrompt :: String
+  , contextMode :: PromptMode
+  , contextTermHistory :: [String]
+  , contextLlmHistory :: [String]
+  }
+
+data ReadState = ReadState
+  { readHistoryState :: HistoryState
+  , readPreviousRow :: Int
+  , readBuffers :: PromptBuffers
+  }
 
 resetTerminal :: IO ()
 resetTerminal = do
@@ -126,89 +143,100 @@ rawAttributes original =
           ]
    in withTime (withMinInput withOutputModes 1) 0
 
-readPrompt :: Bool -> [String] -> String -> PromptMode -> [String] -> [String] -> HistoryState -> Int -> PromptBuffers -> IO (PromptMode, Maybe String, PromptBuffers)
-readPrompt interactive commands termPrompt mode termHistory llmHistory historyState previousRow buffers = do
-  position <- renderPrompt interactive termPrompt mode previousRow (activePrompt mode buffers)
-  loop position historyState buffers
+readPrompt :: PromptContext -> ReadState -> IO (PromptMode, Maybe String, PromptBuffers)
+readPrompt context state = do
+  position <-
+    renderPrompt
+      interactive
+      termPrompt
+      mode
+      (readPreviousRow state)
+      (activePrompt mode (readBuffers state))
+  loop position state
   where
-    loop position state currentBuffers = do
-      let current = activePrompt mode currentBuffers
+    mode = contextMode context
+    interactive = contextInteractive context
+    termPrompt = contextTermPrompt context
+    commands = contextCommands context
+    entries = historyForMode mode (contextTermHistory context) (contextLlmHistory context)
+
+    loop position currentState = do
+      let current = activePrompt mode (readBuffers currentState)
       key <- readKey
       case submitIntent mode key current of
-        SubmitNow -> submit position currentBuffers
+        SubmitNow -> submit position currentState
         ContinueLine ->
           redraw
             position
-            initialHistoryState
-            (storePrompt mode (applyKey KeyEnter (cursorToEnd current)) currentBuffers)
+            (nextState initialHistoryState (storePrompt mode (applyKey KeyEnter (cursorToEnd current)) (readBuffers currentState)) currentState)
         NotSubmit -> case key of
           KeyCancel ->
-            redraw position initialHistoryState (clearPrompt mode currentBuffers)
+            redraw
+              position
+              (nextState initialHistoryState (clearPrompt mode (readBuffers currentState)) currentState)
           KeyUp
             | mode == LlmMode && unRow (promptRow current) > 0 ->
-                editKey position currentBuffers KeyUp
-            | otherwise -> navigate historyUp position state currentBuffers
+                editKey position currentState KeyUp
+            | otherwise -> navigate historyUp position currentState
           KeyDown
             | mode == LlmMode && unRow (promptRow current) < length (promptLines current) - 1 ->
-                editKey position currentBuffers KeyDown
-            | otherwise -> navigate historyDown position state currentBuffers
+                editKey position currentState KeyDown
+            | otherwise -> navigate historyDown position currentState
           KeyToggleMode ->
             readPrompt
-              interactive
-              commands
-              termPrompt
-              (toggleMode mode)
-              termHistory
-              llmHistory
-              initialHistoryState
-              (fst position)
-              (storePrompt mode (clearSuggestions current) currentBuffers)
+              context { contextMode = toggleMode mode }
+              (ReadState initialHistoryState (fst position) (storePrompt mode (clearSuggestions current) (readBuffers currentState)))
           KeyComplete
             | mode == TermMode -> do
                 completed <- completeInput commands current
-                redraw position initialHistoryState (storePrompt mode completed currentBuffers)
-            | otherwise -> loop position state currentBuffers
-          _ -> editKey position currentBuffers key
+                redraw
+                  position
+                  (nextState initialHistoryState (storePrompt mode completed (readBuffers currentState)) currentState)
+            | otherwise -> loop position currentState
+          _ -> editKey position currentState key
 
-    entries = historyForMode mode termHistory llmHistory
+    nextState historyState buffers currentState =
+      ReadState historyState (readPreviousRow currentState) buffers
 
-    navigate step position state currentBuffers =
-      case step entries state (activePrompt mode currentBuffers) of
-        Nothing -> loop position state currentBuffers
-        Just (state', updated) ->
-          redraw position state' (storePrompt mode updated currentBuffers)
+    navigate step position currentState =
+      case step entries (readHistoryState currentState) (activePrompt mode (readBuffers currentState)) of
+        Nothing -> loop position currentState
+        Just (historyState', updated) ->
+          redraw
+            position
+            (nextState historyState' (storePrompt mode updated (readBuffers currentState)) currentState)
 
-    editKey position currentBuffers key = do
-      let current = activePrompt mode currentBuffers
+    editKey position currentState key = do
+      let current = activePrompt mode (readBuffers currentState)
           updated = applyKey key current
-          updatedBuffers = storePrompt mode updated currentBuffers
+          updatedBuffers = storePrompt mode updated (readBuffers currentState)
       if sameBuffer current updated
-        then moveCursorOnly position updatedBuffers updated
-        else redraw position initialHistoryState updatedBuffers
+        then moveCursorOnly position (nextState initialHistoryState updatedBuffers currentState) updated
+        else redraw position (nextState initialHistoryState updatedBuffers currentState)
 
-    moveCursorOnly position currentBuffers updated = do
+    moveCursorOnly position currentState updated = do
       newPosition <- promptPosition termPrompt mode updated
       moveCursor position newPosition
-      loop newPosition initialHistoryState currentBuffers
+      loop newPosition currentState
 
-    submit position currentBuffers = do
-      let current = activePrompt mode currentBuffers
+    submit position currentState = do
+      let current = activePrompt mode (readBuffers currentState)
       finishPrompt interactive termPrompt mode (fst position) current
       pure
         ( mode
         , Just (promptText current)
-        , clearPrompt mode currentBuffers
+        , clearPrompt mode (readBuffers currentState)
         )
 
-    redraw position state currentBuffers = do
+    redraw position currentState = do
       newPosition <-
         renderPrompt
           interactive
           termPrompt
           mode
           (fst position)
-          (activePrompt mode currentBuffers)
-      loop newPosition state currentBuffers
+          (activePrompt mode (readBuffers currentState))
+      loop newPosition currentState
 
 sameBuffer :: Prompt -> Prompt -> Bool
 sameBuffer a b =
@@ -240,47 +268,32 @@ completeInput commands prompt =
     _ -> completePath prompt
 
 completePath :: Prompt -> IO Prompt
-completePath prompt =
-  case completionTarget prompt of
-    Nothing -> pure prompt
-    Just (start, word) -> do
-      let (directoryPart, base) = splitPathWord word
-          directory = if null directoryPart then "." else directoryPart
-      entries <- listDirectory directory `catch` \(_ :: IOException) -> pure []
-      completions <- mapM (completeEntry directoryPart) (filter (base `isPrefixOf`) entries)
-      case completions of
-        [] -> pure (clearSuggestions prompt)
-        _ ->
-          let common = longestCommonPrefix completions
-              afterCursor = drop (start + length word) (currentLine prompt)
-              replacement
-                | [only] <- completions =
-                    only ++ if null afterCursor && not (hasTrailingSlash only) then " " else ""
-                | length common > length word = common
-                | otherwise = word
-           in pure $
-                if replacement == word
-                  then setSuggestions completions prompt
-                  else clearSuggestions (applyCompletion start replacement prompt)
+completePath prompt = do
+  let (start, word) = completionTarget prompt
+      (directoryPart, base) = splitPathWord word
+      directory = if null directoryPart then "." else directoryPart
+  entries <- listDirectory directory `catch` \(_ :: IOException) -> pure []
+  completions <- mapM (completeEntry directoryPart) (filter (base `isPrefixOf`) entries)
+  pure $
+    case completions of
+      [] -> clearSuggestions prompt
+      _ ->
+        let common = longestCommonPrefix completions
+            afterCursor = drop (start + length word) (currentLine prompt)
+            replacement
+              | [only] <- completions =
+                  only ++ if null afterCursor && not (hasTrailingSlash only) then " " else ""
+              | length common > length word = common
+              | otherwise = word
+         in if replacement == word
+              then setSuggestions completions prompt
+              else clearSuggestions (applyCompletion start replacement prompt)
 
 completeEntry :: FilePath -> FilePath -> IO FilePath
 completeEntry directoryPart entry = do
   let candidate = directoryPart ++ entry
   isDirectory <- doesDirectoryExist candidate
   pure (if isDirectory then candidate ++ "/" else candidate)
-
-splitPathWord :: String -> (String, String)
-splitPathWord word =
-  case break (== '/') (reverse word) of
-    (baseReversed, []) -> ("", reverse baseReversed)
-    (baseReversed, _ : directoryReversed) ->
-      (reverse directoryReversed ++ "/", reverse baseReversed)
-
-hasTrailingSlash :: String -> Bool
-hasTrailingSlash value =
-  case reverse value of
-    '/' : _ -> True
-    _ -> False
 
 readKey :: IO Key
 readKey = do
@@ -396,14 +409,6 @@ clearToEnd = "\ESC[0J"
 
 clearLine :: String
 clearLine = "\ESC[K"
-
-prefixCharacterCounts :: Int -> [String] -> [Int]
-prefixCharacterCounts = go
-  where
-    go _ [] = []
-    go remaining (row : rest) =
-      let used = min remaining (length row)
-       in used : go (remaining - used) rest
 
 prefixFor :: String -> PromptMode -> String
 prefixFor termPrompt TermMode = termPrompt

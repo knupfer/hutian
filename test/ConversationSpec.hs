@@ -27,7 +27,7 @@ unitTests =
               , TerminalEntry "git status"
               ]
             messages = requestMessages "system rules" conversation "second question"
-        map chatRole messages @?= ["system", "user", "assistant", "user", "user"]
+        map chatRole messages @?= [SystemRole, UserRole, AssistantRole, UserRole, UserRole]
         map chatContent messages @?=
           [ "system rules"
           , "first question"
@@ -36,7 +36,7 @@ unitTests =
           , "second question"
           ]
     , testCase "empty system prompts are omitted" $ do
-        map chatRole (requestMessages "" emptyConversation "hello") @?= ["user"]
+        map chatRole (requestMessages "" emptyConversation "hello") @?= [UserRole]
     , testCase "appendExchange records successful answers only" $ do
         appendExchange "question" (Just "answer") emptyConversation
           @?= [UserEntry "question", AssistantEntry "answer"]
@@ -86,7 +86,7 @@ prop_promptLast systemPrompt (Conv conversation) prompt =
   case reverse (requestMessages systemPrompt conversation prompt) of
     ChatMessage role content : _ ->
       counterexample (show (role, content)) $
-        property (role == "user" && content == prompt)
+        property (role == UserRole && content == prompt)
     [] -> counterexample "empty message list" False
 
 prop_messageCount :: String -> Conv -> String -> Property

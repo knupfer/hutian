@@ -3,6 +3,8 @@ module Hutian.Conversation
   ( Conversation
   , ConversationEntry (..)
   , ChatMessage (..)
+  , ChatRole (..)
+  , roleName
   , emptyConversation
   , appendExchange
   , appendTerminal
@@ -21,11 +23,23 @@ data ConversationEntry
   | TerminalEntry String
   deriving stock (Eq, Show)
 
+-- | The role of a message in an OpenAI-compatible chat request.
+data ChatRole
+  = SystemRole
+  | UserRole
+  | AssistantRole
+  deriving stock (Eq, Show)
+
 data ChatMessage = ChatMessage
-  { chatRole :: String
+  { chatRole :: ChatRole
   , chatContent :: String
   }
   deriving stock (Eq, Show)
+
+roleName :: ChatRole -> String
+roleName SystemRole = "system"
+roleName UserRole = "user"
+roleName AssistantRole = "assistant"
 
 {-@ emptyConversation :: {v:Conversation | len v == 0} @-}
 emptyConversation :: Conversation
@@ -49,18 +63,18 @@ appendExchange _ _ conversation = conversation
       {v:[ChatMessage] | len v >= len conversation + 1} @-}
 requestMessages :: String -> Conversation -> String -> [ChatMessage]
 requestMessages systemPrompt conversation prompt =
-  systemMessages ++ map entryMessage conversation ++ [ChatMessage "user" prompt]
+  systemMessages ++ map entryMessage conversation ++ [ChatMessage UserRole prompt]
   where
     systemMessages
       | null systemPrompt = []
-      | otherwise = [ChatMessage "system" systemPrompt]
+      | otherwise = [ChatMessage SystemRole systemPrompt]
 
 entryMessage :: ConversationEntry -> ChatMessage
 entryMessage entry =
   case entry of
-    UserEntry text -> ChatMessage "user" text
-    AssistantEntry text -> ChatMessage "assistant" text
-    TerminalEntry command -> ChatMessage "user" (terminalMessage command)
+    UserEntry text -> ChatMessage UserRole text
+    AssistantEntry text -> ChatMessage AssistantRole text
+    TerminalEntry command -> ChatMessage UserRole (terminalMessage command)
 
 {-@ terminalMessage :: command:String -> {v:String | len v >= len command} @-}
 terminalMessage :: String -> String
@@ -77,6 +91,6 @@ completionPrompt systemPrompt conversation prompt =
   where
     renderMessage message =
       case chatRole message of
-        "system" -> "System: " ++ chatContent message
-        "assistant" -> "Assistant: " ++ chatContent message
-        _ -> "User: " ++ chatContent message
+        SystemRole -> "System: " ++ chatContent message
+        AssistantRole -> "Assistant: " ++ chatContent message
+        UserRole -> "User: " ++ chatContent message

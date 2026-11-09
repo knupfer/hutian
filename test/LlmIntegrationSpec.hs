@@ -30,7 +30,6 @@ import Network.Socket
   , tupleToHostAddress
   )
 import Network.Socket.ByteString (recv, sendAll)
-import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.IO (hClose, hFlush, stdout)
 import System.Posix.IO
   ( closeFd
@@ -44,6 +43,7 @@ import System.Posix.Types (Fd)
 import System.Timeout (timeout)
 import Test.Tasty
 import Test.Tasty.HUnit
+import TestSupport (withEnv)
 
 tests :: TestTree
 tests =
@@ -147,12 +147,6 @@ withLlmEnvironment port action = do
   withEnv "HUTIAN_LLAMA_URL" ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions") $
     withEnv "HUTIAN_LLAMA_MODEL" "test-model" $
       withEnv "HUTIAN_SYSTEM_PROMPT" "system prompt" action
-
-withEnv :: String -> String -> IO a -> IO a
-withEnv name value action = do
-  original <- lookupEnv name
-  setEnv name value
-  action `finally` maybe (unsetEnv name) (setEnv name) original
 
 captureStdout :: IO a -> IO (a, String)
 captureStdout action = do

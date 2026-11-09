@@ -8,6 +8,7 @@ import Control.Monad (when)
 import Data.Char (isSpace)
 import Data.Maybe (fromMaybe)
 import GHC.IO.Encoding (setLocaleEncoding)
+import Hutian.Command (Command (..), parseCommandLine)
 import Hutian.Conversation
   ( Conversation
   , appendExchange
@@ -30,6 +31,17 @@ import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.Environment (lookupEnv)
 import System.IO
 
+-- | Everything the interactive loop carries between prompts.
+data ShellState = ShellState
+  { shellCommands :: [String]
+  , shellTermHistory :: [String]
+  , shellLlmHistory :: [String]
+  , shellInterrupt :: InterruptFlag
+  , shellMode :: PromptMode
+  , shellBuffers :: PromptBuffers
+  , shellConversation :: Conversation
+  }
+
 main :: IO ()
 main = do
   setLocaleEncoding utf8
@@ -42,48 +54,55 @@ main = do
   termHistory <- loadHistoryFile termHistoryFile
   llmHistory <- loadHistoryFile llmHistoryFile
   interruptFlag <- newInterruptFlag
-  shellLoop
-    commands
-    termHistory
-    llmHistory
-    interruptFlag
-    LlmMode
-    initialPromptBuffers
-    emptyConversation
-    `finally` resetTerminal
+  let state =
+        ShellState
+          { shellCommands = commands
+          , shellTermHistory = termHistory
+          , shellLlmHistory = llmHistory
+          , shellInterrupt = interruptFlag
+          , shellMode = LlmMode
+          , shellBuffers = initialPromptBuffers
+          , shellConversation = emptyConversation
+          }
+  shellLoop state `finally` resetTerminal
 
-shellLoop :: [String] -> [String] -> [String] -> InterruptFlag -> PromptMode -> PromptBuffers -> Conversation -> IO ()
-shellLoop commands termHistory llmHistory interruptFlag mode buffers conversation = do
+shellLoop :: ShellState -> IO ()
+shellLoop state = do
   home <- fromMaybe "/" <$> lookupEnv "HOME"
   cwd <- getCurrentDirectory
   let termPrompt = displayPath home cwd ++ " "
   (nextMode, input, nextBuffers) <-
-    promptForInput commands termPrompt mode termHistory llmHistory buffers
+    promptForInput
+      (shellCommands state)
+      termPrompt
+      (shellMode state)
+      (shellTermHistory state)
+      (shellLlmHistory state)
+      (shellBuffers state)
+  let prompted =
+        state
+          { shellMode = nextMode
+          , shellBuffers = nextBuffers
+          }
   case input of
-    Nothing ->
-      shellLoop
-        commands
-        termHistory
-        llmHistory
-        interruptFlag
-        nextMode
-        nextBuffers
-        conversation
+    Nothing -> shellLoop prompted
     Just text -> do
       (termHistory', llmHistory') <-
-        rememberInput nextMode text termHistory llmHistory
-      clearInterrupt interruptFlag
-      (continue, nextConversation) <-
-        runInput interruptFlag nextMode text conversation
+        rememberInput
+          nextMode
+          text
+          (shellTermHistory state)
+          (shellLlmHistory state)
+      clearInterrupt (shellInterrupt state)
+      (continue, conversation) <-
+        runInput (shellInterrupt state) nextMode text (shellConversation state)
       when continue $
         shellLoop
-          commands
-          termHistory'
-          llmHistory'
-          interruptFlag
-          nextMode
-          nextBuffers
-          nextConversation
+          prompted
+            { shellTermHistory = termHistory'
+            , shellLlmHistory = llmHistory'
+            , shellConversation = conversation
+            }
 
 rememberInput :: PromptMode -> String -> [String] -> [String] -> IO ([String], [String])
 rememberInput mode text termHistory llmHistory
@@ -106,30 +125,32 @@ runTerminalInput :: InterruptFlag -> Conversation -> String -> IO (Bool, Convers
 runTerminalInput interruptFlag conversation text =
   case lines text of
     [] -> pure (True, conversation)
-    [line] -> runTerminalLine interruptFlag conversation (words line) line
+    [line] -> runTerminalLine interruptFlag conversation line
     _ -> do
       runShellCommand interruptFlag text
       pure (True, appendTerminal text conversation)
 
-runTerminalLine :: InterruptFlag -> Conversation -> [String] -> String -> IO (Bool, Conversation)
-runTerminalLine _ conversation [] _ = pure (True, conversation)
-runTerminalLine interruptFlag conversation (command : args) line =
-  case command of
-    "exit" -> pure (False, conversation)
-    "quit" -> pure (False, conversation)
-    "help" -> printHelp >> pure (True, appendTerminal line conversation)
-    "pwd" -> do
+runTerminalLine :: InterruptFlag -> Conversation -> String -> IO (Bool, Conversation)
+runTerminalLine interruptFlag conversation line =
+  case parseCommandLine line of
+    CommandEmpty -> pure (True, conversation)
+    CommandExit -> pure (False, conversation)
+    CommandHelp -> printHelp >> pure (True, appendTerminal line conversation)
+    CommandPrintDirectory -> do
       putStrLn =<< getCurrentDirectory
       pure (True, appendTerminal line conversation)
-    "cd" -> changeDirectory args >> pure (True, appendTerminal line conversation)
-    "llm" -> do
-      case args of
-        [] -> putStrLn "Press Ctrl+X to switch to llm mode." >> pure (True, appendTerminal line conversation)
-        _ -> do
-          reply <- runLlm interruptFlag conversation (unwords args)
-          pure (True, appendExchange (unwords args) reply conversation)
-    _ -> do
-      runShellCommand interruptFlag line
+    CommandChangeDirectory args -> do
+      changeDirectory args
+      pure (True, appendTerminal line conversation)
+    CommandLlm [] -> do
+      putStrLn "Press Ctrl+X to switch to llm mode."
+      pure (True, appendTerminal line conversation)
+    CommandLlm args -> do
+      let prompt = unwords args
+      reply <- runLlm interruptFlag conversation prompt
+      pure (True, appendExchange prompt reply conversation)
+    CommandShell commandLine -> do
+      runShellCommand interruptFlag commandLine
       pure (True, appendTerminal line conversation)
 
 printHelp :: IO ()

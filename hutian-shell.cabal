@@ -1,4 +1,4 @@
-cabal-version:      2.4
+cabal-version:      3.4
 name:               hutian-shell
 version:            0.2.0.0
 synopsis:           Interactive shell for the hutian sandbox
@@ -6,10 +6,14 @@ description:        A small interactive shell with a streaming llama.cpp
                     prompt and a two-mode multiline editor.
 author:             Florian Knupfer
 license:            MIT
+license-file:       LICENSE
 build-type:         Simple
+extra-source-files:
+    CHANGELOG.md
+    README.md
 
 common defaults
-  default-language: Haskell2010
+  default-language: GHC2021
   default-extensions: DerivingStrategies
   ghc-options:
       -Wall
@@ -47,6 +51,7 @@ executable hutian-shell
   import:           defaults, dependencies
   main-is:          Main.hs
   other-modules:
+      Hutian.Command
       Hutian.Conversation
       Hutian.Editor
       Hutian.History
@@ -65,9 +70,11 @@ test-suite hutian-shell-test
   type:             exitcode-stdio-1.0
   main-is:          TestMain.hs
   other-modules:
+      CommandSpec
       ConversationSpec
       EditorSpec
       HistorySpec
+      Hutian.Command
       Hutian.Conversation
       Hutian.Editor
       Hutian.History
@@ -82,6 +89,7 @@ test-suite hutian-shell-test
       MarkdownSpec
       PathsSpec
       ShellSpec
+      TestSupport
   hs-source-dirs:   test app
   build-depends:
       network

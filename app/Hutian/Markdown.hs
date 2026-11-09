@@ -9,7 +9,7 @@ module Hutian.Markdown
   ) where
 
 import Data.Char (isControl, isDigit, isSpace)
-import Data.List (intercalate)
+import Data.List (intercalate, isPrefixOf)
 import qualified Data.Text as Text
 import Skylighting
   ( ANSIColorLevel (..)
@@ -326,14 +326,9 @@ breakOn needle = go ""
   where
     go _ [] = Nothing
     go prefix input@(character : rest)
-      | needle `prefixOf` input =
+      | needle `isPrefixOf` input =
           Just (reverse prefix, drop (length needle) input)
       | otherwise = go (character : prefix) rest
-
-prefixOf :: String -> String -> Bool
-prefixOf [] _ = True
-prefixOf _ [] = False
-prefixOf (a : as) (b : bs) = a == b && prefixOf as bs
 
 sanitize :: String -> String
 sanitize = map sanitizeChar

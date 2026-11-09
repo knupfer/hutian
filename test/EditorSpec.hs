@@ -1,6 +1,6 @@
 module EditorSpec (tests) where
 
-import Data.Char (isControl)
+import Data.Char (isControl, isSpace)
 import qualified Data.List.NonEmpty as NonEmpty
 import Hutian.Editor
 import Test.QuickCheck
@@ -126,6 +126,12 @@ unitTests =
         cursorPosition 3 "" (runText "abcdefg") @?= (2, 1)
     , testCase "physicalRows includes a row for a cursor at a wrap boundary" $ do
         physicalRows 3 "" (runText "aaaaaa") @?= ["aaa", "aaa", ""]
+    , testCase "prefixCharacterCounts distributes a prefix across rows" $ do
+        prefixCharacterCounts 0 ["abc", "def"] @?= [0, 0]
+        prefixCharacterCounts 2 ["abc", "def"] @?= [2, 0]
+        prefixCharacterCounts 4 ["abc", "def"] @?= [3, 1]
+        prefixCharacterCounts 9 ["abc", "def"] @?= [3, 3]
+        prefixCharacterCounts 2 [] @?= []
     , testCase "a prompt prefix is included in the first line layout" $ do
         let prompt = runText "abc"
         physicalRows 6 "~ $ " prompt @?= ["~ $ ab", "c"]
@@ -178,7 +184,25 @@ unitTests =
         needsContinuation (runText "echo 'literal \\'") @?= False
         needsContinuation (run (text "echo 'a" ++ [KeyEnter] ++ text "b'")) @?= False
     , testCase "completionTarget finds the word before the cursor" $ do
-        completionTarget (runText "echo fi") @?= Just (5, "fi")
+        completionTarget (runText "echo fi") @?= (5, "fi")
+        completionTarget (runText "") @?= (0, "")
+        completionTarget (runText "echo ") @?= (5, "")
+        completionTarget (runText "echo") @?= (0, "echo")
+    , testCase "commandCompletionTarget only matches the command word" $ do
+        commandCompletionTarget (runText "ec") @?= Just (0, "ec")
+        commandCompletionTarget (runText "echo fi") @?= Nothing
+        commandCompletionTarget (runText "") @?= Just (0, "")
+    , testCase "longestCommonPrefix handles empty and shared prefixes" $ do
+        longestCommonPrefix [] @?= ""
+        longestCommonPrefix ["alpha"] @?= "alpha"
+        longestCommonPrefix ["alpha", "alpine"] @?= "alp"
+        longestCommonPrefix ["alpha", "beta"] @?= ""
+    , testCase "atMay is total for negative and out-of-range indices" $ do
+        atMay [1, 2, 3 :: Int] (-1) @?= Nothing
+        atMay [1, 2, 3 :: Int] 0 @?= Just 1
+        atMay [1, 2, 3 :: Int] 3 @?= Nothing
+    , testCase "wrapLine handles width one" $ do
+        wrapLine 1 "abc" @?= ["a", "b", "c"]
     , testCase "applyCompletion replaces only the target word" $ do
         let prompt = applyCompletion 5 "file" (runText "echo fi")
         promptText prompt @?= "echo file\n"
@@ -218,6 +242,8 @@ propertyTests =
     , testProperty "physical rows start with the wrapped content" prop_physicalRows
     , testProperty "the cursor is always inside the rendered rows" prop_cursorPosition
     , testProperty "the cursor stays inside rows with a prompt prefix" prop_prefixCursorPosition
+    , testProperty "prefix counts sum to the prefix length" prop_prefixCharacterCounts
+    , testProperty "completion targets end at the cursor" prop_completionTarget
     , testProperty "toggleMode is an involution" prop_toggleMode
     ]
 
@@ -371,6 +397,24 @@ prop_prefixCursorPosition width =
      in counterexample (show prompt ++ " at width " ++ show width') $
           property (row >= 0 && row < length rows)
             .&&. property (column >= 0 && column < width')
+
+prop_prefixCharacterCounts :: Int -> [String] -> Property
+prop_prefixCharacterCounts prefix rows =
+  let width = abs prefix
+      counts = prefixCharacterCounts width rows
+   in counterexample (show counts) $
+        property (length counts === length rows)
+          .&&. property (sum counts === min width (sum (map length rows)))
+
+prop_completionTarget :: Property
+prop_completionTarget =
+  forAll keySequence $ \keys ->
+    let prompt = run keys
+        (start, word) = completionTarget prompt
+        cursorColumn = unColumn (promptColumn prompt)
+     in counterexample (show keys ++ " -> " ++ show (start, word)) $
+          property (start >= 0 && start + length word == cursorColumn)
+            .&&. property (not (any isSpace word))
 
 prop_toggleMode :: Bool -> Property
 prop_toggleMode llmMode =

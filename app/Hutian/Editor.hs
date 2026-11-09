@@ -40,6 +40,7 @@ module Hutian.Editor
   , clearSuggestions
   , setPromptText
   , suggestionRowCount
+  , prefixCharacterCounts
   , needsContinuation
   , atMay
   ) where
@@ -385,6 +386,15 @@ suggestionRowCount :: Int -> Prompt -> Int
 suggestionRowCount width prompt =
   length (concatMap (wrapLine width) (suggestionLines prompt))
 
+-- | Distribute a prompt prefix across its rendered rows.
+prefixCharacterCounts :: Int -> [String] -> [Int]
+prefixCharacterCounts = go
+  where
+    go _ [] = []
+    go remaining (row : rest) =
+      let used = min remaining (length row)
+       in used : go (remaining - used) rest
+
 {-@ cursorPosition :: width:Pos -> String -> Prompt -> (Int, Int) @-}
 cursorPosition :: Int -> String -> Prompt -> (Int, Int)
 cursorPosition width prefix prompt =
@@ -417,20 +427,19 @@ wrapLine width line
       let (chunk, remainder) = splitAt width rest
        in chunk : go remainder
 
-completionTarget :: Prompt -> Maybe (Int, String)
+completionTarget :: Prompt -> (Int, String)
 completionTarget prompt =
-  Just (unColumn (promptColumn prompt) - length word, word)
+  (unColumn (promptColumn prompt) - length word, word)
   where
     beforeCursor = take (unColumn (promptColumn prompt)) (currentLine prompt)
     word = reverse (takeWhile (not . isSpace) (reverse beforeCursor))
 
 commandCompletionTarget :: Prompt -> Maybe (Int, String)
 commandCompletionTarget prompt =
-  case completionTarget prompt of
-    Just target@(start, _)
-      | unRow (promptRow prompt) == 0
-      , all isSpace (take start (currentLine prompt)) -> Just target
-    _ -> Nothing
+  let target@(start, _) = completionTarget prompt
+   in if unRow (promptRow prompt) == 0 && all isSpace (take start (currentLine prompt))
+        then Just target
+        else Nothing
 
 applyCompletion :: Int -> String -> Prompt -> Prompt
 applyCompletion start replacement prompt =

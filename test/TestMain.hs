@@ -1,5 +1,6 @@
 module Main (main) where
 
+import qualified CommandSpec
 import qualified ConversationSpec
 import qualified EditorSpec
 import qualified HistorySpec
@@ -16,7 +17,8 @@ main =
   defaultMain $
     testGroup
       "hutian-shell"
-      [ ConversationSpec.tests
+      [ CommandSpec.tests
+      , ConversationSpec.tests
       , EditorSpec.tests
       , HistorySpec.tests
       , LlmSpec.tests
