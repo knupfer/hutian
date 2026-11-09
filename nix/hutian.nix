@@ -1,10 +1,17 @@
+let
+  requiredOption = import ./required-option.nix;
+in
 {
   pkgs,
   packages ? [ ],
-  systemPrompt,
-  model,
-  llamaUrl,
-  readOnly,
+  systemPrompt ?
+    requiredOption "mkHutianShell" "systemPrompt"
+      ''systemPrompt = "You are a coding assistant.";'',
+  model ? requiredOption "mkHutianShell" "model" ''model = "your-model";'',
+  llamaUrl ?
+    requiredOption "mkHutianShell" "llamaUrl"
+      ''llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";'',
+  readOnly ? requiredOption "mkHutianShell" "readOnly" "readOnly = false;",
   nix ? false,
   src ? ../.,
 }:

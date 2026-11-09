@@ -8,6 +8,8 @@
     let
       inherit (nixpkgs) lib;
 
+      requiredOption = import ./nix/required-option.nix;
+
       defaultSystems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -41,11 +43,15 @@
       mkHutianShellFlake =
         nixpkgs:
         {
-          packages,
-          systemPrompt,
-          model,
-          llamaUrl,
-          readOnly,
+          packages ? requiredOption "mkHutianShellFlake" "packages" "packages = pkgs: [ pkgs.git pkgs.jq ];",
+          systemPrompt ?
+            requiredOption "mkHutianShellFlake" "systemPrompt"
+              ''systemPrompt = "You are a coding assistant.";'',
+          model ? requiredOption "mkHutianShellFlake" "model" ''model = "your-model";'',
+          llamaUrl ?
+            requiredOption "mkHutianShellFlake" "llamaUrl"
+              ''llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";'',
+          readOnly ? requiredOption "mkHutianShellFlake" "readOnly" "readOnly = false;",
           nix ? false,
           src ? null,
           systems ? defaultSystems,

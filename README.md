@@ -164,7 +164,8 @@ the working directory, but any attempt to write to it fails with a read-only
 filesystem error. This is useful when the model should only inspect a project.
 
 Then run `nix run .` from that project. Package versions come from the consumer
-flake's lock file.
+flake's lock file. Omitting a required argument fails with an error that names
+the missing option and shows an example value.
 
 To use a custom package set, such as one with overlays, pass `pkgsFor`:
 
