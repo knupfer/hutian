@@ -100,6 +100,7 @@
           systemPrompt = defaultSystemPrompt;
           model = defaultModel;
           llamaUrl = defaultLlamaUrl;
+          src = self;
         };
       });
 
@@ -119,57 +120,18 @@
             systemPrompt = "probe system prompt";
             model = "probe-model";
             llamaUrl = "http://probe.invalid/v1/chat/completions";
+            src = self;
+          };
+          lint = import ./nix/lint.nix {
+            inherit pkgs;
+            src = self;
           };
         in
         {
           package = self.packages.${system}.default;
-          haskell-lint =
-            pkgs.runCommand "hutian-hlint"
-              {
-                nativeBuildInputs = [ pkgs.hlint ];
-              }
-              ''
-                cd ${self}
-                hlint app test
-                ${pkgs.coreutils}/bin/touch $out
-              '';
-          nix-lint =
-            pkgs.runCommand "hutian-nix-lint"
-              {
-                nativeBuildInputs = [
-                  pkgs.statix
-                  pkgs.deadnix
-                ];
-              }
-              ''
-                cd ${self}
-                statix check .
-                deadnix --fail .
-                ${pkgs.coreutils}/bin/touch $out
-              '';
-          liquid =
-            pkgs.runCommand "hutian-liquid"
-              {
-                nativeBuildInputs = [
-                  (pkgs.haskellPackages.ghcWithPackages (h: [
-                    h.filepath
-                    h.liquidhaskell
-                  ]))
-                  pkgs.z3
-                ];
-              }
-              ''
-                cp -r ${self} source
-                chmod -R u+w source
-                cd source
-                ghc -XDerivingStrategies -fno-code -iapp \
-                  -fplugin=LiquidHaskell \
-                  app/Hutian/Paths.hs \
-                  app/Hutian/Conversation.hs \
-                  app/Hutian/Editor.hs \
-                  app/Hutian/History.hs
-                ${pkgs.coreutils}/bin/touch $out
-              '';
+          haskell-lint = lint.haskell;
+          nix-lint = lint.nix;
+          inherit (lint) liquid;
           required-options = pkgs.runCommand "hutian-required-options-check" { } ''
             ${pkgs.gnugrep}/bin/grep -F 'HUTIAN_SYSTEM_PROMPT=' ${probe}/bin/hutian
             ${pkgs.gnugrep}/bin/grep -F 'probe system prompt' ${probe}/bin/hutian

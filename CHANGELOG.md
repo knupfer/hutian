@@ -34,6 +34,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
+- Consolidated lint and LiquidHaskell checks into `nix/lint.nix`, shared by
+  the package build and flake checks.
 - Moved the Haskell project to the repository root.
 - LLM and term histories are stored separately.
 - Input rendering now redraws relative to the current cursor.

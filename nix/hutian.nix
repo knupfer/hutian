@@ -5,6 +5,7 @@
   model,
   llamaUrl,
   nix ? false,
+  src ? ../.,
 }:
 
 let
@@ -12,7 +13,7 @@ let
 
   allPackages = packages ++ lib.optional nix pkgs.nix;
 
-  hutianShell = pkgs.callPackage ./hutian-shell.nix { };
+  hutianShell = pkgs.callPackage ./hutian-shell.nix { inherit src; };
 
   # The runtime closure is mounted at the same paths inside the sandbox. Nix
   # additionally needs a CA bundle for HTTPS fetches performed by the client.

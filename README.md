@@ -226,6 +226,7 @@ configured package closures.
 flake.nix                 Flake outputs and consumer helpers
 nix/hutian.nix            Sandbox rootfs, launcher, and wrapper
 nix/hutian-shell.nix      Haskell package definition
+nix/lint.nix              Shared lint and LiquidHaskell checks
 app/                      Haskell shell source
 test/                     Unit and property tests
 hutian-shell.cabal        Haskell package manifest
