@@ -37,7 +37,7 @@ import Hutian.Llm
   , runLlmWithTools
   , toolCommand
   )
-import Hutian.Output (withGrayOutput)
+import Hutian.Output (termOutputBackground, withGrayOutput)
 import Hutian.Paths (displayPath)
 import Hutian.Shell
   ( changeDirectory
@@ -234,7 +234,7 @@ runTerminalInput interruptFlag conversation text =
     NoTerminalInput -> pure (True, conversation)
     SingleLineInput line -> runTerminalLine interruptFlag conversation line
     MultiLineInput script -> do
-      withGrayOutput (runShellCommand interruptFlag script)
+      withGrayOutput termOutputBackground (runShellCommand interruptFlag script)
       pure (True, appendTerminal script conversation)
 
 runTerminalLine :: InterruptFlag -> Conversation -> String -> IO (Bool, Conversation)
@@ -242,20 +242,22 @@ runTerminalLine interruptFlag conversation line =
   case parseCommandLine line of
     CommandEmpty -> pure (True, conversation)
     CommandExit -> pure (False, conversation)
-    CommandHelp -> withGrayOutput printHelp >> pure (True, appendTerminal line conversation)
+    CommandHelp ->
+      withGrayOutput termOutputBackground printHelp
+        >> pure (True, appendTerminal line conversation)
     CommandPrintDirectory -> do
-      withGrayOutput (putStrLn =<< getCurrentDirectory)
+      withGrayOutput termOutputBackground (putStrLn =<< getCurrentDirectory)
       pure (True, appendTerminal line conversation)
     CommandChangeDirectory target -> do
-      withGrayOutput (changeDirectory target)
+      withGrayOutput termOutputBackground (changeDirectory target)
       pure (True, appendTerminal line conversation)
     CommandLlm Nothing -> do
-      withGrayOutput (putStrLn "Press Ctrl+X to switch to llm mode.")
+      withGrayOutput termOutputBackground (putStrLn "Press Ctrl+X to switch to llm mode.")
       pure (True, appendTerminal line conversation)
     CommandLlm (Just prompt) ->
       runLlmInput interruptFlag conversation prompt
     CommandShell commandLine -> do
-      withGrayOutput (runShellCommand interruptFlag commandLine)
+      withGrayOutput termOutputBackground (runShellCommand interruptFlag commandLine)
       pure (True, appendTerminal line conversation)
 
 printHelp :: IO ()
@@ -269,7 +271,8 @@ printHelp =
     , "The app starts in llm mode."
     , "In llm mode the model may call the run_shell_command tool. Tool"
     , "commands are shown with a dark red background and a bright red path."
-    , "Command output in term mode and from tool calls is gray."
+    , "Term-mode command output is gray on a slightly darker blue background;"
+    , "tool-call output is gray on a slightly darker red background."
     , ""
     , "Term-mode builtins:"
     , "  cd [dir]   change directory (defaults to $HOME)"

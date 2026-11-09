@@ -2,7 +2,7 @@ module RenderSpec (tests) where
 
 import Data.List (isInfixOf, isSuffixOf)
 import Hutian.Editor (PromptMode (..), cursorPosition, initialPrompt, setPromptText)
-import Hutian.Output (grayOutputText)
+import Hutian.Output (grayOutputText, termOutputBackground, toolOutputBackground)
 import Hutian.Render
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -70,11 +70,16 @@ tests =
           "nothing after the final newline may change colors"
           (not ("\ESC" `isInfixOf` afterNewline))
     , testCase "grayOutputText wraps terminal output and resets" $
-        grayOutputText True "hello" @?= grayForeground ++ "hello" ++ reset
+        grayOutputText toolOutputBackground True "hello"
+          @?= grayForeground ++ toolOutputBackground ++ "hello" ++ reset
     , testCase "grayOutputText leaves non-terminal output unchanged" $
-        grayOutputText False "hello" @?= "hello"
+        grayOutputText termOutputBackground False "hello" @?= "hello"
     , testCase "grayOutputText leaves empty output unchanged" $
-        grayOutputText True "" @?= ""
+        grayOutputText termOutputBackground True "" @?= ""
+    , testCase "term output background is darker than the term input" $
+        termOutputBackground @?= "\ESC[48;2;0;0;20m"
+    , testCase "tool output background is darker than the tool input" $
+        toolOutputBackground @?= "\ESC[48;2;20;0;0m"
     ]
 
 resetSequence :: String
