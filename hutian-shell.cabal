@@ -4,6 +4,7 @@ version:            0.2.0.0
 synopsis:           Interactive shell for the hutian sandbox
 description:        A small interactive shell with a streaming llama.cpp
                     prompt and a two-mode multiline editor.
+author:             Florian Knupfer
 license:            MIT
 build-type:         Simple
 
