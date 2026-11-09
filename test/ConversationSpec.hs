@@ -44,6 +44,22 @@ unitTests =
         appendExchange "question" Nothing emptyConversation @?= []
     , testCase "appendTerminal records terminal commands" $ do
         appendTerminal "ls -la" emptyConversation @?= [TerminalEntry "ls -la"]
+    , testCase "assistant tool calls and results use tool messages" $ do
+        let call = ToolCall "call-1" "run_shell_command" "{\"command\":\"ls\"}"
+            conversation =
+              appendToolResult "call-1" "file.txt"
+                (appendAssistantToolCalls "checking" [call] emptyConversation)
+            messages = continuationMessages "" conversation
+        map chatRole messages @?= [AssistantRole, ToolRole]
+        case messages of
+          [assistant, result] -> do
+            chatContent assistant @?= "checking"
+            chatToolCalls assistant @?= [call]
+            chatToolCallId assistant @?= Nothing
+            chatContent result @?= "file.txt"
+            chatToolCalls result @?= []
+            chatToolCallId result @?= Just "call-1"
+          other -> assertFailure ("unexpected messages: " ++ show other)
     , testCase "completion prompts flatten the entire conversation" $ do
         let prompt =
               completionPrompt
@@ -84,7 +100,7 @@ instance Arbitrary Conv where
 prop_promptLast :: String -> Conv -> String -> Property
 prop_promptLast systemPrompt (Conv conversation) prompt =
   case reverse (requestMessages systemPrompt conversation prompt) of
-    ChatMessage role content : _ ->
+    ChatMessage role content _ _ : _ ->
       counterexample (show (role, content)) $
         property (role == UserRole && content == prompt)
     [] -> counterexample "empty message list" False
@@ -123,3 +139,5 @@ entryTexts entry =
     UserEntry text -> [text]
     AssistantEntry text -> [text]
     TerminalEntry command -> [command]
+    AssistantToolCallEntry text calls -> text : map toolCallName calls
+    ToolResultEntry callId output -> [callId, output]

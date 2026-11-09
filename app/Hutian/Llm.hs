@@ -4,15 +4,25 @@
 -- | Minimal streaming client for llama.cpp.
 module Hutian.Llm
   ( runLlm
+  , runLlmWithTools
+  , runLlmContinuation
+  , LlmResult (..)
+  , emptyLlmResult
   , Api (..)
   , apiFor
   , requestBodyFor
+  , continuationBodyFor
+  , toolDefinitions
+  , toolCommand
   , StreamEvent (..)
+  , ToolCallDelta (..)
   , parseStreamLine
   , splitLines
   , extractContent
   , extractReasoning
   , extractError
+  , extractToolCalls
+  , mergeToolCallDeltas
   , isStop
   , decode
   , defaultEndpoint
@@ -37,7 +47,10 @@ import Data.Word (Word8)
 import Hutian.Conversation
   ( ChatMessage (..)
   , Conversation
+  , ToolCall (..)
+  , completionContinuationPrompt
   , completionPrompt
+  , continuationMessages
   , requestMessages
   , roleName
   )
@@ -55,24 +68,73 @@ import Network.HTTP.Types.Status (statusCode)
 import System.Environment (lookupEnv)
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
 
+-- | The result of one streaming LLM request.
+data LlmResult = LlmResult
+  { llmResponseText :: Maybe String
+  , llmToolCalls :: [ToolCall]
+  }
+  deriving stock (Eq, Show)
+
+emptyLlmResult :: LlmResult
+emptyLlmResult = LlmResult Nothing []
+
+-- | Run one LLM request for a user prompt, returning any tool calls that the
+-- model requested. Kept as a convenience wrapper for callers that only need
+-- the assistant text.
 runLlm :: InterruptFlag -> Conversation -> String -> IO (Maybe String)
-runLlm interruptFlag conversation prompt
-  | all isSpace prompt = pure Nothing
+runLlm interruptFlag conversation prompt =
+  llmResponseText <$> runLlmWithTools interruptFlag conversation prompt
+
+runLlmWithTools :: InterruptFlag -> Conversation -> String -> IO LlmResult
+runLlmWithTools interruptFlag conversation prompt
+  | all isSpace prompt = pure emptyLlmResult
   | otherwise = do
-      url <- fromMaybe defaultEndpoint <$> lookupEnv "HUTIAN_LLAMA_URL"
-      model <- fromMaybe "default" <$> lookupEnv "HUTIAN_LLAMA_MODEL"
-      systemPrompt <- fromMaybe "" <$> lookupEnv "HUTIAN_SYSTEM_PROMPT"
-      result <-
-        try
-          ( withInterruptFlag interruptFlag $
-              streamCompletion interruptFlag url model systemPrompt conversation prompt
-          )
-          :: IO (Either SomeException (Maybe String))
-      case result of
-        Left exception -> do
-          hPutStrLn stderr ("llm: " ++ show exception)
-          pure Nothing
-        Right response -> pure response
+      settings <- llmSettings
+      runRequest interruptFlag settings $
+        requestBodyFor
+          (apiFor (settingUrl settings))
+          (settingModel settings)
+          (settingSystemPrompt settings)
+          conversation
+          prompt
+
+-- | Continue a conversation after tool results have been appended.
+runLlmContinuation :: InterruptFlag -> Conversation -> IO LlmResult
+runLlmContinuation interruptFlag conversation = do
+  settings <- llmSettings
+  runRequest interruptFlag settings $
+    continuationBodyFor
+      (apiFor (settingUrl settings))
+      (settingModel settings)
+      (settingSystemPrompt settings)
+      conversation
+
+data LlmSettings = LlmSettings
+  { settingUrl :: String
+  , settingModel :: String
+  , settingSystemPrompt :: String
+  }
+
+llmSettings :: IO LlmSettings
+llmSettings = do
+  url <- fromMaybe defaultEndpoint <$> lookupEnv "HUTIAN_LLAMA_URL"
+  model <- fromMaybe "default" <$> lookupEnv "HUTIAN_LLAMA_MODEL"
+  systemPrompt <- fromMaybe "" <$> lookupEnv "HUTIAN_SYSTEM_PROMPT"
+  pure (LlmSettings url model systemPrompt)
+
+runRequest :: InterruptFlag -> LlmSettings -> Aeson.Value -> IO LlmResult
+runRequest interruptFlag settings body = do
+  result <-
+    try
+      ( withInterruptFlag interruptFlag $
+          streamCompletion interruptFlag (settingUrl settings) body
+      )
+      :: IO (Either SomeException LlmResult)
+  case result of
+    Left exception -> do
+      hPutStrLn stderr ("llm: " ++ show exception)
+      pure emptyLlmResult
+    Right response -> pure response
 
 defaultEndpoint :: String
 defaultEndpoint = "http://127.0.0.1:8080/v1/chat/completions"
@@ -90,59 +152,156 @@ apiFor url
 requestBodyFor :: Api -> String -> String -> Conversation -> String -> Aeson.Value
 requestBodyFor api model systemPrompt conversation prompt =
   case api of
-    ChatApi ->
-      object
-        [ "model" .= model
-        , "messages" .= map messageValue (requestMessages systemPrompt conversation prompt)
-        , "stream" .= True
-        ]
+    ChatApi -> chatBody model (requestMessages systemPrompt conversation prompt)
     CompletionApi ->
       object
         [ "model" .= model
         , "prompt" .= completionPrompt systemPrompt conversation prompt
         , "stream" .= True
         ]
-  where
-    messageValue message =
+
+-- | Build a follow-up request after tool results, without a new user message.
+continuationBodyFor :: Api -> String -> String -> Conversation -> Aeson.Value
+continuationBodyFor api model systemPrompt conversation =
+  case api of
+    ChatApi -> chatBody model (continuationMessages systemPrompt conversation)
+    CompletionApi ->
       object
-        [ "role" .= roleName (chatRole message)
-        , "content" .= chatContent message
+        [ "model" .= model
+        , "prompt" .= completionContinuationPrompt systemPrompt conversation
+        , "stream" .= True
         ]
 
-streamCompletion :: InterruptFlag -> String -> String -> String -> Conversation -> String -> IO (Maybe String)
-streamCompletion interruptFlag url model systemPrompt conversation prompt = do
+chatBody :: String -> [ChatMessage] -> Aeson.Value
+chatBody model messages =
+  object
+    [ "model" .= model
+    , "messages" .= map messageValue messages
+    , "stream" .= True
+    , "tools" .= toolDefinitions
+    , "tool_choice" .= ("auto" :: String)
+    ]
+
+messageValue :: ChatMessage -> Aeson.Value
+messageValue message =
+  object $
+    [ "role" .= roleName (chatRole message)
+    , "content" .= chatContent message
+    ]
+      ++ [ "tool_calls" .= map toolCallValue calls
+         | calls <- [chatToolCalls message]
+         , not (null calls)
+         ]
+      ++ [ "tool_call_id" .= callId
+         | callId <- maybeToList (chatToolCallId message)
+         ]
+
+toolCallValue :: ToolCall -> Aeson.Value
+toolCallValue call =
+  object
+    [ "id" .= toolCallId call
+    , "type" .= ("function" :: String)
+    , "function" .=
+        object
+          [ "name" .= toolCallName call
+          , "arguments" .= toolCallArguments call
+          ]
+    ]
+
+-- | The single tool exposed to the model.
+toolDefinitions :: [Aeson.Value]
+toolDefinitions =
+  [ object
+      [ "type" .= ("function" :: String)
+      , "function" .=
+          object
+            [ "name" .= (shellToolName :: String)
+            , "description"
+                .= ( "Run a shell command with /bin/sh -c in the sandbox. "
+                       ++ "Use it to inspect files, run builds and tests, and modify "
+                       ++ "the workspace. Commands run in the current directory."
+                   )
+            , "parameters" .=
+                object
+                  [ "type" .= ("object" :: String)
+                  , "properties" .=
+                      object
+                        [ "command" .=
+                            object
+                              [ "type" .= ("string" :: String)
+                              , "description" .= ("The shell command to run." :: String)
+                              ]
+                        ]
+                  , "required" .= ["command" :: String]
+                  ]
+            ]
+      ]
+  ]
+
+shellToolName :: String
+shellToolName = "run_shell_command"
+
+-- | Extract the shell command from a tool call. Unknown tools and malformed
+-- arguments become a result string that is sent back to the model.
+toolCommand :: ToolCall -> Either String String
+toolCommand call
+  | toolCallName call /= shellToolName =
+      Left ("unknown tool: " ++ toolCallName call)
+  | otherwise =
+      case Aeson.eitherDecodeStrict' (TextEncoding.encodeUtf8 (Text.pack (toolCallArguments call))) of
+        Right (Object arguments) ->
+          case KeyMap.lookup "command" arguments of
+            Just (String command) -> Right (Text.unpack command)
+            _ -> Left "missing string argument: command"
+        _ -> Left "tool arguments are not a JSON object"
+
+maybeToList :: Maybe a -> [a]
+maybeToList Nothing = []
+maybeToList (Just value) = [value]
+
+streamCompletion :: InterruptFlag -> String -> Aeson.Value -> IO LlmResult
+streamCompletion interruptFlag url body = do
   manager <- newManager defaultManagerSettings
   initialRequest <- parseRequest url
   let request =
         initialRequest
           { method = "POST"
           , requestHeaders = [("Content-Type", "application/json")]
-          , requestBody =
-              RequestBodyLBS
-                (Aeson.encode (requestBodyFor (apiFor url) model systemPrompt conversation prompt))
+          , requestBody = RequestBodyLBS (Aeson.encode body)
           , responseTimeout = responseTimeoutNone
           }
   withResponse request manager $ \response -> do
     let code = statusCode (responseStatus response)
     if code < 200 || code >= 300
       then do
-        body <- readBody (responseBody response) []
-        let message = Text.unpack (Text.strip (decode body))
+        responseBody <- readBody (Network.HTTP.Client.responseBody response) []
+        let message = Text.unpack (Text.strip (decode responseBody))
         hPutStrLn stderr ("llm: llama.cpp returned HTTP " ++ show code ++ errorSuffix message)
-        pure Nothing
+        pure emptyLlmResult
       else do
         finalState <-
-          consumeResponse interruptFlag (responseBody response) BS.empty initialState
+          consumeResponse interruptFlag (Network.HTTP.Client.responseBody response) BS.empty initialState
         endState <- flushReasoning finalState
         let trailing = finishMarkdown (streamMarkdown endState)
         putStr trailing
         unless (null trailing) (putStrLn "")
         unless (streamSawData endState) $
           hPutStrLn stderr "llm: no response content received"
-        pure $
-          if streamSawData endState
-            then Just (Text.unpack (streamAnswerText endState))
-            else Nothing
+        pure (resultFromState endState)
+
+resultFromState :: StreamState -> LlmResult
+resultFromState state =
+  LlmResult
+    { llmResponseText = responseText
+    , llmToolCalls = streamToolCalls state
+    }
+  where
+    calls = streamToolCalls state
+    answer = streamAnswerText state
+    responseText
+      | not (streamSawData state) = Nothing
+      | Text.null answer && not (null calls) = Nothing
+      | otherwise = Just (Text.unpack answer)
 
 data StreamState = StreamState
   { streamMarkdown :: MarkdownState
@@ -150,6 +309,7 @@ data StreamState = StreamState
   , streamReasoningStarted :: Bool
   , streamAnswerStarted :: Bool
   , streamAnswerText :: Text.Text
+  , streamToolCalls :: [ToolCall]
   , streamSawData :: Bool
   , streamDone :: Bool
   }
@@ -161,6 +321,7 @@ initialState = StreamState
   , streamReasoningStarted = False
   , streamAnswerStarted = False
   , streamAnswerText = ""
+  , streamToolCalls = []
   , streamSawData = False
   , streamDone = False
   }
@@ -227,11 +388,22 @@ processLines (line : lines') state
       state' <- processLine line state
       processLines lines' state'
 
+-- | One streaming fragment of a tool call. The first fragment usually carries
+-- the id and function name; later fragments append to the arguments.
+data ToolCallDelta = ToolCallDelta
+  { toolCallDeltaIndex :: Int
+  , toolCallDeltaId :: Maybe Text.Text
+  , toolCallDeltaName :: Maybe Text.Text
+  , toolCallDeltaArguments :: Maybe Text.Text
+  }
+  deriving stock (Eq, Show)
+
 -- | A parsed server-sent event from a streaming response.
 data StreamEvent = StreamEvent
   { eventReasoning :: Maybe Text.Text
   , eventContent :: Maybe Text.Text
   , eventError :: Maybe Text.Text
+  , eventToolCalls :: [ToolCallDelta]
   , eventStop :: Bool
   }
   deriving stock (Eq, Show)
@@ -246,10 +418,15 @@ processLine rawLine state =
       case eventError event of
         Just message -> hPutStrLn stderr ("llm: " ++ Text.unpack message)
         Nothing -> pure ()
+      let toolState =
+            contentState
+              { streamToolCalls =
+                  mergeToolCallDeltas (streamToolCalls contentState) (eventToolCalls event)
+              }
       pure
-        contentState
+        toolState
           { streamSawData = True
-          , streamDone = streamDone contentState || eventStop event
+          , streamDone = streamDone toolState || eventStop event
           }
 
 -- | Parse one SSE line, or a bare JSON line, into a stream event.
@@ -263,7 +440,7 @@ parseStreamLine rawLine
 
 parsePayload :: Text.Text -> Maybe StreamEvent
 parsePayload payload
-  | payload == "[DONE]" = Just (StreamEvent Nothing Nothing Nothing True)
+  | payload == "[DONE]" = Just (StreamEvent Nothing Nothing Nothing [] True)
   | otherwise =
       case Aeson.decodeStrict' (TextEncoding.encodeUtf8 payload) of
         Just (Object value) ->
@@ -272,6 +449,7 @@ parsePayload payload
               { eventReasoning = extractReasoning value
               , eventContent = extractContent value
               , eventError = extractError value
+              , eventToolCalls = extractToolCalls value
               , eventStop = isStop value
               }
         _ -> Nothing
@@ -334,6 +512,69 @@ extractError value =
       lookupString "message" nested
         <|> Just (Text.pack (show (Object nested)))
     _ -> Nothing
+
+-- | Extract tool-call fragments from either a bare delta object or the deltas
+-- nested under @choices@.
+extractToolCalls :: KeyMap.KeyMap Value -> [ToolCallDelta]
+extractToolCalls value =
+  indexedToolCalls 0 (toolCallObjects value)
+    ++ concatMap (indexedToolCalls 0 . toolCallObjects) (deltas value)
+
+indexedToolCalls :: Int -> [KeyMap.KeyMap Value] -> [ToolCallDelta]
+indexedToolCalls start objects =
+  [ ToolCallDelta
+      { toolCallDeltaIndex = fromMaybe (start + offset) (lookupIndex call)
+      , toolCallDeltaId = lookupString "id" call
+      , toolCallDeltaName = lookupFunctionString "name" call
+      , toolCallDeltaArguments = lookupFunctionString "arguments" call
+      }
+  | (offset, call) <- zip [0 ..] objects
+  ]
+
+toolCallObjects :: KeyMap.KeyMap Value -> [KeyMap.KeyMap Value]
+toolCallObjects fields =
+  case KeyMap.lookup "tool_calls" fields of
+    Just (Array items) -> [item | Object item <- Vector.toList items]
+    _ -> []
+
+lookupIndex :: KeyMap.KeyMap Value -> Maybe Int
+lookupIndex fields =
+  case KeyMap.lookup "index" fields of
+    Just (Number number) -> Just (round number)
+    _ -> Nothing
+
+lookupFunctionString :: Key -> KeyMap.KeyMap Value -> Maybe Text.Text
+lookupFunctionString key fields =
+  case KeyMap.lookup "function" fields of
+    Just (Object function) -> lookupString key function
+    _ -> Nothing
+
+-- | Merge streamed tool-call fragments by their index.
+mergeToolCallDeltas :: [ToolCall] -> [ToolCallDelta] -> [ToolCall]
+mergeToolCallDeltas = foldl' mergeOne
+  where
+    mergeOne calls delta =
+      let index = toolCallDeltaIndex delta
+          (before, rest) = splitAt index calls
+          existing =
+            case rest of
+              call : _ -> call
+              [] -> ToolCall "" "" ""
+          updated =
+            existing
+              { toolCallId = preferText (toolCallId existing) (toolCallDeltaId delta)
+              , toolCallName = preferText (toolCallName existing) (toolCallDeltaName delta)
+              , toolCallArguments =
+                  toolCallArguments existing
+                    ++ maybe "" Text.unpack (toolCallDeltaArguments delta)
+              }
+       in before ++ [updated] ++ drop 1 rest
+
+preferText :: String -> Maybe Text.Text -> String
+preferText current Nothing = current
+preferText current (Just text)
+  | Text.null text = current
+  | otherwise = Text.unpack text
 
 isStop :: KeyMap.KeyMap Value -> Bool
 isStop value =

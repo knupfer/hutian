@@ -7,6 +7,11 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Added
 
+- LLM tool calls. The model can request shell commands through the
+  `run_shell_command` tool, which runs `/bin/sh -c` in the current directory
+  and feeds the output back into the conversation.
+- Streaming tool-call parsing and tool-call/tool-result conversation messages.
+- A tool-call prompt style with a dark red background and a bright red path.
 - `Hutian.Command`, a pure parser for term-mode builtins.
 - `Hutian.Completion`, a pure completion selector shared by commands and paths.
 - `Hutian.Render`, a pure ANSI prompt renderer.

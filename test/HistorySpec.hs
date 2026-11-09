@@ -58,10 +58,12 @@ unitTests =
     , testCase "history selection is mode specific" $ do
         historyForMode LlmMode ["term"] ["llm"] @?= ["llm"]
         historyForMode TermMode ["term"] ["llm"] @?= ["term"]
+        historyForMode ToolMode ["term"] ["llm"] @?= ["term"]
     , testCase "input destinations follow mode and blank input" $ do
         inputDestination TermMode "" @?= DiscardInput
         inputDestination TermMode "   " @?= DiscardInput
         inputDestination TermMode "ls" @?= TermHistoryEntry
+        inputDestination ToolMode "ls" @?= TermHistoryEntry
         inputDestination LlmMode "" @?= DiscardInput
         inputDestination LlmMode "hello" @?= LlmHistoryEntry
     , testCase "history encoding round-trips entries" $ do

@@ -6,11 +6,12 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
+import Data.Either (isLeft)
 import Data.List (isInfixOf)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
-import Hutian.Conversation (ConversationEntry (..), emptyConversation)
+import Hutian.Conversation (ConversationEntry (..), ToolCall (..), emptyConversation)
 import Hutian.Llm
 import Test.QuickCheck
 import Test.Tasty
@@ -94,21 +95,58 @@ unitTests =
             KeyMap.lookup "stream" body @?= Just (Bool True)
             KeyMap.lookup "messages" body @?= Nothing
           other -> assertFailure ("unexpected request body: " ++ show other)
+    , testCase "chat request body advertises the shell tool" $
+        case requestBodyFor ChatApi "test-model" "" emptyConversation "hello" of
+          Object body ->
+            case KeyMap.lookup "tools" body of
+              Just (Array tools) ->
+                case Vector.toList tools of
+                  [Object tool] -> do
+                    KeyMap.lookup "type" tool @?= Just (String "function")
+                    case KeyMap.lookup "function" tool of
+                      Just (Object functionObject) ->
+                        KeyMap.lookup "name" functionObject @?= Just (String "run_shell_command")
+                      other -> assertFailure ("missing function: " ++ show other)
+                  other -> assertFailure ("unexpected tools: " ++ show other)
+              other -> assertFailure ("missing tools: " ++ show other)
+          other -> assertFailure ("unexpected request body: " ++ show other)
+    , testCase "toolCommand parses the command argument" $ do
+        toolCommand (ToolCall "id" "run_shell_command" "{\"command\":\"ls -la\"}")
+          @?= Right "ls -la"
+        assertBool
+          "unknown tool should fail"
+          (isLeft (toolCommand (ToolCall "id" "other" "{}")))
+        assertBool
+          "malformed arguments should fail"
+          (isLeft (toolCommand (ToolCall "id" "run_shell_command" "not-json")))
+    , testCase "extractToolCalls reads streamed fragments" $ do
+        let line =
+              "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"run_shell_command\",\"arguments\":\"{\\\"command\\\":\"}}]}}]}"
+        case parseStreamLine line of
+          Just event ->
+            eventToolCalls event
+              @?= [ToolCallDelta 0 (Just "call-1") (Just "run_shell_command") (Just "{\"command\":")]
+          Nothing -> assertFailure "tool call event did not parse"
+    , testCase "mergeToolCallDeltas assembles streamed arguments" $ do
+        let first = ToolCallDelta 0 (Just "call-1") (Just "run_shell_command") (Just "{\"command\":")
+            second = ToolCallDelta 0 Nothing Nothing (Just "\"ls\"}")
+        mergeToolCallDeltas [] [first, second]
+          @?= [ToolCall "call-1" "run_shell_command" "{\"command\":\"ls\"}"]
     , testCase "parseStreamLine parses SSE and bare JSON lines" $ do
         parseStreamLine "" @?= Nothing
         parseStreamLine "   " @?= Nothing
-        parseStreamLine "data: [DONE]" @?= Just (StreamEvent Nothing Nothing Nothing True)
-        parseStreamLine "data: [DONE]\r" @?= Just (StreamEvent Nothing Nothing Nothing True)
+        parseStreamLine "data: [DONE]" @?= Just (StreamEvent Nothing Nothing Nothing [] True)
+        parseStreamLine "data: [DONE]\r" @?= Just (StreamEvent Nothing Nothing Nothing [] True)
         parseStreamLine "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}"
-          @?= Just (StreamEvent Nothing (Just "hi") Nothing False)
+          @?= Just (StreamEvent Nothing (Just "hi") Nothing [] False)
         parseStreamLine "data: {\"reasoning_content\":\"thinking\"}"
-          @?= Just (StreamEvent (Just "thinking") Nothing Nothing False)
+          @?= Just (StreamEvent (Just "thinking") Nothing Nothing [] False)
         parseStreamLine "data: {\"error\":\"boom\"}"
-          @?= Just (StreamEvent Nothing Nothing (Just "boom") False)
+          @?= Just (StreamEvent Nothing Nothing (Just "boom") [] False)
         parseStreamLine "data: {\"choices\":[{\"finish_reason\":\"stop\"}]}"
-          @?= Just (StreamEvent Nothing Nothing Nothing True)
+          @?= Just (StreamEvent Nothing Nothing Nothing [] True)
         parseStreamLine "{\"content\":\"direct\"}"
-          @?= Just (StreamEvent Nothing (Just "direct") Nothing False)
+          @?= Just (StreamEvent Nothing (Just "direct") Nothing [] False)
         parseStreamLine "data: not-json" @?= Nothing
     , testCase "splitLines keeps partial data in the remainder" $ do
         splitLines "a\nb\n" @?= (["a", "b"], "")

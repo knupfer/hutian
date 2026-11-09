@@ -18,6 +18,11 @@ mode with a dark magenta background. Press `Ctrl+X` to switch to term mode,
 where the input lines have a dark blue background and submitted text runs
 through BusyBox `ash`, so shell builtins and redirection work as expected.
 
+In LLM mode the model can also call a shell tool. Commands requested by the
+model run through the same `/bin/sh -c` execution path as term mode, and the
+input lines used to show them have a dark red background with a bright red
+path.
+
 ## Quick start
 
 ```console
@@ -73,7 +78,14 @@ syntax highlighter. Reasoning/thinking tokens are shown in grey with the same
 Markdown highlighting.
 
 Every LLM request includes the current session's prior conversation: earlier
-LLM prompts, assistant replies, and commands submitted in term mode.
+LLM prompts, assistant replies, commands submitted in term mode, and tool
+calls with their results.
+
+The model can request shell commands through the `run_shell_command` tool.
+Hutian runs each command with `/bin/sh -c` in the current directory, streams
+its output to the terminal, and sends the output back to the model. The
+requested command is shown on input lines with a dark red background and a
+bright red path, distinguishing it from commands typed by the user.
 
 ```console
 Explain what a syscall is.
@@ -229,16 +241,18 @@ The code keeps pure logic separate from IO:
 - `Hutian.Editor` owns prompt state, key semantics, layout, and the pure
   `PromptAction` routing used by the terminal loop.
 - `Hutian.Completion` selects command and path completions.
-- `Hutian.Render` turns a prompt into ANSI output and cursor movement.
+- `Hutian.Render` turns a prompt into ANSI output and cursor movement, including
+  the dark red tool-call style.
 - `Hutian.History`, `Hutian.Conversation`, and `Hutian.Paths` are pure models;
-  `Hutian.History` also owns the pure on-disk history codec.
+  `Hutian.Conversation` also represents tool calls and tool results.
+- `Hutian.History` owns the pure on-disk history codec.
 - `Hutian.Markdown` is a pure streaming renderer for Markdown and ANSI styles.
-- `Hutian.Llm` keeps SSE parsing and request building pure, with IO limited to
-  HTTP and terminal output.
+- `Hutian.Llm` keeps SSE parsing, tool-call accumulation, and request building
+  pure, with IO limited to HTTP and terminal output.
 - `Hutian.Terminal`, `Hutian.Shell`, and `Hutian.Interrupt` are thin IO adapters
   over those pure cores.
 - `Main` is a small interpreter over `Command`, `TerminalInput`, and
-  `ShellState`.
+  `ShellState`, and drives the tool-call loop.
 
 The package uses `GHC2021` and compiles with strict warnings and `-Werror`.
 
@@ -265,9 +279,9 @@ CHANGELOG.md              Release notes
 
 The test suite combines HUnit tests with QuickCheck properties for the editor
 state machine, prompt layout and rendering, command parsing, completion
-selection, history codecs, conversation history, LLM requests and SSE parsing,
-Markdown rendering, code highlighting, path and shell helpers, and interrupt
-handling. It also includes integration tests for:
+selection, history codecs, conversation history, LLM requests, streaming
+tool calls, Markdown rendering, code highlighting, path and shell helpers, and
+interrupt handling. It also includes integration tests for:
 
 - streaming LLM responses through a local HTTP server
 - history file persistence

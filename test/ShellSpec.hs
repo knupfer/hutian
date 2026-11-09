@@ -1,12 +1,14 @@
 module ShellSpec (tests) where
 
 import Control.Exception (finally)
+import Data.List (isInfixOf)
 import Hutian.Interrupt (newInterruptFlag)
 import Hutian.Shell
   ( changeDirectory
   , executableCommands
   , resolveDirectoryTarget
   , runShellCommand
+  , runShellCommandOutput
   , withBuiltins
   )
 import System.Directory
@@ -34,6 +36,13 @@ tests =
         contents <- readFile path
         contents @?= "hello"
         removeFile path
+    , testCase "runShellCommandOutput captures output and exit status" $ do
+        flag <- newInterruptFlag
+        output <- runShellCommandOutput flag "printf hello"
+        output @?= "hello"
+        failed <- runShellCommandOutput flag "printf bad >&2; exit 3"
+        assertBool "stderr should be captured" ("bad" `isInfixOf` failed)
+        assertBool "exit status should be reported" ("[exit 3]" `isInfixOf` failed)
     , testCase "executableCommands includes PATH entries and builtins" $
         withTemporaryDirectory "hutian-shell-path" $ \directory -> do
           let script = directory </> "test-command"

@@ -3,6 +3,7 @@
 -- | Shell command execution and command discovery.
 module Hutian.Shell
   ( runShellCommand
+  , runShellCommandOutput
   , executableCommands
   , changeDirectory
   , resolveDirectoryTarget
@@ -10,7 +11,7 @@ module Hutian.Shell
   ) where
 
 import Control.Exception (IOException, catch)
-import Control.Monad (void)
+import Control.Monad (unless, void)
 import Data.List (nub)
 import Data.Maybe (catMaybes, fromMaybe)
 import Hutian.Interrupt (InterruptFlag, withInterruptFlag)
@@ -24,9 +25,16 @@ import System.Directory
   , setCurrentDirectory
   )
 import System.Environment (lookupEnv)
+import System.Exit (ExitCode (..))
 import System.FilePath (splitSearchPath, (</>))
-import System.IO (hPutStrLn, stderr)
-import System.Process (createProcess, delegate_ctlc, proc, waitForProcess)
+import System.IO (hFlush, hPutStr, hPutStrLn, stderr, stdout)
+import System.Process
+  ( createProcess
+  , delegate_ctlc
+  , proc
+  , readCreateProcessWithExitCode
+  , waitForProcess
+  )
 
 runShellCommand :: InterruptFlag -> String -> IO ()
 runShellCommand interruptFlag line =
@@ -40,6 +48,28 @@ runShellCommand interruptFlag line =
         void (waitForProcess processHandle)
     )
       `catch` \(err :: IOException) -> hPutStrLn stderr ("sh: " ++ show err)
+
+-- | Run a command and return its combined output, so the result can be sent
+-- back to the model. The output is also written to the terminal.
+runShellCommandOutput :: InterruptFlag -> String -> IO String
+runShellCommandOutput interruptFlag line =
+  withInterruptFlag interruptFlag $
+    ( do
+        (exitCode, output, errors) <-
+          readCreateProcessWithExitCode (proc "/bin/sh" ["-c", line]) ""
+        putStr output
+        hPutStr stderr errors
+        unless (null output || last output == '\n') (putStrLn "")
+        hFlush stdout
+        hFlush stderr
+        pure (output ++ errors ++ exitSuffix exitCode)
+    )
+      `catch` \(err :: IOException) -> do
+        hPutStrLn stderr ("sh: " ++ show err)
+        pure ("sh: " ++ show err)
+  where
+    exitSuffix ExitSuccess = ""
+    exitSuffix (ExitFailure code) = "\n[exit " ++ show code ++ "]\n"
 
 changeDirectory :: Maybe String -> IO ()
 changeDirectory target = do

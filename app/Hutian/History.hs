@@ -38,6 +38,7 @@ initialHistoryState = HistoryState Nothing ""
 historyForMode :: PromptMode -> [String] -> [String] -> [String]
 historyForMode LlmMode _ llmHistory = llmHistory
 historyForMode TermMode termHistory _ = termHistory
+historyForMode ToolMode termHistory _ = termHistory
 
 -- | Where submitted input should be remembered. Blank input is not stored.
 data InputDestination
@@ -50,6 +51,7 @@ inputDestination :: PromptMode -> String -> InputDestination
 inputDestination _ text
   | all isSpace text = DiscardInput
 inputDestination TermMode _ = TermHistoryEntry
+inputDestination ToolMode _ = TermHistoryEntry
 inputDestination LlmMode _ = LlmHistoryEntry
 
 -- | Encode history entries into the on-disk line format.

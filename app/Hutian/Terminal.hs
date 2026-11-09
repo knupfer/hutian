@@ -6,6 +6,7 @@ module Hutian.Terminal
   , PromptBuffers
   , initialPromptBuffers
   , promptForInput
+  , renderToolCommand
   , resetTerminal
   ) where
 
@@ -48,7 +49,13 @@ import Hutian.History
   , initialHistoryState
   )
 import Hutian.Paths (formatCompletion, hasTrailingSlash, splitPathWord)
-import Hutian.Render (moveCursorText, prefixFor, promptRenderText, startPromptText)
+import Hutian.Render
+  ( moveCursorText
+  , prefixFor
+  , promptRenderText
+  , startPromptText
+  , toolPromptText
+  )
 import System.Console.Terminal.Size (Window (Window), size)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.IO
@@ -330,6 +337,17 @@ terminalWidth = do
 startPromptLine :: PromptMode -> IO ()
 startPromptLine mode = do
   putStr (startPromptText mode)
+  hFlush stdout
+
+-- | Show a command requested by the model with the tool-call colors.
+renderToolCommand :: String -> String -> IO ()
+renderToolCommand termPrompt command = do
+  interactive <- hIsTerminalDevice stdout
+  if interactive
+    then do
+      width <- terminalWidth
+      putStr (toolPromptText termPrompt width command)
+    else putStrLn command
   hFlush stdout
 
 escape :: Char

@@ -82,6 +82,11 @@ unitTests =
     , testCase "mode toggles both ways" $ do
         toggleMode LlmMode @?= TermMode
         toggleMode TermMode @?= LlmMode
+        toggleMode ToolMode @?= TermMode
+    , testCase "tool mode submits like term mode" $ do
+        promptAction ToolMode initialPrompt KeyEnter @?= PromptSubmit
+        promptAction ToolMode (runText "echo 'open") KeyEnter @?= PromptContinue
+        promptAction ToolMode initialPrompt KeySubmit @?= PromptEdit KeySubmit
     , testCase "each mode keeps an independent prompt buffer" $ do
         let llmDraft = setPromptText "llm draft" initialPrompt
             termDraft = setPromptText "term draft" initialPrompt

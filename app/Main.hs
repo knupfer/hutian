@@ -4,7 +4,7 @@
 module Main (main) where
 
 import Control.Exception (IOException, catch, finally)
-import Control.Monad (when)
+import Control.Monad (foldM, when)
 import Data.Maybe (fromMaybe)
 import GHC.IO.Encoding (setLocaleEncoding)
 import Hutian.Command
@@ -15,8 +15,13 @@ import Hutian.Command
   )
 import Hutian.Conversation
   ( Conversation
+  , ToolCall (..)
+  , appendAssistant
+  , appendAssistantToolCalls
   , appendExchange
   , appendTerminal
+  , appendToolResult
+  , appendUser
   , emptyConversation
   )
 import Hutian.History
@@ -26,14 +31,25 @@ import Hutian.History
   , loadHistoryFile
   )
 import Hutian.Interrupt (InterruptFlag, clearInterrupt, newInterruptFlag)
-import Hutian.Llm (runLlm)
+import Hutian.Llm
+  ( LlmResult (..)
+  , runLlmContinuation
+  , runLlmWithTools
+  , toolCommand
+  )
 import Hutian.Paths (displayPath)
-import Hutian.Shell (changeDirectory, executableCommands, runShellCommand)
+import Hutian.Shell
+  ( changeDirectory
+  , executableCommands
+  , runShellCommand
+  , runShellCommandOutput
+  )
 import Hutian.Terminal
   ( PromptBuffers
   , PromptMode (..)
   , initialPromptBuffers
   , promptForInput
+  , renderToolCommand
   , resetTerminal
   )
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
@@ -125,11 +141,91 @@ rememberInput mode text termHistory llmHistory =
       pure (termHistory, llmHistory ++ [text])
 
 runInput :: InterruptFlag -> PromptMode -> String -> Conversation -> IO (Bool, Conversation)
-runInput interruptFlag LlmMode text conversation = do
-  reply <- runLlm interruptFlag conversation text
-  pure (True, appendExchange text reply conversation)
+runInput interruptFlag LlmMode text conversation =
+  runLlmInput interruptFlag conversation text
 runInput interruptFlag TermMode text conversation =
   runTerminalInput interruptFlag conversation text
+runInput interruptFlag ToolMode text conversation =
+  runTerminalInput interruptFlag conversation text
+
+-- | Run a prompt through the model, executing any shell tools it requests and
+-- feeding the results back until it produces a final answer.
+runLlmInput :: InterruptFlag -> Conversation -> String -> IO (Bool, Conversation)
+runLlmInput interruptFlag conversation prompt = do
+  result <- runLlmWithTools interruptFlag conversation prompt
+  continueLlm
+    interruptFlag
+    (recordPromptResult prompt result conversation)
+    result
+    0
+
+recordPromptResult :: String -> LlmResult -> Conversation -> Conversation
+recordPromptResult prompt result conversation =
+  case llmToolCalls result of
+    [] -> appendExchange prompt (llmResponseText result) conversation
+    calls ->
+      appendAssistantToolCalls
+        (fromMaybe "" (llmResponseText result))
+        calls
+        (appendUser prompt conversation)
+
+recordContinuationResult :: LlmResult -> Conversation -> Conversation
+recordContinuationResult result conversation =
+  case llmToolCalls result of
+    [] -> appendAssistant (fromMaybe "" (llmResponseText result)) conversation
+    calls ->
+      appendAssistantToolCalls
+        (fromMaybe "" (llmResponseText result))
+        calls
+        conversation
+
+continueLlm :: InterruptFlag -> Conversation -> LlmResult -> Int -> IO (Bool, Conversation)
+continueLlm interruptFlag conversation result rounds
+  | null (llmToolCalls result) = pure (True, conversation)
+  | rounds >= maxToolRounds = do
+      putStrLn "llm: stopped after the maximum number of tool calls"
+      pure (True, rejectToolCalls conversation (llmToolCalls result))
+  | otherwise = do
+      conversation' <- runToolCalls interruptFlag conversation (llmToolCalls result)
+      next <- runLlmContinuation interruptFlag conversation'
+      continueLlm
+        interruptFlag
+        (recordContinuationResult next conversation')
+        next
+        (rounds + 1)
+
+maxToolRounds :: Int
+maxToolRounds = 8
+
+rejectToolCalls :: Conversation -> [ToolCall] -> Conversation
+rejectToolCalls =
+  foldl'
+    (\conversation call ->
+       appendToolResult
+         (toolCallId call)
+         "tool error: maximum number of tool calls reached"
+         conversation
+    )
+
+runToolCalls :: InterruptFlag -> Conversation -> [ToolCall] -> IO Conversation
+runToolCalls interruptFlag = foldM (runToolCall interruptFlag)
+
+runToolCall :: InterruptFlag -> Conversation -> ToolCall -> IO Conversation
+runToolCall interruptFlag conversation call =
+  case toolCommand call of
+    Left message ->
+      pure (appendToolResult (toolCallId call) ("tool error: " ++ message) conversation)
+    Right command -> do
+      termPrompt <- currentTermPrompt
+      renderToolCommand termPrompt command
+      output <- runShellCommandOutput interruptFlag command
+      pure (appendToolResult (toolCallId call) output conversation)
+
+currentTermPrompt :: IO String
+currentTermPrompt = do
+  home <- fromMaybe "/" <$> lookupEnv "HOME"
+  cwd <- getCurrentDirectory
+  pure (displayPath home cwd ++ " ")
 
 runTerminalInput :: InterruptFlag -> Conversation -> String -> IO (Bool, Conversation)
 runTerminalInput interruptFlag conversation text =
@@ -155,9 +251,8 @@ runTerminalLine interruptFlag conversation line =
     CommandLlm Nothing -> do
       putStrLn "Press Ctrl+X to switch to llm mode."
       pure (True, appendTerminal line conversation)
-    CommandLlm (Just prompt) -> do
-      reply <- runLlm interruptFlag conversation prompt
-      pure (True, appendExchange prompt reply conversation)
+    CommandLlm (Just prompt) ->
+      runLlmInput interruptFlag conversation prompt
     CommandShell commandLine -> do
       runShellCommand interruptFlag commandLine
       pure (True, appendTerminal line conversation)
@@ -171,6 +266,8 @@ printHelp =
     , "  term mode  run a shell command (dark blue background)"
     , "Ctrl+X toggles between the modes; each mode keeps its own input."
     , "The app starts in llm mode."
+    , "In llm mode the model may call the run_shell_command tool. Tool"
+    , "commands are shown with a dark red background and a bright red path."
     , ""
     , "Term-mode builtins:"
     , "  cd [dir]   change directory (defaults to $HOME)"

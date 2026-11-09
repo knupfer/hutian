@@ -47,8 +47,10 @@
 
         Interaction:
         - In llm mode, return concise, actionable answers.
+        - Use the run_shell_command tool to inspect and verify the workspace.
+          It runs commands with /bin/sh -c in the current directory.
         - In term mode, commands are executed by /bin/sh. Use that mode for
-          inspection and verification, not for sending text to the model.
+          interactive inspection, not for sending text to the model.
         - If a command fails, read the error, form a hypothesis, and try a
           focused alternative.
         - Ask a question only when a decision cannot be inferred from the

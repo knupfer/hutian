@@ -61,10 +61,13 @@ layoutWidth width
   | width <= 0 = 1
   | otherwise = width
 
--- | The two input modes. The prompt background distinguishes them.
+-- | The input modes. The prompt background distinguishes them. 'ToolMode' is
+-- used only to display commands requested by the model; user input is still
+-- edited in 'LlmMode' or 'TermMode'.
 data PromptMode
   = LlmMode
   | TermMode
+  | ToolMode
   deriving stock (Eq, Show)
 
 newtype Row = Row { unRow :: Int }
@@ -106,10 +109,12 @@ initialPromptBuffers = PromptBuffers initialPrompt initialPrompt
 activePrompt :: PromptMode -> PromptBuffers -> Prompt
 activePrompt LlmMode = llmBuffer
 activePrompt TermMode = termBuffer
+activePrompt ToolMode = termBuffer
 
 storePrompt :: PromptMode -> Prompt -> PromptBuffers -> PromptBuffers
 storePrompt LlmMode prompt buffers = buffers { llmBuffer = prompt }
 storePrompt TermMode prompt buffers = buffers { termBuffer = prompt }
+storePrompt ToolMode prompt buffers = buffers { termBuffer = prompt }
 
 clearPrompt :: PromptMode -> PromptBuffers -> PromptBuffers
 clearPrompt mode = storePrompt mode initialPrompt
@@ -147,6 +152,9 @@ data PromptAction
 promptAction :: PromptMode -> Prompt -> Key -> PromptAction
 promptAction LlmMode _ KeySubmit = PromptSubmit
 promptAction TermMode prompt KeyEnter
+  | needsContinuation prompt = PromptContinue
+  | otherwise = PromptSubmit
+promptAction ToolMode prompt KeyEnter
   | needsContinuation prompt = PromptContinue
   | otherwise = PromptSubmit
 promptAction mode prompt key =
@@ -191,6 +199,7 @@ applyKey key prompt =
 toggleMode :: PromptMode -> PromptMode
 toggleMode LlmMode = TermMode
 toggleMode TermMode = LlmMode
+toggleMode ToolMode = TermMode
 
 insertChar :: Char -> Prompt -> Prompt
 insertChar char prompt =
