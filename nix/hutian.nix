@@ -1,7 +1,14 @@
-{ pkgs, packages ? [ ], nix ? false }:
+{
+  pkgs,
+  packages ? [ ],
+  systemPrompt,
+  model,
+  llamaUrl,
+  nix ? false,
+}:
 
 let
-  lib = pkgs.lib;
+  inherit (pkgs) lib;
 
   allPackages = packages ++ lib.optional nix pkgs.nix;
 
@@ -15,7 +22,7 @@ let
 
   binPath = lib.makeBinPath allPackages;
 
-  storeDir = builtins.storeDir;
+  inherit (builtins) storeDir;
   stateDir = "${builtins.dirOf storeDir}/var/nix";
 
   rootfs = pkgs.runCommand "hutian-rootfs" { } ''
@@ -36,7 +43,10 @@ let
 
   shell = pkgs.writeShellApplication {
     name = "hutian";
-    runtimeInputs = with pkgs; [ coreutils gvisor ];
+    runtimeInputs = with pkgs; [
+      coreutils
+      gvisor
+    ];
     text = ''
       rootfs=${rootfs}
       closure=${closure}
@@ -54,25 +64,25 @@ let
       nixVolumes=()
       nixRunscArgs=()
       ${lib.optionalString nix ''
-        # Expose the host store and, when present, the Nix daemon socket.
-        # Builds are performed by the host daemon; the sandbox only reads the
-        # resulting store paths.
-        nixVolumes+=(-volume "${storeDir}:${storeDir}")
-        if [ -S "${stateDir}/daemon-socket/socket" ]; then
-          nixVolumes+=(-volume "${stateDir}/daemon-socket:${stateDir}/daemon-socket")
-          nixRunscArgs+=(--host-uds=open)
-          nixEnv+=(
-            NIX_REMOTE=daemon
-            NIX_STATE_DIR=${stateDir}
-          )
-        fi
+                # Expose the host store and, when present, the Nix daemon socket.
+                # Builds are performed by the host daemon; the sandbox only reads the
+                # resulting store paths.
+                nixVolumes+=(-volume "${storeDir}:${storeDir}")
+                if [ -S "${stateDir}/daemon-socket/socket" ]; then
+                  nixVolumes+=(-volume "${stateDir}/daemon-socket:${stateDir}/daemon-socket")
+                  nixRunscArgs+=(--host-uds=open)
+                  nixEnv+=(
+                    NIX_REMOTE=daemon
+                    NIX_STATE_DIR=${stateDir}
+                  )
+                fi
 
-        nixEnv+=(
-          NIX_CONFIG="experimental-features = nix-command flakes''${NIX_CONFIG:+
-$NIX_CONFIG}"
-          NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
-          XDG_CACHE_HOME=/tmp/nix-cache
-        )
+                nixEnv+=(
+                  NIX_CONFIG="experimental-features = nix-command flakes''${NIX_CONFIG:+
+        $NIX_CONFIG}"
+                  NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+                  XDG_CACHE_HOME=/tmp/nix-cache
+                )
       ''}
 
       if [ "$#" -eq 0 ]; then
@@ -91,8 +101,9 @@ $NIX_CONFIG}"
         LANG="''${LANG:-C.UTF-8}" \
         TMPDIR=/tmp \
         HUTIAN_WORKDIR=/source \
-        HUTIAN_LLAMA_URL="''${HUTIAN_LLAMA_URL:-http://127.0.0.1:8080/v1/chat/completions}" \
-        HUTIAN_LLAMA_MODEL="''${HUTIAN_LLAMA_MODEL:-default}" \
+        HUTIAN_LLAMA_URL=${lib.escapeShellArg llamaUrl} \
+        HUTIAN_LLAMA_MODEL=${lib.escapeShellArg model} \
+        HUTIAN_SYSTEM_PROMPT=${lib.escapeShellArg systemPrompt} \
         "''${nixEnv[@]}" \
         "$(command -v runsc)" \
           --rootless \

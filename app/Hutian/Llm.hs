@@ -4,10 +4,20 @@
 -- | Minimal streaming client for llama.cpp.
 module Hutian.Llm
   ( runLlm
+  , Api (..)
+  , apiFor
+  , requestBodyFor
+  , splitLines
+  , extractContent
+  , extractReasoning
+  , extractError
+  , isStop
+  , decode
+  , defaultEndpoint
   ) where
 
-import Control.Exception (SomeException, fromException, throwIO, try)
-import Control.Monad (unless, when)
+import Control.Exception (SomeException, try)
+import Control.Monad (unless)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -20,28 +30,44 @@ import qualified Data.Text.Encoding as TextEncoding
 import qualified Data.Text.Encoding.Error as TextEncodingError
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
+import Hutian.Conversation
+  ( ChatMessage (..)
+  , Conversation
+  , completionPrompt
+  , requestMessages
+  )
 import Hutian.Interrupt (InterruptFlag, isInterrupted, withInterruptFlag)
+import Hutian.Markdown
+  ( MarkdownState
+  , finishMarkdown
+  , finishMarkdownWith
+  , initialMarkdownState
+  , renderMarkdown
+  , renderMarkdownWith
+  )
 import Network.HTTP.Client
 import Network.HTTP.Types.Status (statusCode)
-import System.Console.Haskeline (Interrupt)
 import System.Environment (lookupEnv)
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
 
-runLlm :: InterruptFlag -> String -> IO ()
-runLlm interruptFlag prompt
-  | all isSpace prompt = pure ()
+runLlm :: InterruptFlag -> Conversation -> String -> IO (Maybe String)
+runLlm interruptFlag conversation prompt
+  | all isSpace prompt = pure Nothing
   | otherwise = do
       url <- fromMaybe defaultEndpoint <$> lookupEnv "HUTIAN_LLAMA_URL"
       model <- fromMaybe "default" <$> lookupEnv "HUTIAN_LLAMA_MODEL"
+      systemPrompt <- fromMaybe "" <$> lookupEnv "HUTIAN_SYSTEM_PROMPT"
       result <-
-        try (withInterruptFlag interruptFlag (streamCompletion interruptFlag url model prompt))
-          :: IO (Either SomeException ())
+        try
+          ( withInterruptFlag interruptFlag $
+              streamCompletion interruptFlag url model systemPrompt conversation prompt
+          )
+          :: IO (Either SomeException (Maybe String))
       case result of
-        Left exception ->
-          case fromException exception :: Maybe Interrupt of
-            Just _ -> throwIO exception
-            Nothing -> hPutStrLn stderr ("llm: " ++ show exception)
-        Right () -> pure ()
+        Left exception -> do
+          hPutStrLn stderr ("llm: " ++ show exception)
+          pure Nothing
+        Right response -> pure response
 
 defaultEndpoint :: String
 defaultEndpoint = "http://127.0.0.1:8080/v1/chat/completions"
@@ -49,37 +75,46 @@ defaultEndpoint = "http://127.0.0.1:8080/v1/chat/completions"
 data Api
   = ChatApi
   | CompletionApi
+  deriving stock (Eq, Show)
 
 apiFor :: String -> Api
 apiFor url
   | "/v1/chat/completions" `isInfixOf` url = ChatApi
   | otherwise = CompletionApi
 
-requestBodyFor :: Api -> String -> String -> Aeson.Value
-requestBodyFor api model prompt =
+requestBodyFor :: Api -> String -> String -> Conversation -> String -> Aeson.Value
+requestBodyFor api model systemPrompt conversation prompt =
   case api of
     ChatApi ->
       object
         [ "model" .= model
-        , "messages" .= [object ["role" .= ("user" :: String), "content" .= prompt]]
+        , "messages" .= map messageValue (requestMessages systemPrompt conversation prompt)
         , "stream" .= True
         ]
     CompletionApi ->
       object
         [ "model" .= model
-        , "prompt" .= prompt
+        , "prompt" .= completionPrompt systemPrompt conversation prompt
         , "stream" .= True
         ]
+  where
+    messageValue message =
+      object
+        [ "role" .= chatRole message
+        , "content" .= chatContent message
+        ]
 
-streamCompletion :: InterruptFlag -> String -> String -> String -> IO ()
-streamCompletion interruptFlag url model prompt = do
+streamCompletion :: InterruptFlag -> String -> String -> String -> Conversation -> String -> IO (Maybe String)
+streamCompletion interruptFlag url model systemPrompt conversation prompt = do
   manager <- newManager defaultManagerSettings
   initialRequest <- parseRequest url
   let request =
         initialRequest
           { method = "POST"
           , requestHeaders = [("Content-Type", "application/json")]
-          , requestBody = RequestBodyLBS (Aeson.encode (requestBodyFor (apiFor url) model prompt))
+          , requestBody =
+              RequestBodyLBS
+                (Aeson.encode (requestBodyFor (apiFor url) model systemPrompt conversation prompt))
           , responseTimeout = responseTimeoutNone
           }
   withResponse request manager $ \response -> do
@@ -89,25 +124,56 @@ streamCompletion interruptFlag url model prompt = do
         body <- readBody (responseBody response) []
         let message = Text.unpack (Text.strip (decode body))
         hPutStrLn stderr ("llm: llama.cpp returned HTTP " ++ show code ++ errorSuffix message)
+        pure Nothing
       else do
         finalState <-
           consumeResponse interruptFlag (responseBody response) BS.empty initialState
-        when (streamPrinted finalState) (putStrLn "")
-        unless (streamSawData finalState) $
+        endState <- finishReasoning finalState
+        let trailing = finishMarkdown (streamMarkdown endState)
+        putStr trailing
+        unless (null trailing) (putStrLn "")
+        unless (streamSawData endState) $
           hPutStrLn stderr "llm: no response content received"
+        pure $
+          if streamSawData endState
+            then Just (Text.unpack (streamAnswerText endState))
+            else Nothing
 
 data StreamState = StreamState
-  { streamPrinted :: Bool
+  { streamMarkdown :: MarkdownState
+  , streamReasoning :: MarkdownState
+  , streamReasoningStarted :: Bool
+  , streamAnswerStarted :: Bool
+  , streamAnswerText :: Text.Text
   , streamSawData :: Bool
   , streamDone :: Bool
   }
 
 initialState :: StreamState
 initialState = StreamState
-  { streamPrinted = False
+  { streamMarkdown = initialMarkdownState
+  , streamReasoning = initialMarkdownState
+  , streamReasoningStarted = False
+  , streamAnswerStarted = False
+  , streamAnswerText = ""
   , streamSawData = False
   , streamDone = False
   }
+
+thinkingGrey :: String
+thinkingGrey = "\ESC[38;5;245m"
+
+finishReasoning :: StreamState -> IO StreamState
+finishReasoning state
+  | not (streamReasoningStarted state) = pure state
+  | otherwise = do
+      let trailing = finishMarkdownWith thinkingGrey (streamReasoning state)
+      unless (null trailing) $ do
+        putStr trailing
+        putStrLn ""
+      putStr "\ESC[0m"
+      hFlush stdout
+      pure state { streamReasoning = initialMarkdownState }
 
 readBody :: BodyReader -> [BS.ByteString] -> IO BS.ByteString
 readBody reader chunks = do
@@ -169,23 +235,64 @@ processJson :: Text.Text -> StreamState -> IO StreamState
 processJson payload state =
   case Aeson.decodeStrict' (TextEncoding.encodeUtf8 payload) of
     Just (Object value) -> do
-      let content = extractContent value
-      case content of
-        Just text -> do
-          putStr (Text.unpack text)
-          hFlush stdout
-        Nothing -> pure ()
+      reasoningState <- renderReasoning (extractReasoning value) state
+      contentState <- renderContent (extractContent value) reasoningState
       case extractError value of
         Just message -> hPutStrLn stderr ("llm: " ++ Text.unpack message)
         Nothing -> pure ()
-      let printed = streamPrinted state || maybe False (not . Text.null) content
-       in pure
-            state
-              { streamPrinted = printed
-              , streamSawData = True
-              , streamDone = streamDone state || isStop value
-              }
+      pure
+        contentState
+          { streamSawData = True
+          , streamDone = streamDone contentState || isStop value
+          }
     _ -> pure state
+
+renderReasoning :: Maybe Text.Text -> StreamState -> IO StreamState
+renderReasoning Nothing state = pure state
+renderReasoning (Just text) state
+  | Text.null text = pure state
+  | otherwise = do
+      let (markdown', output) =
+            renderMarkdownWith thinkingGrey (streamReasoning state) text
+      unless (null output) $ do
+        putStr output
+        hFlush stdout
+      pure
+        state
+          { streamReasoning = markdown'
+          , streamReasoningStarted = True
+          }
+
+renderContent :: Maybe Text.Text -> StreamState -> IO StreamState
+renderContent Nothing state = pure state
+renderContent (Just text) state
+  | Text.null text = pure state
+  | otherwise = do
+      startingAnswer <- transitionFromReasoning state
+      let (markdown', output) =
+            renderMarkdown (streamMarkdown startingAnswer) text
+      unless (null output) $ do
+        putStr output
+        hFlush stdout
+      pure
+        startingAnswer
+          { streamMarkdown = markdown'
+          , streamAnswerStarted = True
+          , streamAnswerText = streamAnswerText startingAnswer <> text
+          }
+
+transitionFromReasoning :: StreamState -> IO StreamState
+transitionFromReasoning state
+  | streamAnswerStarted state = pure state
+  | not (streamReasoningStarted state) = pure state
+  | otherwise = do
+      let trailing = finishMarkdownWith thinkingGrey (streamReasoning state)
+      unless (null trailing) $ do
+        putStr trailing
+        putStrLn ""
+      putStr "\ESC[0m"
+      hFlush stdout
+      pure state { streamReasoning = initialMarkdownState }
 
 extractContent :: KeyMap.KeyMap Value -> Maybe Text.Text
 extractContent value =
@@ -204,6 +311,35 @@ extractContent value =
             _ -> Nothing
         _ -> Nothing
     choiceContent _ = Nothing
+
+extractReasoning :: KeyMap.KeyMap Value -> Maybe Text.Text
+extractReasoning value =
+  firstString reasoningKeys value
+    `orElse` choicesReasoning
+  where
+    choicesReasoning =
+      case KeyMap.lookup "choices" value of
+        Just (Array choices) ->
+          listToMaybe (mapMaybe choiceReasoning (Vector.toList choices))
+        _ -> Nothing
+
+    choiceReasoning (Object choice) =
+      case KeyMap.lookup "delta" choice of
+        Just (Object delta) -> firstString reasoningKeys delta
+        _ -> Nothing
+    choiceReasoning _ = Nothing
+
+    reasoningKeys = ["reasoning_content", "reasoning", "thinking"]
+
+    firstString keys fields =
+      listToMaybe
+        [ text
+        | key <- keys
+        , Just (String text) <- [KeyMap.lookup key fields]
+        ]
+
+    orElse (Just result) _ = Just result
+    orElse Nothing fallback = fallback
 
 extractError :: KeyMap.KeyMap Value -> Maybe Text.Text
 extractError value =

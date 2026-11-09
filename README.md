@@ -13,16 +13,19 @@ The sandbox sees only:
 Everything else on the host is hidden. The root filesystem is built from Nix's
 static BusyBox sandbox shell plus the Haskell `hutian-shell` binary.
 
-The normal shell uses [Haskeline](https://hackage.haskell.org/package/haskeline)
-for line editing, history, and tab completion. External commands run through
-BusyBox `ash`, so shell builtins and redirection work as expected.
+The interactive prompt is a multiline editor with two modes. It starts in LLM
+mode with a dark magenta background. Press `Ctrl+X` to switch to term mode,
+where the input lines have a dark blue background and submitted text runs
+through BusyBox `ash`, so shell builtins and redirection work as expected.
 
 ## Quick start
 
 ```console
 $ cd /some/project
 $ nix run /path/to/this/flake
-hutian:~ $ pwd
+<Ctrl+X>          # switch from llm mode to term mode
+pwd
+<Enter>
 /source
 ```
 
@@ -36,42 +39,67 @@ $ nix run /path/to/this/flake -- /bin/sh -c 'echo hello > result.txt'
 Files written under `/source` appear directly in the host working directory.
 `/tmp` is private to the sandbox, and the sandbox root is read-only.
 
-## Shell behavior
+## Input modes
 
-The Haskell shell provides these builtins:
+The prompt starts in llm mode. `Ctrl+X` switches between llm mode and term
+mode. Each mode keeps its own input buffer: switching saves the current text
+and restores the text of the mode being entered. Submitted text is sent to
+llama.cpp in llm mode and executed with `/bin/sh -c` in term mode.
+
+The common editing keys are:
+
+- `Enter` starts a new line in llm mode and executes the command in term mode.
+  In term mode, a trailing `\` or an unclosed single/double quote continues the
+  command on the next line, just like bash.
+- `Up`/`Down` recall previous input history. In llm mode they first move
+  through the current lines, then browse earlier prompts at the first or last
+  line.
+- `Backspace` and `Delete` edit the text at the cursor; deleting a newline
+  joins the two lines.
+- The arrow keys move the cursor within the message, including between lines,
+  and `Home`/`End` jump to the start or end of the current line.
+- `Tab` completes command names from `PATH` and filesystem paths in term
+  mode. Ambiguous matches are listed below the input.
+- `Ctrl+D` submits the accumulated text in llm mode. In term mode, use `Enter`
+  to run the command.
+- `Ctrl+C` clears the current input and keeps editing.
+
+### LLM mode
+
+LLM mode uses a dark magenta background. This is the initial mode. Replies are
+syntax-highlighted as Markdown, including headings, emphasis, links, lists, and
+fenced code blocks. Fenced blocks tagged with a language use that language's
+syntax highlighter. Reasoning/thinking tokens are shown in grey with the same
+Markdown highlighting.
+
+Every LLM request includes the current session's prior conversation: earlier
+LLM prompts, assistant replies, and commands submitted in term mode.
+
+```console
+Explain what a syscall is.
+<Ctrl+D>
+```
+
+### Term mode
+
+Term mode uses a dark blue background and shows the current path in vibrant
+teal before the input. It provides these builtins:
 
 | Command | Description |
 | --- | --- |
 | `cd [dir]` | Change directory, defaulting to `$HOME`. |
 | `pwd` | Print the current directory. |
-| `llm [prompt]` | Send a prompt to llama.cpp and stream the response. |
+| `llm [prompt]` | Send a one-off prompt to llama.cpp and stream the response. |
 | `help` | Show the builtin help. |
 | `exit`, `quit` | Leave the shell. |
 
-Everything else is executed with `/bin/sh -c` inside the sandbox.
+Everything else is executed with `/bin/sh -c` inside the sandbox. `Ctrl+C`
+cancels the current input, command, or LLM request without terminating the
+shell. Term command history is stored in `/tmp/hutian-shell-history`, and LLM
+prompt history in `/tmp/hutian-llm-history`.
 
-`Ctrl+D` at the normal prompt exits the shell. `Ctrl+C` cancels the current
-input, command, or LLM request without terminating the shell.
-
-## LLM mode
-
-Typing `llm` starts a multiline prompt. The background turns dark magenta while
-you enter text; there is no textual prompt prefix.
-
-- `Enter` starts a new line.
-- `Backspace` and `Delete` edit the current line.
-- `Ctrl+D` sends the accumulated message, even when the current line is not
-  empty.
-- `Ctrl+C` cancels the message without sending it and leaves the typed text
-  visible.
-
-```console
-hutian:~ $ llm
-Explain what a syscall is.
-<Ctrl+D>
-```
-
-By default Hutian uses the OpenAI-compatible llama.cpp endpoint:
+The flake requires an explicit `llamaUrl`. Hutian expects an OpenAI-compatible
+llama.cpp chat endpoint; a native `/completion` URL is also supported.
 
 ```text
 http://127.0.0.1:8080/v1/chat/completions
@@ -81,8 +109,9 @@ Configure it with:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `HUTIAN_LLAMA_URL` | `http://127.0.0.1:8080/v1/chat/completions` | llama.cpp endpoint. A native `/completion` URL is also supported. |
-| `HUTIAN_LLAMA_MODEL` | `default` | Model name sent to llama.cpp. |
+| `HUTIAN_LLAMA_URL` | set by `llamaUrl` | llama.cpp endpoint. A native `/completion` URL is also supported. |
+| `HUTIAN_LLAMA_MODEL` | set by `model` | Model name sent to llama.cpp. |
+| `HUTIAN_SYSTEM_PROMPT` | set by `systemPrompt` | System message sent to llama.cpp. |
 
 The sandbox uses gVisor's `sandbox` network mode by default, which can reach a
 server bound to the host's loopback interface.
@@ -93,6 +122,9 @@ server bound to the host's loopback interface.
 package selector. Each selected package's runtime closure is mounted under
 `/nix/store`, and its `bin` directory is added to `PATH`.
 
+The required `systemPrompt`, `model`, and `llamaUrl` arguments configure the
+system message, model name, and llama.cpp endpoint:
+
 ```nix
 {
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -101,6 +133,11 @@ package selector. Each selected package's runtime closure is mounted under
   outputs = { nixpkgs, hutian, ... }:
     hutian.lib.mkHutianShellFlake nixpkgs {
       packages = pkgs: with pkgs; [ coreutils git ];
+      model = "your-model";
+      llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
+      systemPrompt = ''
+        You are a careful coding assistant working in a sandboxed shell.
+      '';
     };
 }
 ```
@@ -125,6 +162,9 @@ For a single system or an existing `pkgs` instance, use the lower-level builder:
 hutian.lib.mkHutianShell {
   inherit pkgs;
   packages = [ pkgs.git pkgs.jq ];
+  model = "your-model";
+  llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
+  systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
 }
 ```
 
@@ -138,6 +178,9 @@ Pass `nix = true` to include Nix and connect it to the host's Nix daemon:
 outputs = { nixpkgs, hutian, ... }:
   hutian.lib.mkHutianShellFlake nixpkgs {
     packages = pkgs: with pkgs; [ coreutils git ];
+    model = "your-model";
+    llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
+    systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
     nix = true;
   };
 ```
@@ -160,8 +203,9 @@ configured package closures.
 | --- | --- | --- |
 | `GVISOR_PLATFORM` | `systrap` | gVisor platform. Use `ptrace` if your host requires it. |
 | `GVISOR_NETWORK` | `sandbox` | gVisor network mode: `sandbox`, `host`, or `none`. |
-| `HUTIAN_LLAMA_URL` | see above | llama.cpp endpoint. |
-| `HUTIAN_LLAMA_MODEL` | `default` | llama.cpp model name. |
+| `HUTIAN_LLAMA_URL` | set by `llamaUrl` | llama.cpp endpoint. |
+| `HUTIAN_LLAMA_MODEL` | set by `model` | llama.cpp model name. |
+| `HUTIAN_SYSTEM_PROMPT` | set by `systemPrompt` | System message sent to llama.cpp. |
 
 ## Security model
 
@@ -182,8 +226,58 @@ configured package closures.
 flake.nix                 Flake outputs and consumer helpers
 nix/hutian.nix            Sandbox rootfs, launcher, and wrapper
 nix/hutian-shell.nix      Haskell package definition
-haskell-shell/            Haskell shell source and cabal file
+app/                      Haskell shell source
+test/                     Unit and property tests
+hutian-shell.cabal        Haskell package manifest
 example.nix               Minimal consumer flake
+CHANGELOG.md              Release notes
+```
+
+## Testing
+
+The test suite combines HUnit tests with QuickCheck properties for the editor
+state machine, prompt layout, conversation history, LLM requests, Markdown
+rendering, code highlighting, path and shell helpers, and interrupt handling.
+It also includes integration tests for:
+
+- streaming LLM responses through a local HTTP server
+- history file persistence
+- shell command execution and command discovery
+
+Run it through Nix:
+
+```console
+$ nix build .#packages.x86_64-linux.default
+```
+
+The package build runs the suite as part of the standard build. With a local
+Cabal setup, `cabal test` runs the same tests directly.
+
+The flake also exposes a check that verifies the required Nix options are
+propagated:
+
+```console
+$ nix build .#checks.x86_64-linux.required-options
+```
+
+## Linting
+
+Haskell and Nix lint checks are available through the flake:
+
+```console
+$ nix build .#checks.x86_64-linux.haskell-lint
+$ nix build .#checks.x86_64-linux.nix-lint
+```
+
+`haskell-lint` runs HLint over `app/` and `test/`. `nix-lint` runs Statix and
+DeadNix over the flake and Nix files. These linters also run automatically in
+the package check phase, so a normal `nix build` fails on lint errors.
+`nix flake check` runs the explicit checks along with the package build.
+
+Format all Nix files with the configured `nixfmt-tree` formatter:
+
+```console
+$ nix fmt
 ```
 
 ## Requirements
