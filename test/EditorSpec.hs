@@ -22,8 +22,8 @@ unitTests =
     "unit"
     [ testCase "initial prompt is a single empty line" $ do
         lineList initialPrompt @?= [""]
-        promptRow initialPrompt @?= Row 0
-        promptColumn initialPrompt @?= Column 0
+        unRow (promptRow initialPrompt) @?= 0
+        unColumn (promptColumn initialPrompt) @?= 0
         promptGoal initialPrompt @?= Nothing
     , testCase "typing appends at the cursor" $ do
         let prompt = runText "abc"
@@ -57,7 +57,7 @@ unitTests =
             upTwice = applyKey KeyUp upOnce
         cursor prompt @?= (2, 6)
         cursor upOnce @?= (1, 1)
-        promptGoal upOnce @?= Just (GoalColumn 6)
+        fmap unGoalColumn (promptGoal upOnce) @?= Just 6
         cursor upTwice @?= (0, 6)
     , testCase "down keeps the goal column and stops at the last line" $ do
         let prompt = run (text "ab" ++ [KeyEnter] ++ text "x")
@@ -65,16 +65,16 @@ unitTests =
             down = applyKey KeyDown up
             downAgain = applyKey KeyDown down
         cursor up @?= (0, 1)
-        promptGoal up @?= Just (GoalColumn 1)
+        fmap unGoalColumn (promptGoal up) @?= Just 1
         cursor down @?= (1, 1)
-        promptGoal down @?= Just (GoalColumn 1)
+        fmap unGoalColumn (promptGoal down) @?= Just 1
         cursor downAgain @?= (1, 1)
     , testCase "horizontal movement clears the goal column" $ do
         let prompt = run (text "ab" ++ [KeyEnter] ++ text "x")
             up = applyKey KeyUp prompt
             down = applyKey KeyDown up
             left = applyKey KeyLeft down
-        promptGoal down @?= Just (GoalColumn 1)
+        fmap unGoalColumn (promptGoal down) @?= Just 1
         promptGoal left @?= Nothing
     , testCase "Home and End move within the current line" $ do
         let prompt = run (text "abc" ++ [KeyHome, KeyEnd])
@@ -122,6 +122,13 @@ unitTests =
         wrapLine 5 "abcdefgh" @?= ["abcde", "fgh"]
         wrapLine 3 "abcdef" @?= ["abc", "def"]
         wrapLine 3 "" @?= [""]
+    , testCase "wrapLine clamps non-positive widths" $ do
+        wrapLine 0 "abc" @?= ["a", "b", "c"]
+        wrapLine (-3) "abc" @?= ["a", "b", "c"]
+        wrapLine 0 "" @?= [""]
+    , testCase "layout clamps non-positive widths" $ do
+        cursorPosition 0 "" (runText "abc") @?= (3, 0)
+        physicalRows 0 "" (runText "ab") @?= ["a", "b", ""]
     , testCase "cursorPosition accounts for wrapping" $ do
         cursorPosition 3 "" (runText "abcdefg") @?= (2, 1)
     , testCase "physicalRows includes a row for a cursor at a wrap boundary" $ do
@@ -132,6 +139,7 @@ unitTests =
         prefixCharacterCounts 4 ["abc", "def"] @?= [3, 1]
         prefixCharacterCounts 9 ["abc", "def"] @?= [3, 3]
         prefixCharacterCounts 2 [] @?= []
+        prefixCharacterCounts (-2) ["abc", "def"] @?= [0, 0]
     , testCase "a prompt prefix is included in the first line layout" $ do
         let prompt = runText "abc"
         physicalRows 6 "~ $ " prompt @?= ["~ $ ab", "c"]
@@ -239,6 +247,8 @@ propertyTests =
     , testProperty "Enter, up, end, delete restores the prompt lines" prop_enterDelete
     , testProperty "left then right restores the cursor except at the start" prop_leftRight
     , testProperty "wrapped chunks concatenate back to the line" prop_wrapLine
+    , testProperty "wrapLine clamps non-positive widths" prop_wrapLineClampsWidth
+    , testProperty "cursorPosition clamps non-positive widths" prop_cursorPositionClampsWidth
     , testProperty "physical rows start with the wrapped content" prop_physicalRows
     , testProperty "the cursor is always inside the rendered rows" prop_cursorPosition
     , testProperty "the cursor stays inside rows with a prompt prefix" prop_prefixCursorPosition
@@ -363,6 +373,27 @@ prop_wrapLine width line =
   where
     width' = boundedWidth width
     chunks = wrapLine width' line
+
+prop_wrapLineClampsWidth :: Int -> String -> Property
+prop_wrapLineClampsWidth width line =
+  counterexample (show chunks) $
+    concat chunks === line
+      .&&. property (all ((<= effective) . length) chunks)
+      .&&. property (not (null chunks))
+  where
+    effective = max 1 width
+    chunks = wrapLine width line
+
+prop_cursorPositionClampsWidth :: Int -> Property
+prop_cursorPositionClampsWidth width =
+  forAll keySequence $ \keys ->
+    let prompt = run keys
+        effective = max 1 width
+        (row, column) = cursorPosition width "" prompt
+        rows = physicalRows width "" prompt
+     in counterexample (show prompt ++ " at width " ++ show width) $
+          property (row >= 0 && row < length rows)
+            .&&. property (column >= 0 && column < effective)
 
 prop_physicalRows :: Int -> Property
 prop_physicalRows width =

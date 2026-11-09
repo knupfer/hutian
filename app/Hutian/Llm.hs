@@ -21,6 +21,7 @@ import Control.Exception (SomeException, try)
 import Control.Monad (unless)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Key (Key)
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
 import Data.Char (isSpace)
@@ -292,73 +293,66 @@ transitionFromReasoning state
 
 extractContent :: KeyMap.KeyMap Value -> Maybe Text.Text
 extractContent value =
-  case KeyMap.lookup "content" value of
-    Just (String text) -> Just text
-    _ ->
-      case KeyMap.lookup "choices" value of
-        Just (Array choices) -> listToMaybe (mapMaybe choiceContent (Vector.toList choices))
-        _ -> Nothing
-  where
-    choiceContent (Object choice) =
-      case KeyMap.lookup "delta" choice of
-        Just (Object delta) ->
-          case KeyMap.lookup "content" delta of
-            Just (String text) -> Just text
-            _ -> Nothing
-        _ -> Nothing
-    choiceContent _ = Nothing
+  lookupString "content" value
+    <|> listToMaybe (mapMaybe (lookupString "content") (deltas value))
 
 extractReasoning :: KeyMap.KeyMap Value -> Maybe Text.Text
 extractReasoning value =
   firstString reasoningKeys value
-    <|> choicesReasoning
+    <|> listToMaybe (mapMaybe (firstString reasoningKeys) (deltas value))
   where
-    choicesReasoning =
-      case KeyMap.lookup "choices" value of
-        Just (Array choices) ->
-          listToMaybe (mapMaybe choiceReasoning (Vector.toList choices))
-        _ -> Nothing
-
-    choiceReasoning (Object choice) =
-      case KeyMap.lookup "delta" choice of
-        Just (Object delta) -> firstString reasoningKeys delta
-        _ -> Nothing
-    choiceReasoning _ = Nothing
-
     reasoningKeys = ["reasoning_content", "reasoning", "thinking"]
-
-    firstString keys fields =
-      listToMaybe
-        [ text
-        | key <- keys
-        , Just (String text) <- [KeyMap.lookup key fields]
-        ]
 
 extractError :: KeyMap.KeyMap Value -> Maybe Text.Text
 extractError value =
   case KeyMap.lookup "error" value of
     Just (String message) -> Just message
     Just (Object nested) ->
-      case KeyMap.lookup "message" nested of
-        Just (String message) -> Just message
-        _ -> Just (Text.pack (show (Object nested)))
+      lookupString "message" nested
+        <|> Just (Text.pack (show (Object nested)))
     _ -> Nothing
 
 isStop :: KeyMap.KeyMap Value -> Bool
 isStop value =
   case KeyMap.lookup "stop" value of
     Just (Bool True) -> True
-    _ ->
-      case KeyMap.lookup "choices" value of
-        Just (Array choices) -> any choiceFinished (Vector.toList choices)
-        _ -> False
+    _ -> any choiceFinished (choices value)
   where
-    choiceFinished (Object choice) =
+    choiceFinished choice =
       case KeyMap.lookup "finish_reason" choice of
         Nothing -> False
         Just Null -> False
         Just _ -> True
-    choiceFinished _ = False
+
+-- | The choice objects of a streaming response.
+choices :: KeyMap.KeyMap Value -> [KeyMap.KeyMap Value]
+choices value =
+  case KeyMap.lookup "choices" value of
+    Just (Array items) -> [choice | Object choice <- Vector.toList items]
+    _ -> []
+
+-- | The non-empty delta objects of a streaming response.
+deltas :: KeyMap.KeyMap Value -> [KeyMap.KeyMap Value]
+deltas = mapMaybe delta . choices
+  where
+    delta choice =
+      case KeyMap.lookup "delta" choice of
+        Just (Object fields) -> Just fields
+        _ -> Nothing
+
+lookupString :: Key -> KeyMap.KeyMap Value -> Maybe Text.Text
+lookupString key fields =
+  case KeyMap.lookup key fields of
+    Just (String text) -> Just text
+    _ -> Nothing
+
+firstString :: [Key] -> KeyMap.KeyMap Value -> Maybe Text.Text
+firstString keys fields =
+  listToMaybe
+    [ text
+    | key <- keys
+    , Just (String text) <- [KeyMap.lookup key fields]
+    ]
 
 decode :: BS.ByteString -> Text.Text
 decode = TextEncoding.decodeUtf8With TextEncodingError.lenientDecode

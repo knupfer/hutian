@@ -3,9 +3,9 @@
 -- | Pure editor state, key semantics, and layout used by the interactive prompt.
 module Hutian.Editor
   ( PromptMode (..)
-  , Row (..)
-  , Column (..)
-  , GoalColumn (..)
+  , Row (unRow)
+  , Column (unColumn)
+  , GoalColumn (unGoalColumn)
   , Prompt
   , promptLines
   , promptRow
@@ -52,6 +52,13 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, listToMaybe)
 
 {-@ type Pos = {v:Int | v > 0} @-}
+
+-- | Clamp a terminal width to a usable positive value.
+{-@ layoutWidth :: width:Int -> Pos @-}
+layoutWidth :: Int -> Int
+layoutWidth width
+  | width <= 0 = 1
+  | otherwise = width
 
 -- | The two input modes. The prompt background distinguishes them.
 data PromptMode
@@ -365,13 +372,14 @@ splice :: Int -> Int -> [a] -> [a] -> [a]
 splice start count replacement values =
   take start values ++ replacement ++ drop (start + count) values
 
-{-@ physicalRows :: width:Pos -> String -> Prompt -> [String] @-}
+{-@ physicalRows :: width:Int -> String -> Prompt -> [String] @-}
 physicalRows :: Int -> String -> Prompt -> [String]
 physicalRows width prefix prompt =
-  let inputRows = concatMap (wrapLine width) (renderedLines prefix prompt)
-      suggestionRows = concatMap (wrapLine width) (suggestionLines prompt)
+  let width' = layoutWidth width
+      inputRows = concatMap (wrapLine width') (renderedLines prefix prompt)
+      suggestionRows = concatMap (wrapLine width') (suggestionLines prompt)
       content = inputRows ++ suggestionRows
-      (cursorRow, _) = cursorPosition width prefix prompt
+      (cursorRow, _) = cursorPosition width' prefix prompt
       needed = cursorRow + 1
    in content ++ replicate (max 0 (needed - length content)) ""
 
@@ -381,27 +389,28 @@ suggestionLines prompt =
     [] -> []
     matches -> ["  " ++ intercalate "  " matches]
 
-{-@ suggestionRowCount :: width:Pos -> Prompt -> Nat @-}
+{-@ suggestionRowCount :: width:Int -> Prompt -> Nat @-}
 suggestionRowCount :: Int -> Prompt -> Int
 suggestionRowCount width prompt =
-  length (concatMap (wrapLine width) (suggestionLines prompt))
+  length (concatMap (wrapLine (layoutWidth width)) (suggestionLines prompt))
 
 -- | Distribute a prompt prefix across its rendered rows.
 prefixCharacterCounts :: Int -> [String] -> [Int]
-prefixCharacterCounts = go
+prefixCharacterCounts count = go (max 0 count)
   where
     go _ [] = []
     go remaining (row : rest) =
       let used = min remaining (length row)
        in used : go (remaining - used) rest
 
-{-@ cursorPosition :: width:Pos -> String -> Prompt -> (Int, Int) @-}
+{-@ cursorPosition :: width:Int -> String -> Prompt -> (Int, Int) @-}
 cursorPosition :: Int -> String -> Prompt -> (Int, Int)
 cursorPosition width prefix prompt =
-  let starts = lineStarts width (renderedLines prefix prompt)
+  let width' = layoutWidth width
+      starts = lineStarts width' (renderedLines prefix prompt)
       column = firstLineOffset + unColumn (promptColumn prompt)
       start = fromMaybe 0 (atMay starts (unRow (promptRow prompt)))
-   in (start + column `div` width, column `mod` width)
+   in (start + column `div` width', column `mod` width')
   where
     firstLineOffset
       | unRow (promptRow prompt) == 0 = length prefix
@@ -412,19 +421,20 @@ renderedLines prefix prompt =
   let first :| rest = promptLines prompt
    in (prefix ++ first) : rest
 
-{-@ lineStarts :: width:Pos -> [String] -> [Nat] @-}
+{-@ lineStarts :: width:Int -> [String] -> [Nat] @-}
 lineStarts :: Int -> [String] -> [Int]
-lineStarts width = scanl (+) 0 . map (length . wrapLine width)
+lineStarts width = scanl (+) 0 . map (length . wrapLine (layoutWidth width))
 
-{-@ wrapLine :: width:Pos -> String -> [String] @-}
+{-@ wrapLine :: width:Int -> String -> [String] @-}
 wrapLine :: Int -> String -> [String]
 wrapLine width line
   | null line = [""]
   | otherwise = go line
   where
+    width' = layoutWidth width
     go [] = []
     go rest =
-      let (chunk, remainder) = splitAt width rest
+      let (chunk, remainder) = splitAt width' rest
        in chunk : go remainder
 
 completionTarget :: Prompt -> (Int, String)
@@ -486,7 +496,7 @@ maxSuggestions = 20
 
 longestCommonPrefix :: [String] -> String
 longestCommonPrefix [] = ""
-longestCommonPrefix (first : rest) = foldl commonPrefix first rest
+longestCommonPrefix (first : rest) = foldl' commonPrefix first rest
   where
     commonPrefix a b = map fst (takeWhile (uncurry (==)) (zip a b))
 

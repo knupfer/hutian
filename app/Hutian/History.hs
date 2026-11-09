@@ -15,6 +15,8 @@ module Hutian.History
 
 import Control.Exception (IOException, catch)
 import Data.Maybe (fromMaybe)
+import qualified Data.Text as Text
+import qualified Data.Text.IO as TextIO
 import Hutian.Editor (Prompt, PromptMode (..), atMay, promptText, setPromptText)
 
 data HistoryState = HistoryState
@@ -84,10 +86,10 @@ unescapeHistory (char : rest) = char : unescapeHistory rest
 
 loadHistoryFile :: FilePath -> IO [String]
 loadHistoryFile path = do
-  contents <- readFile path `catch` \(_ :: IOException) -> pure ""
-  pure (map unescapeHistory (lines contents))
+  contents <- TextIO.readFile path `catch` \(_ :: IOException) -> pure Text.empty
+  pure (map unescapeHistory (lines (Text.unpack contents)))
 
 appendHistoryFile :: FilePath -> String -> IO ()
 appendHistoryFile path text =
-  appendFile path (escapeHistory text ++ "\n")
+  TextIO.appendFile path (Text.pack (escapeHistory text ++ "\n"))
     `catch` \(_ :: IOException) -> pure ()

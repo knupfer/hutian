@@ -9,7 +9,7 @@ module Hutian.Markdown
   ) where
 
 import Data.Char (isControl, isDigit, isSpace)
-import Data.List (intercalate, isPrefixOf)
+import Data.List (intercalate, isPrefixOf, mapAccumL)
 import qualified Data.Text as Text
 import Skylighting
   ( ANSIColorLevel (..)
@@ -48,14 +48,12 @@ renderMarkdownWith :: String -> MarkdownState -> Text.Text -> (MarkdownState, St
 renderMarkdownWith base state chunk =
   let (completeLines, partial) =
         splitCompleteLines (markdownPartial state ++ Text.unpack chunk)
-      (state', chunks) =
-        foldl renderOne (state { markdownPartial = partial }, []) completeLines
-   in (state', concat (reverse chunks))
-  where
-    renderOne (current, chunks) line =
-      let (next, renderedLines) = renderLine base current line
-          renderedChunks = map (++ "\n") renderedLines
-       in (next, reverse renderedChunks ++ chunks)
+      (state', renderedLines) =
+        mapAccumL
+          (renderLine base)
+          (state { markdownPartial = partial })
+          completeLines
+   in (state', unlines (concat renderedLines))
 
 finishMarkdown :: MarkdownState -> String
 finishMarkdown = finishMarkdownWith ""

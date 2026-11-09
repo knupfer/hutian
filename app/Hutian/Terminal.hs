@@ -17,7 +17,7 @@ import Hutian.Editor
   , Prompt
   , PromptBuffers
   , PromptMode (..)
-  , Row (..)
+  , Row (unRow)
   , SubmitIntent (..)
   , activePrompt
   , applyCompletion
@@ -128,7 +128,7 @@ withRawTerminal action = do
 rawAttributes :: TerminalAttributes -> TerminalAttributes
 rawAttributes original =
   let withoutInputModes =
-        foldl withoutMode original
+        foldl' withoutMode original
           [ ProcessInput
           , EnableEcho
           , EchoErase
@@ -137,7 +137,7 @@ rawAttributes original =
           , ExtendedFunctions
           ]
       withOutputModes =
-        foldl withMode withoutInputModes
+        foldl' withMode withoutInputModes
           [ ProcessOutput
           , MapLFtoCRLF
           ]
@@ -324,17 +324,8 @@ readCsi parameters = do
     Left _ -> pure KeyIgnore
 
 readSs3 :: IO Key
-readSs3 = do
-  next <- readChar
-  pure $
-    case next of
-      Right 'A' -> KeyUp
-      Right 'B' -> KeyDown
-      Right 'C' -> KeyRight
-      Right 'D' -> KeyLeft
-      Right 'H' -> KeyHome
-      Right 'F' -> KeyEnd
-      _ -> KeyIgnore
+readSs3 =
+  either (const KeyIgnore) (csiKey "") <$> readChar
 
 readChar :: IO (Either IOException Char)
 readChar = try getChar

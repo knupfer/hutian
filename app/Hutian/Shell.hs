@@ -28,13 +28,16 @@ import System.Process (createProcess, delegate_ctlc, proc, waitForProcess)
 
 runShellCommand :: InterruptFlag -> String -> IO ()
 runShellCommand interruptFlag line =
-  withInterruptFlag interruptFlag $ do
-    (_, _, _, processHandle) <-
-      createProcess
-        (proc "/bin/sh" ["-c", line])
-          { delegate_ctlc = False
-          }
-    void (waitForProcess processHandle)
+  withInterruptFlag interruptFlag $
+    ( do
+        (_, _, _, processHandle) <-
+          createProcess
+            (proc "/bin/sh" ["-c", line])
+              { delegate_ctlc = False
+              }
+        void (waitForProcess processHandle)
+    )
+      `catch` \(err :: IOException) -> hPutStrLn stderr ("sh: " ++ show err)
 
 changeDirectory :: [String] -> IO ()
 changeDirectory args = do

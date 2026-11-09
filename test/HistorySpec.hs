@@ -1,10 +1,10 @@
 module HistorySpec (tests) where
 
 import Hutian.Editor
-  ( Column (..)
+  ( Column (unColumn)
   , Prompt
   , PromptMode (..)
-  , Row (..)
+  , Row (unRow)
   , initialPrompt
   , promptColumn
   , promptRow
@@ -62,8 +62,8 @@ unitTests =
         let start = initialPrompt
             (_, prompt) = recallUp ["line one\nline two"] initialHistoryState start
         promptText prompt @?= "line one\nline two\n"
-        promptRow prompt @?= Row 1
-        promptColumn prompt @?= Column 8
+        unRow (promptRow prompt) @?= 1
+        unColumn (promptColumn prompt) @?= 8
     , testCase "history encoding preserves backslashes and newlines" $ do
         escapeHistory "plain" @?= "plain"
         escapeHistory "a\\b" @?= "a\\\\b"

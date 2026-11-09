@@ -24,6 +24,12 @@ All notable changes to Hutian are documented here. The format follows
   `Hutian.Editor`.
 - Simplified history navigation, Markdown prefix matching, and streaming
   reasoning output.
+- Removed the remaining partial functions from application code; `NonEmpty.head`
+  is now the only `head` use and is total.
+- Made prompt layout total for non-positive widths and hid the `Row`,
+  `Column`, and `GoalColumn` constructors.
+- Read and wrote history files strictly to avoid lazy IO errors.
+- Simplified LLM choice/delta traversal and Markdown chunk accumulation.
 - Switched the default language to `GHC2021`.
 - Fixed `displayPath` incorrectly abbreviating sibling directories such as
   `/home/user2` for a home of `/home/user`.
