@@ -274,6 +274,16 @@ DeadNix over the flake and Nix files. These linters also run automatically in
 the package check phase, so a normal `nix build` fails on lint errors.
 `nix flake check` runs the explicit checks along with the package build.
 
+LiquidHaskell verifies the pure `Hutian.Paths`, `Hutian.Conversation`,
+`Hutian.Editor`, and `Hutian.History` modules:
+
+```console
+$ nix build .#checks.x86_64-linux.liquid
+```
+
+This verification also runs automatically as a package-build dependency, so a
+normal `nix build` fails if the LiquidHaskell check fails.
+
 Format all Nix files with the configured `nixfmt-tree` formatter:
 
 ```console

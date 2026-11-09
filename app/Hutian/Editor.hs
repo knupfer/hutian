@@ -1,3 +1,5 @@
+{-@ LIQUID "--no-termination" @-}
+
 -- | Pure editor state, key semantics, and layout used by the interactive prompt.
 module Hutian.Editor
   ( PromptMode (..)
@@ -47,6 +49,8 @@ import Data.List (intercalate, isPrefixOf)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, listToMaybe)
+
+{-@ type Pos = {v:Int | v > 0} @-}
 
 -- | The two input modes. The prompt background distinguishes them.
 data PromptMode
@@ -360,6 +364,7 @@ splice :: Int -> Int -> [a] -> [a] -> [a]
 splice start count replacement values =
   take start values ++ replacement ++ drop (start + count) values
 
+{-@ physicalRows :: width:Pos -> String -> Prompt -> [String] @-}
 physicalRows :: Int -> String -> Prompt -> [String]
 physicalRows width prefix prompt =
   let inputRows = concatMap (wrapLine width) (renderedLines prefix prompt)
@@ -375,10 +380,12 @@ suggestionLines prompt =
     [] -> []
     matches -> ["  " ++ intercalate "  " matches]
 
+{-@ suggestionRowCount :: width:Pos -> Prompt -> Nat @-}
 suggestionRowCount :: Int -> Prompt -> Int
 suggestionRowCount width prompt =
   length (concatMap (wrapLine width) (suggestionLines prompt))
 
+{-@ cursorPosition :: width:Pos -> String -> Prompt -> (Int, Int) @-}
 cursorPosition :: Int -> String -> Prompt -> (Int, Int)
 cursorPosition width prefix prompt =
   let starts = lineStarts width (renderedLines prefix prompt)
@@ -395,9 +402,11 @@ renderedLines prefix prompt =
   let first :| rest = promptLines prompt
    in (prefix ++ first) : rest
 
+{-@ lineStarts :: width:Pos -> [String] -> [Nat] @-}
 lineStarts :: Int -> [String] -> [Int]
 lineStarts width = scanl (+) 0 . map (length . wrapLine width)
 
+{-@ wrapLine :: width:Pos -> String -> [String] @-}
 wrapLine :: Int -> String -> [String]
 wrapLine width line
   | null line = [""]

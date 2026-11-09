@@ -7,6 +7,7 @@ module Hutian.Paths
 import Data.List (stripPrefix)
 import System.FilePath ((</>))
 
+{-@ displayPath :: home:{v:FilePath | len v > 0} -> cwd:{v:FilePath | len v > 0} -> {v:FilePath | len v > 0} @-}
 displayPath :: FilePath -> FilePath -> FilePath
 displayPath home cwd =
   case stripPrefix home cwd of

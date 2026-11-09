@@ -147,6 +147,29 @@
                 deadnix --fail .
                 ${pkgs.coreutils}/bin/touch $out
               '';
+          liquid =
+            pkgs.runCommand "hutian-liquid"
+              {
+                nativeBuildInputs = [
+                  (pkgs.haskellPackages.ghcWithPackages (h: [
+                    h.filepath
+                    h.liquidhaskell
+                  ]))
+                  pkgs.z3
+                ];
+              }
+              ''
+                cp -r ${self} source
+                chmod -R u+w source
+                cd source
+                ghc -XDerivingStrategies -fno-code -iapp \
+                  -fplugin=LiquidHaskell \
+                  app/Hutian/Paths.hs \
+                  app/Hutian/Conversation.hs \
+                  app/Hutian/Editor.hs \
+                  app/Hutian/History.hs
+                ${pkgs.coreutils}/bin/touch $out
+              '';
           required-options = pkgs.runCommand "hutian-required-options-check" { } ''
             ${pkgs.gnugrep}/bin/grep -F 'HUTIAN_SYSTEM_PROMPT=' ${probe}/bin/hutian
             ${pkgs.gnugrep}/bin/grep -F 'probe system prompt' ${probe}/bin/hutian

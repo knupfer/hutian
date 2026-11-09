@@ -26,6 +26,8 @@ data HistoryState = HistoryState
 initialHistoryState :: HistoryState
 initialHistoryState = HistoryState Nothing ""
 
+{-@ historyForMode :: m:PromptMode -> termHistory:[String] -> llmHistory:[String] ->
+      {v:[String] | len v == len termHistory || len v == len llmHistory} @-}
 historyForMode :: PromptMode -> [String] -> [String] -> [String]
 historyForMode LlmMode _ llmHistory = llmHistory
 historyForMode TermMode termHistory _ = termHistory

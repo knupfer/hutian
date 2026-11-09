@@ -5,6 +5,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0.0] - 2026-11-09
+
 ### Added
 
 - Two-mode interactive prompt. The app starts in LLM mode, and `Ctrl+X`
@@ -21,6 +23,8 @@ All notable changes to Hutian are documented here. The format follows
   and backslash/quote continuation.
 - HUnit, QuickCheck, integration, filesystem, and shell tests.
 - HLint, Statix, and DeadNix checks integrated into the build.
+- LiquidHaskell verification of the pure path, conversation, editor, and
+  history modules, also run as part of the package build.
 - `nixfmt-tree` formatting through `nix fmt`.
 - Strict GHC warnings with `-Werror`.
 - Type-safety improvements: `Row`/`Column`/`GoalColumn` newtypes, private
