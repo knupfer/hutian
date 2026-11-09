@@ -15,6 +15,7 @@ import Control.Monad (unless, void)
 import Data.List (nub)
 import Data.Maybe (catMaybes, fromMaybe)
 import Hutian.Interrupt (InterruptFlag, withInterruptFlag)
+import Hutian.Output (grayOutputText)
 import Hutian.Paths (expandHome)
 import System.Directory
   ( doesDirectoryExist
@@ -27,7 +28,7 @@ import System.Directory
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (splitSearchPath, (</>))
-import System.IO (hFlush, hPutStr, hPutStrLn, stderr, stdout)
+import System.IO (hFlush, hIsTerminalDevice, hPutStr, hPutStrLn, stderr, stdout)
 import System.Process
   ( createProcess
   , delegate_ctlc
@@ -57,8 +58,10 @@ runShellCommandOutput interruptFlag line =
     ( do
         (exitCode, output, errors) <-
           readCreateProcessWithExitCode (proc "/bin/sh" ["-c", line]) ""
-        putStr output
-        hPutStr stderr errors
+        outputIsTerminal <- hIsTerminalDevice stdout
+        errorsAreTerminal <- hIsTerminalDevice stderr
+        putStr (grayOutputText outputIsTerminal output)
+        hPutStr stderr (grayOutputText errorsAreTerminal errors)
         unless (null output || last output == '\n') (putStrLn "")
         hFlush stdout
         hFlush stderr

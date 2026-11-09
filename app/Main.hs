@@ -37,6 +37,7 @@ import Hutian.Llm
   , runLlmWithTools
   , toolCommand
   )
+import Hutian.Output (withGrayOutput)
 import Hutian.Paths (displayPath)
 import Hutian.Shell
   ( changeDirectory
@@ -233,7 +234,7 @@ runTerminalInput interruptFlag conversation text =
     NoTerminalInput -> pure (True, conversation)
     SingleLineInput line -> runTerminalLine interruptFlag conversation line
     MultiLineInput script -> do
-      runShellCommand interruptFlag script
+      withGrayOutput (runShellCommand interruptFlag script)
       pure (True, appendTerminal script conversation)
 
 runTerminalLine :: InterruptFlag -> Conversation -> String -> IO (Bool, Conversation)
@@ -241,20 +242,20 @@ runTerminalLine interruptFlag conversation line =
   case parseCommandLine line of
     CommandEmpty -> pure (True, conversation)
     CommandExit -> pure (False, conversation)
-    CommandHelp -> printHelp >> pure (True, appendTerminal line conversation)
+    CommandHelp -> withGrayOutput printHelp >> pure (True, appendTerminal line conversation)
     CommandPrintDirectory -> do
-      putStrLn =<< getCurrentDirectory
+      withGrayOutput (putStrLn =<< getCurrentDirectory)
       pure (True, appendTerminal line conversation)
     CommandChangeDirectory target -> do
-      changeDirectory target
+      withGrayOutput (changeDirectory target)
       pure (True, appendTerminal line conversation)
     CommandLlm Nothing -> do
-      putStrLn "Press Ctrl+X to switch to llm mode."
+      withGrayOutput (putStrLn "Press Ctrl+X to switch to llm mode.")
       pure (True, appendTerminal line conversation)
     CommandLlm (Just prompt) ->
       runLlmInput interruptFlag conversation prompt
     CommandShell commandLine -> do
-      runShellCommand interruptFlag commandLine
+      withGrayOutput (runShellCommand interruptFlag commandLine)
       pure (True, appendTerminal line conversation)
 
 printHelp :: IO ()
@@ -268,6 +269,7 @@ printHelp =
     , "The app starts in llm mode."
     , "In llm mode the model may call the run_shell_command tool. Tool"
     , "commands are shown with a dark red background and a bright red path."
+    , "Command output in term mode and from tool calls is gray."
     , ""
     , "Term-mode builtins:"
     , "  cd [dir]   change directory (defaults to $HOME)"

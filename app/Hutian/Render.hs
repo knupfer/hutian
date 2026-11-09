@@ -5,6 +5,8 @@ module Hutian.Render
   , moveCursorText
   , startPromptText
   , prefixFor
+  , grayForeground
+  , reset
   ) where
 
 import Hutian.Editor
@@ -109,9 +111,10 @@ pathForegroundFor TermMode = tealForeground
 pathForegroundFor ToolMode = brightRedForeground
 pathForegroundFor LlmMode = tealForeground
 
-tealForeground, brightRedForeground, defaultForeground, clearToEnd, clearLine, reset :: String
+tealForeground, brightRedForeground, grayForeground, defaultForeground, clearToEnd, clearLine, reset :: String
 tealForeground = "\ESC[38;2;0;255;200m"
 brightRedForeground = "\ESC[38;2;255;0;0m"
+grayForeground = "\ESC[38;2;160;160;160m"
 defaultForeground = "\ESC[39m"
 clearToEnd = "\ESC[0J"
 clearLine = "\ESC[K"

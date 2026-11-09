@@ -29,6 +29,7 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
+- Term-mode and tool-call command output is now gray.
 - `mkHutianShell` and `mkHutianShellFlake` now require a `readOnly` argument.
 - Simplified the flake outputs and package definition, and factored the lint
   and LiquidHaskell checks into a shared `mkCheck` helper.

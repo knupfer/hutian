@@ -2,6 +2,7 @@ module RenderSpec (tests) where
 
 import Data.List (isInfixOf, isSuffixOf)
 import Hutian.Editor (PromptMode (..), cursorPosition, initialPrompt, setPromptText)
+import Hutian.Output (grayOutputText)
 import Hutian.Render
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -68,6 +69,12 @@ tests =
         assertBool
           "nothing after the final newline may change colors"
           (not ("\ESC" `isInfixOf` afterNewline))
+    , testCase "grayOutputText wraps terminal output and resets" $
+        grayOutputText True "hello" @?= grayForeground ++ "hello" ++ reset
+    , testCase "grayOutputText leaves non-terminal output unchanged" $
+        grayOutputText False "hello" @?= "hello"
+    , testCase "grayOutputText leaves empty output unchanged" $
+        grayOutputText True "" @?= ""
     ]
 
 resetSequence :: String

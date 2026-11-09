@@ -85,7 +85,7 @@ calls with their results.
 
 The model can request shell commands through the `run_shell_command` tool.
 Hutian runs each command with `/bin/sh -c` in the current directory, streams
-its output to the terminal, and sends the output back to the model. The
+its output to the terminal in gray, and sends the output back to the model. The
 requested command is shown on input lines with a dark red background and a
 bright red path, distinguishing it from commands typed by the user.
 
@@ -96,8 +96,8 @@ Explain what a syscall is.
 
 ### Term mode
 
-Term mode uses a dark blue background and shows the current path in vibrant
-teal before the input. It provides these builtins:
+Term mode uses a dark blue background, shows the current path in vibrant teal
+before the input, and prints command output in gray. It provides these builtins:
 
 | Command | Description |
 | --- | --- |
