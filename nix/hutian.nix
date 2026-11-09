@@ -10,6 +10,7 @@
 
 let
   inherit (pkgs) lib;
+  inherit (builtins) dirOf storeDir;
 
   allPackages = packages ++ lib.optional nix pkgs.nix;
 
@@ -23,8 +24,7 @@ let
 
   binPath = lib.makeBinPath allPackages;
 
-  inherit (builtins) storeDir;
-  stateDir = "${builtins.dirOf storeDir}/var/nix";
+  stateDir = "${dirOf storeDir}/var/nix";
 
   rootfs = pkgs.runCommand "hutian-rootfs" { } ''
     mkdir -p "$out/bin" "$out/source" "$out/etc" "$out${storeDir}"

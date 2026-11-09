@@ -4,17 +4,11 @@
 }:
 
 let
-  source = src;
-  lint = import ./lint.nix {
-    inherit pkgs;
-    src = source;
-  };
-  base = pkgs.haskellPackages.callCabal2nix "hutian-shell" source { };
+  inherit (pkgs) lib;
+
+  lint = import ./lint.nix { inherit pkgs src; };
+  base = pkgs.haskell.lib.dontHaddock (pkgs.haskellPackages.callCabal2nix "hutian-shell" src { });
 in
-pkgs.haskell.lib.overrideCabal (pkgs.haskell.lib.dontHaddock base) (old: {
-  testDepends = (old.testDepends or [ ]) ++ [
-    lint.haskell
-    lint.liquid
-    lint.nix
-  ];
+pkgs.haskell.lib.overrideCabal base (old: {
+  testDepends = (old.testDepends or [ ]) ++ lib.attrValues lint;
 })

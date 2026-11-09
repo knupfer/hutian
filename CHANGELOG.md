@@ -5,6 +5,11 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Simplified the flake outputs and package definition, and factored the lint
+  and LiquidHaskell checks into a shared `mkCheck` helper.
+
 ## [0.2.0.0] - 2026-11-09
 
 ### Added

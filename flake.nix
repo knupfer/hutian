@@ -7,21 +7,25 @@
     { self, nixpkgs }:
     let
       inherit (nixpkgs) lib;
+
       defaultSystems = [
         "x86_64-linux"
         "aarch64-linux"
       ];
       forAllSystems = lib.genAttrs defaultSystems;
+      pkgsFor = system: nixpkgs.legacyPackages.${system};
 
       # Used only by this flake's own package. Consumers must pass their own
       # required `systemPrompt`, `model`, and `llamaUrl` options.
-      defaultSystemPrompt = ''
-        You are a careful coding assistant working inside a sandboxed shell.
-        Prefer small, verifiable changes and explain commands before destructive
-        actions.
-      '';
-      defaultModel = "default";
-      defaultLlamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
+      defaults = {
+        systemPrompt = ''
+          You are a careful coding assistant working inside a sandboxed shell.
+          Prefer small, verifiable changes and explain commands before destructive
+          actions.
+        '';
+        model = "default";
+        llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
+      };
 
       mkHutianShell = import ./nix/hutian.nix;
 
@@ -41,6 +45,7 @@
           model,
           llamaUrl,
           nix ? false,
+          src ? null,
           systems ? defaultSystems,
           pkgsFor ? (system: nixpkgs.legacyPackages.${system}),
         }:
@@ -50,16 +55,19 @@
             let
               pkgs = pkgsFor system;
             in
-            mkHutianShell {
-              inherit
-                pkgs
-                nix
-                systemPrompt
-                model
-                llamaUrl
-                ;
-              packages = packages pkgs;
-            };
+            mkHutianShell (
+              {
+                inherit
+                  pkgs
+                  nix
+                  systemPrompt
+                  model
+                  llamaUrl
+                  ;
+                packages = packages pkgs;
+              }
+              // lib.optionalAttrs (src != null) { inherit src; }
+            );
         in
         {
           packages = lib.genAttrs systems (system: {
@@ -70,6 +78,12 @@
             default = mkApp "${mkPackage system}/bin/hutian";
           });
         };
+
+      built = mkHutianShellFlake nixpkgs {
+        inherit (defaults) systemPrompt model llamaUrl;
+        packages = _: [ ];
+        src = self;
+      };
     in
     {
       # Import this from another flake:
@@ -93,27 +107,18 @@
       #     };
       lib = { inherit mkHutianShell mkHutianShellFlake; };
 
-      packages = forAllSystems (system: {
-        default = mkHutianShell {
-          pkgs = nixpkgs.legacyPackages.${system};
-          packages = [ ];
-          systemPrompt = defaultSystemPrompt;
-          model = defaultModel;
-          llamaUrl = defaultLlamaUrl;
-          src = self;
-        };
-      });
+      inherit (built) packages apps;
 
-      apps = forAllSystems (system: {
-        default = mkApp "${self.packages.${system}.default}/bin/hutian";
-      });
-
-      formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt-tree);
+      formatter = forAllSystems (system: (pkgsFor system).nixfmt-tree);
 
       checks = forAllSystems (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          pkgs = pkgsFor system;
+          lint = import ./nix/lint.nix {
+            inherit pkgs;
+            src = self;
+          };
           probe = mkHutianShell {
             inherit pkgs;
             packages = [ ];
@@ -122,21 +127,22 @@
             llamaUrl = "http://probe.invalid/v1/chat/completions";
             src = self;
           };
-          lint = import ./nix/lint.nix {
-            inherit pkgs;
-            src = self;
-          };
+          expected = [
+            "HUTIAN_SYSTEM_PROMPT="
+            "probe system prompt"
+            "HUTIAN_LLAMA_MODEL=probe-model"
+            "HUTIAN_LLAMA_URL=http://probe.invalid/v1/chat/completions"
+          ];
         in
         {
-          package = self.packages.${system}.default;
+          package = built.packages.${system}.default;
           haskell-lint = lint.haskell;
           nix-lint = lint.nix;
           inherit (lint) liquid;
           required-options = pkgs.runCommand "hutian-required-options-check" { } ''
-            ${pkgs.gnugrep}/bin/grep -F 'HUTIAN_SYSTEM_PROMPT=' ${probe}/bin/hutian
-            ${pkgs.gnugrep}/bin/grep -F 'probe system prompt' ${probe}/bin/hutian
-            ${pkgs.gnugrep}/bin/grep -F 'HUTIAN_LLAMA_MODEL=probe-model' ${probe}/bin/hutian
-            ${pkgs.gnugrep}/bin/grep -F 'HUTIAN_LLAMA_URL=http://probe.invalid/v1/chat/completions' ${probe}/bin/hutian
+            ${lib.concatMapStrings (pattern: ''
+              ${pkgs.gnugrep}/bin/grep -F ${lib.escapeShellArg pattern} ${probe}/bin/hutian
+            '') expected}
             ${pkgs.coreutils}/bin/touch $out
           '';
         }
