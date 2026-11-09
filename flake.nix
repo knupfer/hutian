@@ -16,7 +16,7 @@
       pkgsFor = system: nixpkgs.legacyPackages.${system};
 
       # Used only by this flake's own package. Consumers must pass their own
-      # required `systemPrompt`, `model`, and `llamaUrl` options.
+      # required `systemPrompt`, `model`, `llamaUrl`, and `readOnly` options.
       defaults = {
         systemPrompt = ''
           You are a careful coding assistant working inside a sandboxed shell.
@@ -25,6 +25,7 @@
         '';
         model = "default";
         llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
+        readOnly = false;
       };
 
       mkHutianShell = import ./nix/hutian.nix;
@@ -44,6 +45,7 @@
           systemPrompt,
           model,
           llamaUrl,
+          readOnly,
           nix ? false,
           src ? null,
           systems ? defaultSystems,
@@ -63,6 +65,7 @@
                   systemPrompt
                   model
                   llamaUrl
+                  readOnly
                   ;
                 packages = packages pkgs;
               }
@@ -80,7 +83,12 @@
         };
 
       built = mkHutianShellFlake nixpkgs {
-        inherit (defaults) systemPrompt model llamaUrl;
+        inherit (defaults)
+          systemPrompt
+          model
+          llamaUrl
+          readOnly
+          ;
         packages = _: [ ];
         src = self;
       };
@@ -94,6 +102,7 @@
       #     systemPrompt = "You are a coding assistant.";
       #     model = "your-model";
       #     llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
+      #     readOnly = false;
       #   }
       #
       # Or, for a minimal consumer flake:
@@ -104,6 +113,7 @@
       #       systemPrompt = "You are a coding assistant.";
       #       model = "your-model";
       #       llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
+      #       readOnly = false;
       #     };
       lib = { inherit mkHutianShell mkHutianShellFlake; };
 
@@ -125,6 +135,16 @@
             systemPrompt = "probe system prompt";
             model = "probe-model";
             llamaUrl = "http://probe.invalid/v1/chat/completions";
+            readOnly = false;
+            src = self;
+          };
+          readOnlyProbe = mkHutianShell {
+            inherit pkgs;
+            packages = [ ];
+            systemPrompt = "probe system prompt";
+            model = "probe-model";
+            llamaUrl = "http://probe.invalid/v1/chat/completions";
+            readOnly = true;
             src = self;
           };
           expected = [
@@ -145,6 +165,15 @@
             '') expected}
             ${pkgs.coreutils}/bin/touch $out
           '';
+          read-only-option = pkgs.runCommand "hutian-read-only-option-check" { } ''
+            ${pkgs.gnugrep}/bin/grep -F 'hutian-read-only' ${readOnlyProbe}/bin/hutian
+            if ${pkgs.gnugrep}/bin/grep -F 'hutian-read-only' ${probe}/bin/hutian; then
+              echo "readOnly = false must not use the read-only wrapper" >&2
+              exit 1
+            fi
+            ${pkgs.coreutils}/bin/touch $out
+          '';
+          read-only-mount = lint.readOnlyMount;
         }
       );
     };

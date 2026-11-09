@@ -7,6 +7,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Added
 
+- A required `readOnly` option. When true, the host working directory is
+  bind-mounted read-only at `/source`, so the sandbox cannot modify it.
 - LLM tool calls. The model can request shell commands through the
   `run_shell_command` tool, which runs `/bin/sh -c` in the current directory
   and feeds the output back into the conversation.
@@ -27,6 +29,7 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
+- `mkHutianShell` and `mkHutianShellFlake` now require a `readOnly` argument.
 - Simplified the flake outputs and package definition, and factored the lint
   and LiquidHaskell checks into a shared `mkCheck` helper.
 - Replaced stringly-typed chat roles with `ChatRole`.

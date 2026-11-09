@@ -5,7 +5,8 @@ Hutian is a Nix flake that drops you into a rootless
 
 The sandbox sees only:
 
-- the current working directory, mounted read-write at `/source`;
+- the current working directory, mounted at `/source` read-write by default or
+  read-only when `readOnly = true`;
 - the runtime closures of the packages you configure, mounted under
   `/nix/store`;
 - optionally, when `nix = true`, the host Nix store and Nix daemon socket.
@@ -41,8 +42,9 @@ $ nix run /path/to/this/flake -- echo hello
 $ nix run /path/to/this/flake -- /bin/sh -c 'echo hello > result.txt'
 ```
 
-Files written under `/source` appear directly in the host working directory.
-`/tmp` is private to the sandbox, and the sandbox root is read-only.
+Files written under `/source` appear directly in the host working directory
+unless `readOnly = true`. `/tmp` is private to the sandbox, and the sandbox root
+is read-only.
 
 ## Input modes
 
@@ -110,8 +112,9 @@ cancels the current input, command, or LLM request without terminating the
 shell. Term command history is stored in `/tmp/hutian-shell-history`, and LLM
 prompt history in `/tmp/hutian-llm-history`.
 
-The flake requires an explicit `llamaUrl`. Hutian expects an OpenAI-compatible
-llama.cpp chat endpoint; a native `/completion` URL is also supported.
+The flake requires explicit `llamaUrl` and `readOnly` options. Hutian expects
+an OpenAI-compatible llama.cpp chat endpoint; a native `/completion` URL is
+also supported.
 
 ```text
 http://127.0.0.1:8080/v1/chat/completions
@@ -134,8 +137,9 @@ server bound to the host's loopback interface.
 package selector. Each selected package's runtime closure is mounted under
 `/nix/store`, and its `bin` directory is added to `PATH`.
 
-The required `systemPrompt`, `model`, and `llamaUrl` arguments configure the
-system message, model name, and llama.cpp endpoint:
+The required `systemPrompt`, `model`, `llamaUrl`, and `readOnly` arguments
+configure the system message, model name, llama.cpp endpoint, and whether the
+host working directory is writable:
 
 ```nix
 {
@@ -147,12 +151,17 @@ system message, model name, and llama.cpp endpoint:
       packages = pkgs: with pkgs; [ coreutils git ];
       model = "your-model";
       llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
+      readOnly = false;
       systemPrompt = ''
         You are a careful coding assistant working in a sandboxed shell.
       '';
     };
 }
 ```
+
+Set `readOnly = true` to mount `/source` read-only. The sandbox can still read
+the working directory, but any attempt to write to it fails with a read-only
+filesystem error. This is useful when the model should only inspect a project.
 
 Then run `nix run .` from that project. Package versions come from the consumer
 flake's lock file.
@@ -176,6 +185,7 @@ hutian.lib.mkHutianShell {
   packages = [ pkgs.git pkgs.jq ];
   model = "your-model";
   llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
+  readOnly = false;
   systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
 }
 ```
@@ -192,6 +202,7 @@ outputs = { nixpkgs, hutian, ... }:
     packages = pkgs: with pkgs; [ coreutils git ];
     model = "your-model";
     llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
+    readOnly = false;
     systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
     nix = true;
   };
@@ -227,6 +238,7 @@ configured package closures.
 - With the default `sandbox` network mode, the sandbox can reach the host's
   loopback interface. Set `GVISOR_NETWORK=none` to disable networking.
 - Writes outside `/source`, `/tmp`, and the mounted package store are refused.
+  Set `readOnly = true` to refuse writes to `/source` as well.
 - With `nix = true`, the full host `/nix/store` and the Nix daemon socket are
   visible. Other host paths remain hidden.
 - The sandbox uses the `systrap` platform by default. Set

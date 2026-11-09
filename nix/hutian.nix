@@ -4,6 +4,7 @@
   systemPrompt,
   model,
   llamaUrl,
+  readOnly,
   nix ? false,
   src ? ../.,
 }:
@@ -15,6 +16,8 @@ let
   allPackages = packages ++ lib.optional nix pkgs.nix;
 
   hutianShell = pkgs.callPackage ./hutian-shell.nix { inherit src; };
+
+  readOnlyWrapper = import ./read-only.nix { inherit pkgs; };
 
   # The runtime closure is mounted at the same paths inside the sandbox. Nix
   # additionally needs a CA bundle for HTTPS fetches performed by the client.
@@ -93,33 +96,42 @@ let
         set -- /bin/sh -c 'cd /source && HOME=/source PATH="/bin''${GVISOR_PATH:+:$GVISOR_PATH}"; export HOME PATH; "$@"' sh "$@"
       fi
 
+      sandbox=(
+        env -i
+        PATH=/bin:${binPath}
+        HOME=/source
+        GVISOR_PATH=${binPath}
+        TERM="''${TERM:-xterm-256color}"
+        LANG="''${LANG:-C.UTF-8}"
+        TMPDIR=/tmp
+        HUTIAN_WORKDIR=/source
+        HUTIAN_LLAMA_URL=${lib.escapeShellArg llamaUrl}
+        HUTIAN_LLAMA_MODEL=${lib.escapeShellArg model}
+        HUTIAN_SYSTEM_PROMPT=${lib.escapeShellArg systemPrompt}
+        "''${nixEnv[@]}"
+        "$(command -v runsc)"
+          --rootless
+          --network "$network"
+          "''${nixRunscArgs[@]}"
+          --platform "$platform"
+          'do'
+            -quiet
+            -root "$rootfs"
+            -cwd /
+            -force-overlay=false
+            "''${volumes[@]}"
+            "''${nixVolumes[@]}"
+            -volume "$sourcedir:/source"
+            "$@"
+      )
+
       status=0
-      env -i \
-        PATH=/bin:${binPath} \
-        HOME=/source \
-        GVISOR_PATH=${binPath} \
-        TERM="''${TERM:-xterm-256color}" \
-        LANG="''${LANG:-C.UTF-8}" \
-        TMPDIR=/tmp \
-        HUTIAN_WORKDIR=/source \
-        HUTIAN_LLAMA_URL=${lib.escapeShellArg llamaUrl} \
-        HUTIAN_LLAMA_MODEL=${lib.escapeShellArg model} \
-        HUTIAN_SYSTEM_PROMPT=${lib.escapeShellArg systemPrompt} \
-        "''${nixEnv[@]}" \
-        "$(command -v runsc)" \
-          --rootless \
-          --network "$network" \
-          "''${nixRunscArgs[@]}" \
-          --platform "$platform" \
-          'do' \
-            -quiet \
-            -root "$rootfs" \
-            -cwd / \
-            -force-overlay=false \
-            "''${volumes[@]}" \
-            "''${nixVolumes[@]}" \
-            -volume "$sourcedir:/source" \
-            "$@" || status=$?
+      ${lib.optionalString readOnly ''
+        ${readOnlyWrapper} "$sourcedir" "''${sandbox[@]}" || status=$?
+      ''}
+      ${lib.optionalString (!readOnly) ''
+        "''${sandbox[@]}" || status=$?
+      ''}
 
       # Keep the host terminal usable even if the sandbox leaves it in raw mode.
       if [ -n "''${saved_tty:-}" ]; then

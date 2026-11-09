@@ -20,6 +20,10 @@
       model = "Qwen3.8-Flash-Next-IQ4_XS";
       llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
 
+      # Mount the host working directory read-only at /source. Set this to
+      # true to let the model inspect a project without modifying it.
+      readOnly = false;
+
       systemPrompt = ''
         You are a coding agent operating inside the Hutian sandbox.
 
