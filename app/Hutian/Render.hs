@@ -70,8 +70,8 @@ promptRenderText termPrompt mode previousRow width prompt =
 toolPromptText :: String -> Int -> String -> String
 toolPromptText termPrompt width command =
   fst (promptRenderText termPrompt ToolMode 0 width (setPromptText command initialPrompt))
-    ++ "\n"
     ++ reset
+    ++ "\n"
 
 -- | Render the sequence that moves from one cursor position to another.
 moveCursorText :: (Int, Int) -> (Int, Int) -> String

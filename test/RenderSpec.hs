@@ -1,6 +1,6 @@
 module RenderSpec (tests) where
 
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, isSuffixOf)
 import Hutian.Editor (PromptMode (..), cursorPosition, initialPrompt, setPromptText)
 import Hutian.Render
 import Test.Tasty
@@ -50,4 +50,31 @@ tests =
         assertBool "bright red path" ("\ESC[38;2;255;0;0m" `isInfixOf` output)
         assertBool "command text" ("echo hi" `isInfixOf` output)
         assertBool "resets colors" ("\ESC[0m" `isInfixOf` output)
+    , testCase "toolPromptText resets the background before the final newline" $ do
+        let output = toolPromptText "~ $ " 80 "echo hi"
+            (beforeNewline, afterNewline) = splitLastNewline output
+        assertBool
+          "reset must come before the newline"
+          (resetSequence `isSuffixOf` beforeNewline)
+        assertBool
+          "nothing after the newline may change colors"
+          (not ("\ESC" `isInfixOf` afterNewline))
+    , testCase "multiline toolPromptText resets before the final newline" $ do
+        let output = toolPromptText "~ $ " 80 "echo one\necho two"
+            (beforeNewline, afterNewline) = splitLastNewline output
+        assertBool
+          "reset must come before the final newline"
+          (resetSequence `isSuffixOf` beforeNewline)
+        assertBool
+          "nothing after the final newline may change colors"
+          (not ("\ESC" `isInfixOf` afterNewline))
     ]
+
+resetSequence :: String
+resetSequence = "\ESC[0m"
+
+splitLastNewline :: String -> (String, String)
+splitLastNewline text =
+  case break (== '\n') (reverse text) of
+    (afterNewline, '\n' : beforeNewline) -> (reverse beforeNewline, reverse afterNewline)
+    _ -> (text, "")
