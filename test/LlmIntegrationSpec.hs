@@ -15,6 +15,7 @@ import Data.Maybe (fromMaybe)
 import Hutian.Conversation (ConversationEntry (..), ToolCall (..))
 import Hutian.Interrupt (newInterruptFlag)
 import Hutian.Llm (LlmResult (..), LlmSettings (..), runLlm, runLlmWithTools)
+import Hutian.Render (grayForeground)
 import Network.Socket
   ( Family (AF_INET)
   , SockAddr (SockAddrInet)
@@ -64,7 +65,7 @@ tests =
         result @?= Just "# Answer\n**bold**\n"
         assertBool "thinking should be labelled" ("\ESC[1;38;2;0;255;200mthink:" `isInfixOf` output)
         assertBool "answer should be labelled" ("\ESC[1;38;2;0;255;200manswer:" `isInfixOf` output)
-        assertBool "thinking should be grey" ("\ESC[38;5;245m" `isInfixOf` output)
+        assertBool "thinking should be grey" (grayForeground `isInfixOf` output)
         assertBool "heading should be highlighted" ("\ESC[38;5;81m" `isInfixOf` output)
         assertBool "bold should be highlighted" ("\ESC[1;38;5;222m" `isInfixOf` output)
         assertBool "reasoning should not be part of the answer" (not ("thinking" `isInfixOf` fromMaybe "" result))

@@ -22,8 +22,8 @@ work as expected.
 
 In LLM mode the model can also call the `shell` tool. Commands requested by the
 model run through the same `/bin/sh -c` execution path as term mode, and are
-shown with a bold teal `tool shell:` line. The output of shell commands and
-tool calls is preceded by a light-coloured `output:` line.
+shown with a bold teal `tool shell:` line. Shell output is preceded by a light
+`output:` line and tool output by a light `tool output:` line.
 
 ## Quick start
 
@@ -87,8 +87,8 @@ calls with their results.
 
 The model can request shell commands through the `shell` tool. Hutian runs each
 command with `/bin/sh -c` in the sandbox working directory, streams its output
-to the terminal in gray under a light teal `output:` line, and sends the output
-back to the model. Every call runs in a fresh shell, so `cd`, exported
+to the terminal in gray under a light teal `tool output:` line, and sends the
+output back to the model. Every call runs in a fresh shell, so `cd`, exported
 variables, and other shell state do not persist between calls. The requested
 command is shown under a bold teal `tool shell:` line, distinguishing it from
 commands typed by the user.

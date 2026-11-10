@@ -64,7 +64,7 @@ import Hutian.Markdown
   , renderMarkdown
   , renderMarkdownWith
   )
-import Hutian.Render (boldTeal, reset)
+import Hutian.Render (boldTeal, grayForeground, reset)
 import Network.HTTP.Client
 import Network.HTTP.Types.Status (statusCode)
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
@@ -365,8 +365,9 @@ initialState = StreamState
   , streamDone = False
   }
 
+-- | Thinking text uses the same grey as command output.
 thinkingGrey :: String
-thinkingGrey = "\ESC[38;5;245m"
+thinkingGrey = grayForeground
 
 flushReasoning :: StreamState -> IO StreamState
 flushReasoning state

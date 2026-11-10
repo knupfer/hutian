@@ -11,8 +11,8 @@ All notable changes to Hutian are documented here. The format follows
   emphasis, links, lists, and fenced code blocks.
 - LLM mode shows a bold pink `ask:` line before the input, and its replies are
   labelled with bold teal `think:` and `answer:` lines.
-- Shell and tool output is preceded by an `output:` line in a light version of
-  the command's role colour.
+- Shell output is preceded by an `output:` line and tool output by a
+  `tool output:` line, each in a light version of the command's role colour.
 
 ### Changed
 

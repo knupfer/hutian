@@ -133,9 +133,9 @@ boldVibrantPink,
 
 boldVibrantPink = "\ESC[1;38;2;255;20;147m"
 boldTeal = "\ESC[1;38;2;0;255;200m"
-lightPinkForeground = "\ESC[38;2;255;150;205m"
-lightTealForeground = "\ESC[38;2;140;255;225m"
-grayForeground = "\ESC[38;2;160;160;160m"
+lightPinkForeground = "\ESC[38;2;255;150;200m"
+lightTealForeground = "\ESC[38;2;150;255;200m"
+grayForeground = "\ESC[38;2;130;130;130m"
 clearToEnd = "\ESC[0J"
 clearLine = "\ESC[K"
 reset = "\ESC[0m"

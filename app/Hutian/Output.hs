@@ -8,7 +8,7 @@ module Hutian.Output
 
 import Control.Exception (finally)
 import Control.Monad (when)
-import Hutian.Editor (PromptMode)
+import Hutian.Editor (PromptMode (..))
 import Hutian.Render (grayForeground, outputForeground, reset)
 import System.IO (hFlush, hIsTerminalDevice, hPutStr, stderr, stdout)
 
@@ -18,12 +18,19 @@ grayOutputText interactive text
   | interactive && not (null text) = grayForeground ++ text ++ reset
   | otherwise = text
 
--- | The 'output:' label for a command role, coloured when interactive. The
+-- | The label printed above command output, coloured when interactive. The
 -- colour is a light version of the role's prompt colour.
 outputLabelText :: PromptMode -> Bool -> String
 outputLabelText mode interactive
-  | interactive = outputForeground mode ++ "output:" ++ reset
-  | otherwise = "output:"
+  | interactive = outputForeground mode ++ label ++ reset
+  | otherwise = label
+  where
+    label = outputLabel mode
+
+-- | Tool output is labelled separately from shell output.
+outputLabel :: PromptMode -> String
+outputLabel ToolMode = "tool output:"
+outputLabel _ = "output:"
 
 -- | Print the label shown on its own line before shell or tool output.
 printOutputLabel :: PromptMode -> IO ()

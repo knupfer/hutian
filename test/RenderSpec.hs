@@ -126,13 +126,13 @@ tests =
         outputLabelText TermMode True
           @?= outputForeground TermMode ++ "output:" ++ reset
         outputLabelText ToolMode True
-          @?= outputForeground ToolMode ++ "output:" ++ reset
+          @?= outputForeground ToolMode ++ "tool output:" ++ reset
         assertBool
           "shell and tool labels differ"
           (outputForeground TermMode /= outputForeground ToolMode)
     , testCase "output labels are plain when not interactive" $ do
         outputLabelText TermMode False @?= "output:"
-        outputLabelText ToolMode False @?= "output:"
+        outputLabelText ToolMode False @?= "tool output:"
     , testCase "grayOutputText wraps terminal output and resets" $
         grayOutputText True "hello"
           @?= grayForeground ++ "hello" ++ reset
