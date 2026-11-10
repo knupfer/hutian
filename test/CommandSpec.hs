@@ -11,23 +11,16 @@ tests =
     [ testCase "empty and whitespace-only lines are empty commands" $ do
         parseCommandLine "" @?= CommandEmpty
         parseCommandLine "   " @?= CommandEmpty
-    , testCase "exit and quit stop the shell" $ do
-        parseCommandLine "exit" @?= CommandExit
-        parseCommandLine "quit" @?= CommandExit
-        parseCommandLine "exit now" @?= CommandExit
-    , testCase "help and pwd are recognized regardless of extra arguments" $ do
+    , testCase "help is the only term-mode builtin" $ do
         parseCommandLine "help" @?= CommandHelp
-        parseCommandLine "help me" @?= CommandHelp
-        parseCommandLine "pwd" @?= CommandPrintDirectory
-        parseCommandLine "pwd extra" @?= CommandPrintDirectory
-    , testCase "cd keeps its optional target" $ do
-        parseCommandLine "cd" @?= CommandChangeDirectory Nothing
-        parseCommandLine "cd /tmp" @?= CommandChangeDirectory (Just "/tmp")
-        parseCommandLine "cd a b" @?= CommandChangeDirectory (Just "a b")
-    , testCase "llm keeps its optional prompt" $ do
-        parseCommandLine "llm" @?= CommandLlm Nothing
-        parseCommandLine "llm explain this" @?= CommandLlm (Just "explain this")
-    , testCase "unknown lines are passed to the shell unchanged" $ do
+        parseCommandLine "  help  " @?= CommandHelp
+    , testCase "everything else is passed to the shell unchanged" $ do
+        parseCommandLine "help me" @?= CommandShell "help me"
+        parseCommandLine "exit" @?= CommandShell "exit"
+        parseCommandLine "quit" @?= CommandShell "quit"
+        parseCommandLine "llm explain this" @?= CommandShell "llm explain this"
+        parseCommandLine "cd /tmp" @?= CommandShell "cd /tmp"
+        parseCommandLine "pwd" @?= CommandShell "pwd"
         parseCommandLine "ls -la" @?= CommandShell "ls -la"
         parseCommandLine "  printf 'hi'\t" @?= CommandShell "  printf 'hi'\t"
         parseCommandLine "exitcode" @?= CommandShell "exitcode"

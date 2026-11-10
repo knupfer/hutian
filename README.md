@@ -67,8 +67,8 @@ The common editing keys are:
   and `Home`/`End` jump to the start or end of the current line.
 - `Tab` completes command names from `PATH` and filesystem paths in term
   mode. Ambiguous matches are listed below the input.
-- `Ctrl+D` submits the accumulated text in llm mode. In term mode, use `Enter`
-  to run the command.
+- `Ctrl+D` on an empty input exits the program in either mode. In llm mode it
+  also submits non-empty input.
 - `Ctrl+C` clears the current input and keeps editing.
 
 ### LLM mode
@@ -84,11 +84,13 @@ LLM prompts, assistant replies, commands submitted in term mode, and tool
 calls with their results.
 
 The model can request shell commands through the `run_shell_command` tool.
-Hutian runs each command with `/bin/sh -c` in the current directory, streams
-its output to the terminal in gray on a slightly darker red background, and
-sends the output back to the model. The requested command is shown on input
-lines with a dark red background that is slightly lighter than the output, and
-a bright red path, distinguishing it from commands typed by the user.
+Hutian runs each command with `/bin/sh -c` in the sandbox working directory,
+streams its output to the terminal in gray on a slightly darker red background,
+and sends the output back to the model. Every call runs in a fresh shell, so
+`cd`, exported variables, and other shell state do not persist between calls.
+The requested command is shown on input lines with a dark red background that
+is slightly lighter than the output, and a bright red path, distinguishing it
+from commands typed by the user.
 
 ```console
 Explain what a syscall is.
@@ -97,22 +99,18 @@ Explain what a syscall is.
 
 ### Term mode
 
-Term mode uses a dark blue background, shows the current path in vibrant teal
-before the input, and prints command output in gray on a slightly darker blue
-background. It provides these builtins:
+Term mode uses a dark blue background, shows the sandbox working directory in
+vibrant teal before the input, and prints command output in gray on a slightly
+darker blue background. `help` shows the builtin help; every other line is
+executed with `/bin/sh -c` in the sandbox working directory.
 
-| Command | Description |
-| --- | --- |
-| `cd [dir]` | Change directory, defaulting to `$HOME`. |
-| `pwd` | Print the current directory. |
-| `llm [prompt]` | Send a one-off prompt to llama.cpp and stream the response. |
-| `help` | Show the builtin help. |
-| `exit`, `quit` | Leave the shell. |
+Each term-mode command runs in a fresh shell, so `cd`, exported variables, and
+other shell state do not carry over between commands. Use absolute paths or
+combine steps in one command, for example `cd sub && make`.
 
-Everything else is executed with `/bin/sh -c` inside the sandbox. `Ctrl+C`
-cancels the current input, command, or LLM request without terminating the
-shell. Term command history is stored in `/tmp/hutian-shell-history`, and LLM
-prompt history in `/tmp/hutian-llm-history`.
+`Ctrl+C` cancels the current input or command without terminating the shell.
+Term command history is stored in `/tmp/hutian-shell-history`, and LLM prompt
+history in `/tmp/hutian-llm-history`.
 
 The flake requires explicit `llamaUrl` and `readOnly` options. Hutian expects
 an OpenAI-compatible llama.cpp chat endpoint; a native `/completion` URL is

@@ -219,7 +219,10 @@ toolDefinitions =
             , "description"
                 .= ( "Run a shell command with /bin/sh -c in the sandbox. "
                        ++ "Use it to inspect files, run builds and tests, and modify "
-                       ++ "the workspace. Commands run in the current directory."
+                       ++ "the workspace. Each command starts in the sandbox working "
+                       ++ "directory in a fresh shell, so cd and exported variables do "
+                       ++ "not persist between calls; use absolute paths or combine "
+                       ++ "steps such as cd dir && cmd in one command."
                    )
             , "parameters" .=
                 object

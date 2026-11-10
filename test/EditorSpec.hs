@@ -106,11 +106,18 @@ unitTests =
                 (storePrompt TermMode termDraft (storePrompt LlmMode llmDraft initialPromptBuffers))
         promptText (activePrompt LlmMode buffers) @?= "llm draft\n"
         promptText (activePrompt TermMode buffers) @?= "\n"
+    , testCase "Ctrl+D exits only on empty input" $ do
+        promptAction LlmMode initialPrompt KeySubmit @?= PromptExit
+        promptAction TermMode initialPrompt KeySubmit @?= PromptExit
+        promptAction LlmMode (run [KeyEnter]) KeySubmit @?= PromptExit
+        promptAction LlmMode (runText "hello") KeySubmit @?= PromptSubmit
+        promptAction TermMode (runText "ls") KeySubmit @?= PromptEdit KeySubmit
+        promptAction ToolMode initialPrompt KeySubmit @?= PromptEdit KeySubmit
     , testCase "promptAction routes editing, history, mode, and completion keys" $ do
         let lower = run (text "a" ++ [KeyEnter] ++ text "b")
             upper = run (text "a" ++ [KeyEnter] ++ text "b" ++ [KeyUp])
-        promptAction LlmMode initialPrompt KeySubmit @?= PromptSubmit
-        promptAction TermMode initialPrompt KeySubmit @?= PromptEdit KeySubmit
+        promptAction LlmMode (runText "hello") KeySubmit @?= PromptSubmit
+        promptAction TermMode (runText "ls") KeySubmit @?= PromptEdit KeySubmit
         promptAction LlmMode initialPrompt KeyEnter @?= PromptEdit KeyEnter
         promptAction TermMode initialPrompt KeyEnter @?= PromptSubmit
         promptAction TermMode (runText "echo 'open") KeyEnter @?= PromptContinue

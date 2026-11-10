@@ -5,8 +5,6 @@ module Hutian.Shell
   ( runShellCommand
   , runShellCommandOutput
   , executableCommands
-  , changeDirectory
-  , resolveDirectoryTarget
   , withBuiltins
   ) where
 
@@ -16,14 +14,12 @@ import Data.List (nub)
 import Data.Maybe (catMaybes, fromMaybe)
 import Hutian.Interrupt (InterruptFlag, withInterruptFlag)
 import Hutian.Output (grayOutputText, toolOutputBackground)
-import Hutian.Paths (expandHome)
 import System.Directory
   ( doesDirectoryExist
   , emptyPermissions
   , executable
   , getPermissions
   , listDirectory
-  , setCurrentDirectory
   )
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
@@ -74,17 +70,6 @@ runShellCommandOutput interruptFlag line =
     exitSuffix ExitSuccess = ""
     exitSuffix (ExitFailure code) = "\n[exit " ++ show code ++ "]\n"
 
-changeDirectory :: Maybe String -> IO ()
-changeDirectory target = do
-  home <- fromMaybe "/" <$> lookupEnv "HOME"
-  setCurrentDirectory (resolveDirectoryTarget home target)
-    `catch` \(err :: IOException) -> hPutStrLn stderr ("cd: " ++ show err)
-
--- | Resolve an optional @cd@ target against the home directory.
-resolveDirectoryTarget :: FilePath -> Maybe String -> FilePath
-resolveDirectoryTarget home Nothing = home
-resolveDirectoryTarget home (Just target) = expandHome home target
-
 executableCommands :: IO [String]
 executableCommands = do
   searchPath <- fromMaybe "" <$> lookupEnv "PATH"
@@ -109,4 +94,4 @@ withBuiltins :: [String] -> [String]
 withBuiltins names = nub (builtinCommands ++ names)
 
 builtinCommands :: [String]
-builtinCommands = ["cd", "exit", "help", "llm", "pwd", "quit"]
+builtinCommands = ["help"]

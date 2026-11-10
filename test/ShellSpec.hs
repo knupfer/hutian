@@ -1,12 +1,9 @@
 module ShellSpec (tests) where
 
-import Control.Exception (finally)
 import Data.List (isInfixOf)
 import Hutian.Interrupt (newInterruptFlag)
 import Hutian.Shell
-  ( changeDirectory
-  , executableCommands
-  , resolveDirectoryTarget
+  ( executableCommands
   , runShellCommand
   , runShellCommandOutput
   , withBuiltins
@@ -16,10 +13,8 @@ import System.Directory
   , getCurrentDirectory
   , getPermissions
   , removeFile
-  , setCurrentDirectory
   , setPermissions
   )
-import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.FilePath ((</>))
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -43,6 +38,15 @@ tests =
         failed <- runShellCommandOutput flag "printf bad >&2; exit 3"
         assertBool "stderr should be captured" ("bad" `isInfixOf` failed)
         assertBool "exit status should be reported" ("[exit 3]" `isInfixOf` failed)
+    , testCase "commands cannot change the parent working directory" $
+        withTemporaryDirectory "hutian-shell-cd" $ \directory -> do
+          original <- getCurrentDirectory
+          flag <- newInterruptFlag
+          runShellCommand flag ("cd " ++ directory)
+          output <- runShellCommandOutput flag ("cd " ++ directory)
+          changed <- getCurrentDirectory
+          output @?= ""
+          changed @?= original
     , testCase "executableCommands includes PATH entries and builtins" $
         withTemporaryDirectory "hutian-shell-path" $ \directory -> do
           let script = directory </> "test-command"
@@ -52,35 +56,10 @@ tests =
           withEnv "PATH" directory $ do
             commands <- executableCommands
             assertBool "custom command missing" ("test-command" `elem` commands)
-            assertBool "builtin missing" ("pwd" `elem` commands)
-    , testCase "changeDirectory changes the working directory" $
-        withTemporaryDirectory "hutian-shell-cd" $ \directory -> do
-          original <- getCurrentDirectory
-          changed <-
-            (changeDirectory (Just directory) >> getCurrentDirectory)
-              `finally` setCurrentDirectory original
-          changed @?= directory
-    , testCase "changeDirectory with no arguments uses HOME" $ do
-        originalHome <- lookupEnv "HOME"
-        originalDirectory <- getCurrentDirectory
-        changed <-
-          ( do
-              setEnv "HOME" originalDirectory
-              changeDirectory Nothing
-              getCurrentDirectory
-          )
-            `finally` do
-              maybe (unsetEnv "HOME") (setEnv "HOME") originalHome
-              setCurrentDirectory originalDirectory
-        changed @?= originalDirectory
-    , testCase "resolveDirectoryTarget expands home and defaults to it" $ do
-        resolveDirectoryTarget "/home/user" Nothing @?= "/home/user"
-        resolveDirectoryTarget "/home/user" (Just "~/project") @?= "/home/user/project"
-        resolveDirectoryTarget "/home/user" (Just "/tmp") @?= "/tmp"
-        resolveDirectoryTarget "/home/user" (Just "a b") @?= "a b"
+            assertBool "builtin missing" ("help" `elem` commands)
     , testCase "withBuiltins removes duplicates and keeps builtins" $
         withBuiltins ["pwd", "ls", "ls"]
-          @?= ["cd", "exit", "help", "llm", "pwd", "quit", "ls"]
+          @?= ["help", "pwd", "ls"]
     ]
 
 shellQuote :: String -> String

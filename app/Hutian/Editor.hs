@@ -140,6 +140,7 @@ data Key
 -- | What the terminal loop should do in response to a key press.
 data PromptAction
   = PromptSubmit
+  | PromptExit
   | PromptContinue
   | PromptClear
   | PromptEdit Key
@@ -150,7 +151,12 @@ data PromptAction
   deriving stock (Eq, Show)
 
 promptAction :: PromptMode -> Prompt -> Key -> PromptAction
-promptAction LlmMode _ KeySubmit = PromptSubmit
+promptAction LlmMode prompt KeySubmit
+  | isEmptyPrompt prompt = PromptExit
+  | otherwise = PromptSubmit
+promptAction TermMode prompt KeySubmit
+  | isEmptyPrompt prompt = PromptExit
+  | otherwise = PromptEdit KeySubmit
 promptAction TermMode prompt KeyEnter
   | needsContinuation prompt = PromptContinue
   | otherwise = PromptSubmit
@@ -326,6 +332,9 @@ currentLine prompt = lineAtRow prompt (unRow (promptRow prompt))
 
 promptText :: Prompt -> String
 promptText = unlines . linesOf
+
+isEmptyPrompt :: Prompt -> Bool
+isEmptyPrompt = all null . linesOf
 
 needsContinuation :: Prompt -> Bool
 needsContinuation prompt =

@@ -5,6 +5,18 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Term-mode and tool commands now always run in a fresh `/bin/sh` in the
+  sandbox working directory. Shell state such as `cd` and exported variables
+  no longer persists between commands.
+- `Ctrl+D` on empty input now exits the shell in both llm and term mode.
+
+### Removed
+
+- The term-mode `cd`, `pwd`, `llm`, `exit`, and `quit` builtins. `help` is the
+  only remaining builtin.
+
 ## [0.3.0.0] - 2026-11-10
 
 ### Added

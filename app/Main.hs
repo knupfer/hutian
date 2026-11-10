@@ -4,7 +4,7 @@
 module Main (main) where
 
 import Control.Exception (IOException, catch, finally)
-import Control.Monad (foldM, when)
+import Control.Monad (foldM)
 import Data.Maybe (fromMaybe)
 import GHC.IO.Encoding (setLocaleEncoding)
 import Hutian.Command
@@ -40,8 +40,7 @@ import Hutian.Llm
 import Hutian.Output (termOutputBackground, withGrayOutput)
 import Hutian.Paths (displayPath)
 import Hutian.Shell
-  ( changeDirectory
-  , executableCommands
+  ( executableCommands
   , runShellCommand
   , runShellCommandOutput
   )
@@ -111,7 +110,7 @@ shellLoop state = do
           , shellBuffers = nextBuffers
           }
   case input of
-    Nothing -> shellLoop prompted
+    Nothing -> pure ()
     Just text -> do
       (termHistory', llmHistory') <-
         rememberInput
@@ -120,15 +119,14 @@ shellLoop state = do
           (shellTermHistory state)
           (shellLlmHistory state)
       clearInterrupt (shellInterrupt state)
-      (continue, conversation) <-
+      conversation <-
         runInput (shellInterrupt state) nextMode text (shellConversation state)
-      when continue $
-        shellLoop
-          prompted
-            { shellTermHistory = termHistory'
-            , shellLlmHistory = llmHistory'
-            , shellConversation = conversation
-            }
+      shellLoop
+        prompted
+          { shellTermHistory = termHistory'
+          , shellLlmHistory = llmHistory'
+          , shellConversation = conversation
+          }
 
 rememberInput :: PromptMode -> String -> [String] -> [String] -> IO ([String], [String])
 rememberInput mode text termHistory llmHistory =
@@ -141,7 +139,7 @@ rememberInput mode text termHistory llmHistory =
       appendHistoryFile llmHistoryFile text
       pure (termHistory, llmHistory ++ [text])
 
-runInput :: InterruptFlag -> PromptMode -> String -> Conversation -> IO (Bool, Conversation)
+runInput :: InterruptFlag -> PromptMode -> String -> Conversation -> IO Conversation
 runInput interruptFlag LlmMode text conversation =
   runLlmInput interruptFlag conversation text
 runInput interruptFlag TermMode text conversation =
@@ -151,7 +149,7 @@ runInput interruptFlag ToolMode text conversation =
 
 -- | Run a prompt through the model, executing any shell tools it requests and
 -- feeding the results back until it produces a final answer.
-runLlmInput :: InterruptFlag -> Conversation -> String -> IO (Bool, Conversation)
+runLlmInput :: InterruptFlag -> Conversation -> String -> IO Conversation
 runLlmInput interruptFlag conversation prompt = do
   result <- runLlmWithTools interruptFlag conversation prompt
   continueLlm
@@ -180,12 +178,12 @@ recordContinuationResult result conversation =
         calls
         conversation
 
-continueLlm :: InterruptFlag -> Conversation -> LlmResult -> Int -> IO (Bool, Conversation)
+continueLlm :: InterruptFlag -> Conversation -> LlmResult -> Int -> IO Conversation
 continueLlm interruptFlag conversation result rounds
-  | null (llmToolCalls result) = pure (True, conversation)
+  | null (llmToolCalls result) = pure conversation
   | rounds >= maxToolRounds = do
       putStrLn "llm: stopped after the maximum number of tool calls"
-      pure (True, rejectToolCalls conversation (llmToolCalls result))
+      pure (rejectToolCalls conversation (llmToolCalls result))
   | otherwise = do
       conversation' <- runToolCalls interruptFlag conversation (llmToolCalls result)
       next <- runLlmContinuation interruptFlag conversation'
@@ -228,37 +226,25 @@ currentTermPrompt = do
   cwd <- getCurrentDirectory
   pure (displayPath home cwd ++ " ")
 
-runTerminalInput :: InterruptFlag -> Conversation -> String -> IO (Bool, Conversation)
+runTerminalInput :: InterruptFlag -> Conversation -> String -> IO Conversation
 runTerminalInput interruptFlag conversation text =
   case classifyTerminalInput text of
-    NoTerminalInput -> pure (True, conversation)
+    NoTerminalInput -> pure conversation
     SingleLineInput line -> runTerminalLine interruptFlag conversation line
     MultiLineInput script -> do
       withGrayOutput termOutputBackground (runShellCommand interruptFlag script)
-      pure (True, appendTerminal script conversation)
+      pure (appendTerminal script conversation)
 
-runTerminalLine :: InterruptFlag -> Conversation -> String -> IO (Bool, Conversation)
+runTerminalLine :: InterruptFlag -> Conversation -> String -> IO Conversation
 runTerminalLine interruptFlag conversation line =
   case parseCommandLine line of
-    CommandEmpty -> pure (True, conversation)
-    CommandExit -> pure (False, conversation)
+    CommandEmpty -> pure conversation
     CommandHelp ->
       withGrayOutput termOutputBackground printHelp
-        >> pure (True, appendTerminal line conversation)
-    CommandPrintDirectory -> do
-      withGrayOutput termOutputBackground (putStrLn =<< getCurrentDirectory)
-      pure (True, appendTerminal line conversation)
-    CommandChangeDirectory target -> do
-      withGrayOutput termOutputBackground (changeDirectory target)
-      pure (True, appendTerminal line conversation)
-    CommandLlm Nothing -> do
-      withGrayOutput termOutputBackground (putStrLn "Press Ctrl+X to switch to llm mode.")
-      pure (True, appendTerminal line conversation)
-    CommandLlm (Just prompt) ->
-      runLlmInput interruptFlag conversation prompt
+        >> pure (appendTerminal line conversation)
     CommandShell commandLine -> do
       withGrayOutput termOutputBackground (runShellCommand interruptFlag commandLine)
-      pure (True, appendTerminal line conversation)
+      pure (appendTerminal line conversation)
 
 printHelp :: IO ()
 printHelp =
@@ -274,18 +260,16 @@ printHelp =
     , "Term-mode command output is gray on a slightly darker blue background;"
     , "tool-call output is gray on a slightly darker red background."
     , ""
-    , "Term-mode builtins:"
-    , "  cd [dir]   change directory (defaults to $HOME)"
-    , "  pwd        print the current directory"
-    , "  llm [msg]  send a one-off prompt to llama.cpp"
+    , "Term-mode commands:"
     , "  help       show this help"
-    , "  exit       leave the shell"
-    , "Everything else is executed with /bin/sh."
+    , "Every other line is executed with /bin/sh in the sandbox working"
+    , "directory. Each command runs in a fresh shell, so cd, exported"
+    , "variables, and other shell state do not persist between commands."
     , "Tab completes commands from PATH and filesystem paths; ambiguous"
     , "matches are listed below the input."
     , "Enter runs a command in term mode and adds a line in llm mode."
     , "Up/Down recall history; trailing \\ or open quotes continue a command."
-    , "Ctrl+D submits llm input; Enter runs term commands."
+    , "Ctrl+D on empty input exits; Enter runs term commands."
     , "Ctrl+C clears the current input."
     ]
 

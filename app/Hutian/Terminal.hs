@@ -76,8 +76,8 @@ import System.Posix.Terminal
 -- | Read one prompt as raw terminal input.
 --
 -- Returns the mode that was active when the prompt finished, together with
--- 'Nothing' when the user cancels with @Ctrl+C@ and 'Just' the message when
--- the user submits it with @Ctrl+D@. @Ctrl+X@ toggles between 'LlmMode' and
+-- 'Nothing' when the user presses @Ctrl+D@ on empty input and 'Just' the
+-- submitted text otherwise. @Ctrl+X@ toggles between 'LlmMode' and
 -- 'TermMode'. In term mode, Enter executes the command, Up/Down browse
 -- history, and a trailing backslash continues the command on the next line.
 -- Ctrl+C clears the current input.
@@ -167,6 +167,7 @@ readPrompt context state = do
       key <- readKey
       case promptAction mode current key of
         PromptSubmit -> submit position currentState
+        PromptExit -> exitPrompt position currentState
         PromptContinue ->
           redraw
             position
@@ -220,6 +221,12 @@ readPrompt context state = do
         , Just (promptText current)
         , clearPrompt mode (readBuffers currentState)
         )
+
+    exitPrompt position currentState = do
+      let current = activePrompt mode (readBuffers currentState)
+      finishPrompt interactive termPrompt mode (fst position) current
+      when interactive (putStrLn "" >> hFlush stdout)
+      pure (mode, Nothing, readBuffers currentState)
 
     redraw position currentState = do
       newPosition <-
