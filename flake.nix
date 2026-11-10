@@ -193,7 +193,7 @@
           package = built.packages.${system}.default;
           haskell-lint = lint.haskell;
           nix-lint = lint.nix;
-          inherit (lint) liquid;
+          inherit (lint) liquid sandboxClosure sandboxSource;
           configuration = pkgs.runCommand "hutian-configuration-check" { } ''
             ${lib.concatMapStrings (pattern: ''
               ${pkgs.gnugrep}/bin/grep -F -- ${lib.escapeShellArg pattern} ${probe}/bin/hutian
@@ -205,14 +205,25 @@
             ${pkgs.coreutils}/bin/touch $out
           '';
           read-only-option = pkgs.runCommand "hutian-read-only-option-check" { } ''
-            ${pkgs.gnugrep}/bin/grep -F 'hutian-read-only' ${readOnlyProbe}/bin/hutian
-            if ${pkgs.gnugrep}/bin/grep -F 'hutian-read-only' ${probe}/bin/hutian; then
-              echo "readOnly = false must not use the read-only wrapper" >&2
+            ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${readOnlyProbe}/bin/hutian
+            if ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${probe}/bin/hutian; then
+              echo "readOnly = false must not request a read-only working directory" >&2
               exit 1
             fi
             ${pkgs.coreutils}/bin/touch $out
           '';
-          read-only-mount = lint.readOnlyMount;
+          launcher-volumes = pkgs.runCommand "hutian-launcher-volume-check" { } ''
+            if ${pkgs.gnugrep}/bin/grep -F 'volumes+=(-volume' ${probe}/bin/hutian; then
+              echo "the launcher must not pass one gVisor volume per store path" >&2
+              exit 1
+            fi
+            if ${pkgs.gnugrep}/bin/grep -F -- '-volume "$sourcedir:/source"' ${probe}/bin/hutian; then
+              echo "the launcher must bind the working directory into the rootfs" >&2
+              exit 1
+            fi
+            ${pkgs.gnugrep}/bin/grep -F 'hutian-sandbox' ${probe}/bin/hutian
+            ${pkgs.coreutils}/bin/touch $out
+          '';
         }
       );
     };

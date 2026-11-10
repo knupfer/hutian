@@ -133,7 +133,9 @@ server bound to the host's loopback interface.
 
 `lib.mkHutianShellFlake` builds Hutian for all supported systems from a single
 package selector. Each selected package's runtime closure is mounted under
-`/nix/store`, and its `bin` directory is added to `PATH`.
+`/nix/store`, and its `bin` directory is added to `PATH`. Closures of any size
+are supported; Hutian bind-mounts the closure into the root filesystem instead
+of passing one sandbox volume per store path.
 
 The `systemPrompt`, `model`, `llamaUrl`, `readOnly`, and `nix` arguments are
 all required and configure the system message, model name, llama.cpp endpoint,

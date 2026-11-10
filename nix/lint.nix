@@ -16,7 +16,50 @@ let
       touch $out
     '';
 
-  readOnlyWrapper = import ./read-only.nix { inherit pkgs; };
+  sandboxLauncher = import ./sandbox.nix { inherit pkgs; };
+
+  # The sandbox launcher has to be exercised inside a private user and mount
+  # namespace. This script creates a mountpoint with a nested mount, then checks
+  # that the launcher keeps both visible and honours readOnly for both.
+  sandboxSourceTest = pkgs.writeShellScript "hutian-sandbox-source-test" ''
+    set -euo pipefail
+
+    rootfs=$1
+    closure=$2
+    work=$3
+    sandbox=$4
+    src="$work/source dir"
+
+    mkdir -p "$src"
+    ${pkgs.util-linux}/bin/mount -t tmpfs tmpfs "$src"
+    mkdir -p "$src/child"
+    ${pkgs.util-linux}/bin/mount -t tmpfs tmpfs "$src/child"
+    echo outer > "$src/file"
+    echo inner > "$src/child/file"
+
+    # Writable: nested mounts and writes are preserved.
+    "$sandbox" "$rootfs" "$closure" "$src" false false \
+      ${pkgs.bash}/bin/bash -c '
+        set -e
+        test "$(cat "$1/file")" = outer
+        test "$(cat "$1/child/file")" = inner
+        echo changed > "$1/file"
+        test "$(cat "$2/file")" = changed
+      ' bash "$rootfs/source" "$src"
+
+    # Read-only: writes through the root and the nested mount are rejected.
+    "$sandbox" "$rootfs" "$closure" "$src" true false \
+      ${pkgs.bash}/bin/bash -c '
+        set -e
+        test "$(cat "$1/file")" = changed
+        test "$(cat "$1/child/file")" = inner
+        if { echo nope > "$1/file"; } 2>/dev/null; then exit 1; fi
+        if { echo nope > "$1/child/file"; } 2>/dev/null; then exit 1; fi
+      ' bash "$rootfs/source"
+
+    test "$(cat "$src/file")" = changed
+    test "$(cat "$src/child/file")" = inner
+  '';
 in
 {
   haskell = mkCheck "hutian-hlint" [ pkgs.hlint ] "hlint app test";
@@ -48,27 +91,55 @@ in
           app/Hutian/History.hs
       '';
 
-  readOnlyMount =
-    mkCheck "hutian-read-only-mount"
+  # Check that closure paths of any size and plain files are bind-mounted into
+  # the rootfs instead of being passed as one gVisor volume per path.
+  sandboxClosure =
+    mkCheck "hutian-sandbox-closure"
       [
         pkgs.bash
+        pkgs.coreutils
         pkgs.util-linux
       ]
       ''
-        mkdir writable readonly
-        echo original > readonly/file
-        echo original > writable/file
+        mkdir -p rootfs/source closure source
+        : > closure/store-paths
 
-        # Control: an unconfined write succeeds.
-        ${pkgs.bash}/bin/bash -c 'echo changed > "$1/file"' bash "$PWD/writable"
-        test "$(cat writable/file)" = changed
+        i=0
+        while [ "$i" -lt 300 ]; do
+          path="$PWD/fake/$i"
+          mkdir -p "$path" "rootfs$path"
+          printf 'value-%s\n' "$i" > "$path/value"
+          printf '%s\n' "$path" >> closure/store-paths
+          i=$((i + 1))
+        done
 
-        # The read-only wrapper rejects writes and leaves the file intact.
-        if ${readOnlyWrapper} "$PWD/readonly" \
-             ${pkgs.bash}/bin/bash -c 'echo changed > "$1/file"' bash "$PWD/readonly"; then
-          echo "write to a read-only working directory unexpectedly succeeded" >&2
-          exit 1
-        fi
-        test "$(cat readonly/file)" = original
+        file="$PWD/fake-file"
+        printf 'file-value\n' > "$file"
+        mkdir -p "rootfs$(dirname "$file")"
+        : > "rootfs$file"
+        printf '%s\n' "$file" >> closure/store-paths
+
+        ${pkgs.util-linux}/bin/unshare --user --map-root-user --mount --propagation private \
+          ${sandboxLauncher} "$PWD/rootfs" "$PWD/closure" "$PWD/source" false false \
+          ${pkgs.bash}/bin/bash -c '
+            set -e
+            test "$(cat "$1")" = value-299
+            test "$(cat "$2")" = file-value
+          ' bash "$PWD/rootfs$PWD/fake/299/value" "$PWD/rootfs$PWD/fake-file"
+      '';
+
+  sandboxSource =
+    mkCheck "hutian-sandbox-source"
+      [
+        pkgs.bash
+        pkgs.coreutils
+        pkgs.util-linux
+      ]
+      ''
+        mkdir -p rootfs/source closure
+        : > closure/store-paths
+
+        ${pkgs.util-linux}/bin/unshare --user --map-root-user --mount --propagation private \
+          ${sandboxSourceTest} "$PWD/rootfs" "$PWD/closure" "$PWD/work" ${sandboxLauncher}
       '';
 }

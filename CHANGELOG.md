@@ -55,6 +55,14 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Fixed
 
+- Large package closures no longer make the sandbox fail at startup with an
+  EOF error. The launcher bind-mounts closure paths into the rootfs instead of
+  passing one gVisor volume per path, which exceeded gVisor's reserved stdio
+  file descriptors at around 250 store paths.
+- Hutian now starts when the working directory is itself a mountpoint with
+  nested mounts, such as `/nix`. The working directory is recursively bound
+  into the rootfs instead of being passed as a gVisor volume, which failed with
+  EINVAL and surfaced as the same EOF error.
 - LLM-mode input redraws as a single frame, so highlighted input no longer
   flickers while typing.
 

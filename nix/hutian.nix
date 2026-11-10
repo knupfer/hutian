@@ -17,7 +17,7 @@ let
 
   hutianShell = pkgs.callPackage ./hutian-shell.nix { inherit src; };
 
-  readOnlyWrapper = import ./read-only.nix { inherit pkgs; };
+  sandboxLauncher = import ./sandbox.nix { inherit pkgs; };
 
   # The runtime closure is mounted at the same paths inside the sandbox. Nix
   # additionally needs a CA bundle for HTTPS fetches performed by the client.
@@ -35,9 +35,16 @@ let
     cp -a ${pkgs.busybox-sandbox-shell}/bin/. "$out/bin/"
     printf '127.0.0.1 localhost\n::1 localhost\n' > "$out/etc/hosts"
 
-    # gVisor requires volume mountpoints to exist in the read-only rootfs.
+    # gVisor recursively binds the rootfs into the sandbox, so the launcher can
+    # bind each closure path under its mountpoint instead of passing one gVisor
+    # volume per path. Mountpoints must have the same type as the store path.
     while IFS= read -r path; do
-      mkdir -p "$out$path"
+      if [ -d "$path" ]; then
+        mkdir -p "$out$path"
+      else
+        mkdir -p "$(dirname "$out$path")"
+        touch "$out$path"
+      fi
     done < ${closure}/store-paths
 
     ${lib.optionalString nix ''
@@ -59,20 +66,16 @@ let
       platform="''${GVISOR_PLATFORM:-systrap}"
       network="''${GVISOR_NETWORK:-sandbox}"
       saved_tty=$(stty -g 2>/dev/null || true)
-
-      volumes=()
-      while IFS= read -r path; do
-        volumes+=(-volume "$path:$path")
-      done < "$closure/store-paths"
+      read_only=${if readOnly then "true" else "false"}
+      nix_mode=${if nix then "true" else "false"}
 
       nixEnv=()
       nixVolumes=()
       nixRunscArgs=()
       ${lib.optionalString nix ''
-        # Expose the host store and, when present, the Nix daemon socket.
-        # Builds are performed by the host daemon; the sandbox only reads the
-        # resulting store paths.
-        nixVolumes+=(-volume "${storeDir}:${storeDir}")
+        # The launcher exposes the host store in the rootfs. Mount the Nix
+        # daemon socket when present. Builds are performed by the host daemon;
+        # the sandbox only reads the resulting store paths.
         if [ -S "${stateDir}/daemon-socket/socket" ]; then
           nixVolumes+=(-volume "${stateDir}/daemon-socket:${stateDir}/daemon-socket")
           nixRunscArgs+=(--host-uds=open)
@@ -97,7 +100,7 @@ let
       fi
 
       # runsc resolves -cwd on the host, so start in / and enter /source after
-      # the volume is mounted.
+      # the launcher has mounted the working directory there.
       # shellcheck disable=SC2016
       set -- /bin/sh -c 'cd /source && "$@"' sh "$@"
 
@@ -119,19 +122,18 @@ let
             -root "$rootfs"
             -cwd /
             -force-overlay=false
-            "''${volumes[@]}"
             "''${nixVolumes[@]}"
-            -volume "$sourcedir:/source"
             "$@"
       )
 
+      # gVisor reserves FDs from 256 for stdio, so passing one volume per store
+      # path fails once a closure has more than about 250 paths. Instead, mount
+      # the closure and working directory into the rootfs in a private mount
+      # namespace and let gVisor recursively bind the rootfs into the sandbox.
       status=0
-      ${lib.optionalString readOnly ''
-        ${readOnlyWrapper} "$sourcedir" "''${sandbox[@]}" || status=$?
-      ''}
-      ${lib.optionalString (!readOnly) ''
+      ${pkgs.util-linux}/bin/unshare --user --map-root-user --mount --propagation private \
+        ${sandboxLauncher} "$rootfs" "$closure" "$sourcedir" "$read_only" "$nix_mode" \
         "''${sandbox[@]}" || status=$?
-      ''}
 
       # Keep the host terminal usable even if the sandbox leaves it in raw mode.
       if [ -n "''${saved_tty:-}" ]; then
