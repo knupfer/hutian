@@ -64,6 +64,7 @@ import Hutian.Markdown
   , renderMarkdown
   , renderMarkdownWith
   )
+import Hutian.Render (boldTeal, reset)
 import Network.HTTP.Client
 import Network.HTTP.Types.Status (statusCode)
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
@@ -277,7 +278,7 @@ toolDefinitions =
   ]
 
 shellToolName :: String
-shellToolName = "run_shell_command"
+shellToolName = "shell"
 
 -- | Extract the shell command from a tool call. Unknown tools and malformed
 -- arguments become a result string that is sent back to the model.
@@ -500,9 +501,12 @@ renderReasoning Nothing state = pure state
 renderReasoning (Just text) state
   | Text.null text = pure state
   | otherwise = do
-      let (markdown', output) =
+      let header
+            | streamReasoningStarted state = ""
+            | otherwise = boldTeal ++ "think:" ++ reset ++ "\n"
+          (markdown', output) =
             renderMarkdownWith thinkingGrey (streamReasoning state) text
-      emit output
+      emit (header ++ output)
       pure
         state
           { streamReasoning = markdown'
@@ -515,9 +519,12 @@ renderContent (Just text) state
   | Text.null text = pure state
   | otherwise = do
       startingAnswer <- transitionFromReasoning state
-      let (markdown', output) =
+      let header
+            | streamAnswerStarted startingAnswer = ""
+            | otherwise = boldTeal ++ "answer:" ++ reset ++ "\n"
+          (markdown', output) =
             renderMarkdown (streamMarkdown startingAnswer) text
-      emit output
+      emit (header ++ output)
       pure
         startingAnswer
           { streamMarkdown = markdown'

@@ -39,7 +39,7 @@ import Hutian.Llm
   , runLlmWithTools
   , toolCommand
   )
-import Hutian.Output (termOutputBackground, withGrayOutput)
+import Hutian.Output (printOutputLabel, withGrayOutput)
 import Hutian.Shell
   ( executableCommands
   , runShellCommand
@@ -102,7 +102,7 @@ main = do
 -- look like a shell working-directory prompt because commands do not persist
 -- shell state between invocations.
 termPrompt :: String
-termPrompt = "run: "
+termPrompt = "shell:\n"
 
 shellLoop :: ShellState -> IO ()
 shellLoop state = do
@@ -232,7 +232,8 @@ runToolCall interruptFlag conversation call =
     Left message ->
       pure (appendToolResult (toolCallId call) ("tool error: " ++ message) conversation)
     Right command -> do
-      renderToolCommand termPrompt command
+      renderToolCommand (toolCallName call) command
+      printOutputLabel ToolMode
       output <- runShellCommandOutput interruptFlag command
       pure (appendToolResult (toolCallId call) output conversation)
 
@@ -242,7 +243,8 @@ runTerminalInput interruptFlag conversation text =
     NoTerminalInput -> pure conversation
     SingleLineInput line -> runTerminalLine interruptFlag conversation line
     MultiLineInput script -> do
-      withGrayOutput termOutputBackground (runShellCommand interruptFlag script)
+      printOutputLabel TermMode
+      withGrayOutput (runShellCommand interruptFlag script)
       pure (appendTerminal script conversation)
 
 runTerminalLine :: InterruptFlag -> Conversation -> String -> IO Conversation
@@ -250,10 +252,11 @@ runTerminalLine interruptFlag conversation line =
   case parseCommandLine line of
     CommandEmpty -> pure conversation
     CommandHelp ->
-      withGrayOutput termOutputBackground printHelp
+      withGrayOutput printHelp
         >> pure (appendTerminal line conversation)
     CommandShell commandLine -> do
-      withGrayOutput termOutputBackground (runShellCommand interruptFlag commandLine)
+      printOutputLabel TermMode
+      withGrayOutput (runShellCommand interruptFlag commandLine)
       pure (appendTerminal line conversation)
 
 printHelp :: IO ()
@@ -261,14 +264,14 @@ printHelp =
   mapM_
     putStrLn
     [ "The interactive input has two modes:"
-    , "  llm mode   send text to llama.cpp (purple background)"
-    , "  term mode  run a shell command (dark blue background)"
+    , "  llm mode   send text to llama.cpp (pink ask: line)"
+    , "  term mode  run a shell command (shell: line)"
     , "Ctrl+X toggles between the modes; each mode keeps its own input."
     , "The app starts in llm mode."
-    , "In llm mode the model may call the run_shell_command tool. Tool"
-    , "commands are shown with a dark red background and a bright red path."
-    , "Term-mode command output is gray on a slightly darker blue background;"
-    , "tool-call output is gray on a slightly darker red background."
+    , "In llm mode the model may call the shell tool. Tool calls are shown"
+    , "with a bold teal 'tool shell:' line."
+    , "Shell and tool output is preceded by an 'output:' line and shown in"
+    , "gray."
     , ""
     , "Term-mode commands:"
     , "  help       show this help"

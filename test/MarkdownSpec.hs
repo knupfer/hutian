@@ -10,6 +10,7 @@ import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck (testProperty)
+import TestSupport (stripAnsi)
 
 tests :: TestTree
 tests =
@@ -108,6 +109,28 @@ unitTests =
             haskell = renderAll source
         assertBool "language-specific highlighting should differ from plain fallback" (haskell /= plain)
         stripAnsi haskell @?= source
+    , testCase "input rows are highlighted without changing their text or count" $ do
+        let rows = ["# Heading", "Use **bold** and `code`.", "- item", ""]
+            rendered = renderMarkdownRows rows
+        assertBool "expected heading style" ("\ESC[38;5;81m" `isInfixOf` concat rendered)
+        assertBool "expected bold style" ("\ESC[1;38;5;222m" `isInfixOf` concat rendered)
+        assertBool "expected code style" ("\ESC[38;5;220m" `isInfixOf` concat rendered)
+        assertBool "expected marker style" ("\ESC[1;38;5;214m" `isInfixOf` concat rendered)
+        length rendered @?= length rows
+        map stripAnsi rendered @?= rows
+    , testCase "input rows keep fenced code highlighted across rows" $ do
+        let rows = ["```", "main = putStrLn \"hi\"", "```", "after"]
+            rendered = renderMarkdownRows rows
+        assertBool "expected fence style" ("\ESC[38;5;81m" `isInfixOf` concat rendered)
+        assertBool "expected code style" ("\ESC[38;5;220m" `isInfixOf` concat rendered)
+        length rendered @?= length rows
+        map stripAnsi rendered @?= rows
+    , testCase "an unclosed fence highlights the remaining input rows" $ do
+        let rows = ["```", "code", "more"]
+            rendered = renderMarkdownRows rows
+        assertBool "expected fence style" ("\ESC[38;5;81m" `isInfixOf` concat rendered)
+        length rendered @?= length rows
+        map stripAnsi rendered @?= rows
     ]
 
 propertyTests :: TestTree
@@ -129,16 +152,6 @@ renderAllWith :: String -> String -> String
 renderAllWith base source =
   let (state, rendered) = renderMarkdownWith base initialMarkdownState (Text.pack source)
    in rendered ++ finishMarkdownWith base state
-
-stripAnsi :: String -> String
-stripAnsi [] = []
-stripAnsi ('\ESC' : '[' : rest) = stripAnsi (dropSequence rest)
-  where
-    dropSequence [] = []
-    dropSequence (character : characters)
-      | character >= '@' && character <= '~' = characters
-      | otherwise = dropSequence characters
-stripAnsi (character : rest) = character : stripAnsi rest
 
 prop_preservesText :: String -> Property
 prop_preservesText source =

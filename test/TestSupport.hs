@@ -3,6 +3,7 @@ module TestSupport
   ( withEnv
   , temporaryFilePath
   , withTemporaryDirectory
+  , stripAnsi
   ) where
 
 import Control.Exception (finally)
@@ -34,3 +35,13 @@ withTemporaryDirectory template action = do
   path <- temporaryFilePath template
   createDirectory path
   action path `finally` removeDirectoryRecursive path
+
+stripAnsi :: String -> String
+stripAnsi [] = []
+stripAnsi ('\ESC' : '[' : rest) = stripAnsi (dropSequence rest)
+  where
+    dropSequence [] = []
+    dropSequence (character : characters)
+      | character >= '@' && character <= '~' = characters
+      | otherwise = dropSequence characters
+stripAnsi (character : rest) = character : stripAnsi rest

@@ -15,14 +15,15 @@ Everything else on the host is hidden. The root filesystem is built from Nix's
 static BusyBox sandbox shell plus the Haskell `hutian-shell` binary.
 
 The interactive prompt is a multiline editor with two modes. It starts in LLM
-mode with a dark magenta background. Press `Ctrl+X` to switch to term mode,
-where the input lines have a dark blue background and submitted text runs
-through BusyBox `ash`, so shell builtins and redirection work as expected.
+mode, where the input is preceded by a bold pink `ask:` line. Press `Ctrl+X` to
+switch to term mode, where the input has a bold pink `shell:` line above it and
+submitted text runs through BusyBox `ash`, so shell builtins and redirection
+work as expected.
 
-In LLM mode the model can also call a shell tool. Commands requested by the
-model run through the same `/bin/sh -c` execution path as term mode, and the
-input lines used to show them have a dark red background with a bright red
-prompt.
+In LLM mode the model can also call the `shell` tool. Commands requested by the
+model run through the same `/bin/sh -c` execution path as term mode, and are
+shown with a bold teal `tool shell:` line. The output of shell commands and
+tool calls is preceded by a light-coloured `output:` line.
 
 ## Quick start
 
@@ -73,24 +74,24 @@ The common editing keys are:
 
 ### LLM mode
 
-LLM mode uses a dark magenta background. This is the initial mode. Replies are
-syntax-highlighted as Markdown, including headings, emphasis, links, lists, and
-fenced code blocks. Fenced blocks tagged with a language use that language's
-syntax highlighter. Reasoning/thinking tokens are shown in grey with the same
-Markdown highlighting.
+LLM mode is the initial mode. Input is preceded by a bold pink `ask:` line and
+is syntax-highlighted as Markdown while you type, including headings, emphasis,
+links, lists, and fenced code blocks. Replies use the same highlighting.
+Fenced blocks tagged with a language use that language's syntax highlighter.
+Reasoning/thinking tokens are shown in grey under a bold teal `think:` line,
+and the reply is shown under a bold teal `answer:` line.
 
 Every LLM request includes the current session's prior conversation: earlier
 LLM prompts, assistant replies, commands submitted in term mode, and tool
 calls with their results.
 
-The model can request shell commands through the `run_shell_command` tool.
-Hutian runs each command with `/bin/sh -c` in the sandbox working directory,
-streams its output to the terminal in gray on a slightly darker red background,
-and sends the output back to the model. Every call runs in a fresh shell, so
-`cd`, exported variables, and other shell state do not persist between calls.
-The requested command is shown on input lines with a dark red background that
-is slightly lighter than the output, and a bright red path, distinguishing it
-from commands typed by the user.
+The model can request shell commands through the `shell` tool. Hutian runs each
+command with `/bin/sh -c` in the sandbox working directory, streams its output
+to the terminal in gray under a light teal `output:` line, and sends the output
+back to the model. Every call runs in a fresh shell, so `cd`, exported
+variables, and other shell state do not persist between calls. The requested
+command is shown under a bold teal `tool shell:` line, distinguishing it from
+commands typed by the user.
 
 ```console
 Explain what a syscall is.
@@ -99,10 +100,10 @@ Explain what a syscall is.
 
 ### Term mode
 
-Term mode uses a dark blue background, shows a teal `run:` prefix before the
-input, and prints command output in gray on a slightly darker blue background.
-`help` shows the builtin help; every other line is executed with `/bin/sh -c`
-in the sandbox working directory.
+Term mode shows a bold pink `shell:` line above the input and prints command
+output in gray under a light pink `output:` line. `help` shows the builtin
+help; every other line is executed with `/bin/sh -c` in the sandbox working
+directory.
 
 Each term-mode command runs in a fresh shell, so `cd`, exported variables, and
 other shell state do not carry over between commands. Use absolute paths or
@@ -242,7 +243,7 @@ The code keeps pure logic separate from IO:
   `PromptAction` routing used by the terminal loop.
 - `Hutian.Completion` selects command and path completions.
 - `Hutian.Render` turns a prompt into ANSI output and cursor movement, including
-  the dark red tool-call style.
+  the tool-call prefix style.
 - `Hutian.History`, `Hutian.Conversation`, and `Hutian.Paths` are pure models;
   `Hutian.Conversation` also represents tool calls and tool results.
 - `Hutian.History` owns the pure on-disk history codec.

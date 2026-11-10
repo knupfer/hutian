@@ -13,7 +13,7 @@ import Control.Monad (unless, void)
 import Data.List (nub)
 import Data.Maybe (catMaybes, fromMaybe)
 import Hutian.Interrupt (InterruptFlag, withInterruptFlag)
-import Hutian.Output (grayOutputText, toolOutputBackground)
+import Hutian.Output (grayOutputText)
 import System.Directory
   ( doesDirectoryExist
   , emptyPermissions
@@ -56,8 +56,8 @@ runShellCommandOutput interruptFlag line =
           readCreateProcessWithExitCode (proc "/bin/sh" ["-c", line]) ""
         outputIsTerminal <- hIsTerminalDevice stdout
         errorsAreTerminal <- hIsTerminalDevice stderr
-        putStr (grayOutputText toolOutputBackground outputIsTerminal output)
-        hPutStr stderr (grayOutputText toolOutputBackground errorsAreTerminal errors)
+        putStr (grayOutputText outputIsTerminal output)
+        hPutStr stderr (grayOutputText errorsAreTerminal errors)
         unless (null output || last output == '\n') (putStrLn "")
         hFlush stdout
         hFlush stderr

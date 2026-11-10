@@ -155,16 +155,21 @@ unitTests =
     , testCase "physicalRows includes a row for a cursor at a wrap boundary" $ do
         physicalRows 3 "" (runText "aaaaaa") @?= ["aaa", "aaa", ""]
     , testCase "prefixCharacterCounts distributes a prefix across rows" $ do
-        prefixCharacterCounts 0 ["abc", "def"] @?= [0, 0]
-        prefixCharacterCounts 2 ["abc", "def"] @?= [2, 0]
-        prefixCharacterCounts 4 ["abc", "def"] @?= [3, 1]
-        prefixCharacterCounts 9 ["abc", "def"] @?= [3, 3]
-        prefixCharacterCounts 2 [] @?= []
-        prefixCharacterCounts (-2) ["abc", "def"] @?= [0, 0]
+        prefixCharacterCounts 80 "" ["abc", "def"] @?= [0, 0]
+        prefixCharacterCounts 80 "ab" ["abc", "def"] @?= [2, 0]
+        prefixCharacterCounts 80 "abcd" ["abc", "def"] @?= [3, 1]
+        prefixCharacterCounts 80 "abcdefghi" ["abc", "def"] @?= [3, 3]
+        prefixCharacterCounts 80 "ab" [] @?= []
+        prefixCharacterCounts 80 "ask:\n" ["ask:", "abc"] @?= [4, 0]
+        prefixCharacterCounts 80 "ask:\n" ["ask:", ""] @?= [4, 0]
     , testCase "a prompt prefix is included in the first line layout" $ do
         let prompt = runText "abc"
         physicalRows 6 "~ $ " prompt @?= ["~ $ ab", "c"]
         cursorPosition 6 "~ $ " prompt @?= (1, 1)
+    , testCase "a multi-line prefix puts the input on the next row" $ do
+        let prompt = runText "abc"
+        physicalRows 80 "ask:\n" prompt @?= ["ask:", "abc"]
+        cursorPosition 80 "ask:\n" prompt @?= (1, 3)
     , testCase "the prompt prefix only appears on the first line" $ do
         let prompt = run (text "a" ++ [KeyEnter] ++ text "b")
         physicalRows 10 "> " prompt @?= ["> a", "b"]
@@ -269,6 +274,7 @@ propertyTests =
     , testProperty "the cursor is always inside the rendered rows" prop_cursorPosition
     , testProperty "the cursor stays inside rows with a prompt prefix" prop_prefixCursorPosition
     , testProperty "prefix counts sum to the prefix length" prop_prefixCharacterCounts
+    , testProperty "multi-line prefix counts stay on the label row" prop_multilinePrefixCounts
     , testProperty "completion targets end at the cursor" prop_completionTarget
     , testProperty "toggleMode is an involution" prop_toggleMode
     ]
@@ -446,12 +452,25 @@ prop_prefixCursorPosition width =
             .&&. property (column >= 0 && column < width')
 
 prop_prefixCharacterCounts :: Int -> [String] -> Property
-prop_prefixCharacterCounts prefix rows =
-  let width = abs prefix
-      counts = prefixCharacterCounts width rows
+prop_prefixCharacterCounts count rows =
+  let prefix = replicate (abs count `mod` 20) 'x'
+      counts = prefixCharacterCounts 80 prefix rows
    in counterexample (show counts) $
         property (length counts === length rows)
-          .&&. property (sum counts === min width (sum (map length rows)))
+          .&&. property (sum counts === min (length prefix) (sum (map length rows)))
+          .&&. property (all (>= 0) counts)
+
+prop_multilinePrefixCounts :: Property
+prop_multilinePrefixCounts =
+  forAll keySequence $ \keys ->
+    let prompt = run keys
+        prefix = "ask:\n"
+        rows = physicalRows 80 prefix prompt
+        counts = prefixCharacterCounts 80 prefix rows
+     in counterexample (show counts) $
+          property (length counts === length rows)
+            .&&. property (sum counts === length "ask:")
+            .&&. property (take 1 counts === [length "ask:"])
 
 prop_completionTarget :: Property
 prop_completionTarget =

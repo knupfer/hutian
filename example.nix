@@ -54,7 +54,7 @@
 
         Interaction:
         - In llm mode, return concise, actionable answers.
-        - Use the run_shell_command tool to inspect and verify the workspace.
+        - Use the shell tool to inspect and verify the workspace.
           It runs commands with /bin/sh -c in the sandbox working directory.
           Each call uses a fresh shell, so cd and exported variables do not
           carry over; use absolute paths or combine steps in one command.

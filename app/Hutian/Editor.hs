@@ -61,9 +61,8 @@ layoutWidth width
   | width <= 0 = 1
   | otherwise = width
 
--- | The input modes. The prompt background distinguishes them. 'ToolMode' is
--- used only to display commands requested by the model; user input is still
--- edited in 'LlmMode' or 'TermMode'.
+-- | The input modes. 'ToolMode' is used only to display commands requested by
+-- the model; user input is still edited in 'LlmMode' or 'TermMode'.
 data PromptMode
   = LlmMode
   | TermMode
@@ -432,32 +431,53 @@ suggestionRowCount :: Int -> Prompt -> Int
 suggestionRowCount width prompt =
   length (concatMap (wrapLine (layoutWidth width)) (suggestionLines prompt))
 
--- | Distribute a prompt prefix across its rendered rows.
-prefixCharacterCounts :: Int -> [String] -> [Int]
-prefixCharacterCounts count = go (max 0 count)
+-- | Count how many characters at the start of each rendered row belong to the
+-- prompt prefix. Prefix rows separated by newlines occupy their own rows, and
+-- the part after the last newline is distributed across the first input row.
+prefixCharacterCounts :: Int -> String -> [String] -> [Int]
+prefixCharacterCounts width prefix rows =
+  take (length rows) (prefixCounts ++ inlineCounts ++ repeat 0)
   where
-    go _ [] = []
-    go remaining (row : rest) =
+    width' = layoutWidth width
+    (prefixRows, inline) = splitPrefix prefix
+    prefixCounts =
+      zipWith min (concatMap (map length . wrapLine width') prefixRows) (map length rows)
+    inlineCounts = distribute (length inline) (drop (length prefixCounts) rows)
+
+    distribute _ [] = []
+    distribute remaining (row : rest) =
       let used = min remaining (length row)
-       in used : go (remaining - used) rest
+       in used : distribute (remaining - used) rest
 
 {-@ cursorPosition :: width:Int -> String -> Prompt -> (Int, Int) @-}
 cursorPosition :: Int -> String -> Prompt -> (Int, Int)
 cursorPosition width prefix prompt =
   let width' = layoutWidth width
+      (prefixRows, inline) = splitPrefix prefix
       starts = lineStarts width' (renderedLines prefix prompt)
-      column = firstLineOffset + unColumn (promptColumn prompt)
-      start = fromMaybe 0 (atMay starts (unRow (promptRow prompt)))
+      column = firstLineOffset inline + unColumn (promptColumn prompt)
+      start = fromMaybe 0 (atMay starts (unRow (promptRow prompt) + length prefixRows))
    in (start + column `div` width', column `mod` width')
   where
-    firstLineOffset
-      | unRow (promptRow prompt) == 0 = length prefix
+    firstLineOffset inline
+      | unRow (promptRow prompt) == 0 = length inline
       | otherwise = 0
+
+-- | Split a prompt prefix into rows that sit above the input and the part that
+-- attaches to the first input row.
+splitPrefix :: String -> ([String], String)
+splitPrefix prefix =
+  case break (== '\n') prefix of
+    (before, []) -> ([], before)
+    (before, _ : rest) ->
+      let (rows, inline) = splitPrefix rest
+       in (before : rows, inline)
 
 renderedLines :: String -> Prompt -> [String]
 renderedLines prefix prompt =
   let first :| rest = promptLines prompt
-   in (prefix ++ first) : rest
+      (prefixRows, inline) = splitPrefix prefix
+   in prefixRows ++ ((inline ++ first) : rest)
 
 {-@ lineStarts :: width:Int -> [String] -> [Nat] @-}
 lineStarts :: Int -> [String] -> [Int]

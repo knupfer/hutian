@@ -5,7 +5,10 @@ module Hutian.Render
   , moveCursorText
   , startPromptText
   , prefixFor
+  , outputForeground
   , grayForeground
+  , boldVibrantPink
+  , boldTeal
   , reset
   ) where
 
@@ -19,6 +22,7 @@ import Hutian.Editor
   , setPromptText
   , suggestionRowCount
   )
+import Hutian.Markdown (renderMarkdownRows)
 
 -- | Render a prompt and return the text to write plus the cursor position.
 promptRenderText :: String -> PromptMode -> Int -> Int -> Prompt -> (String, (Int, Int))
@@ -26,9 +30,8 @@ promptRenderText termPrompt mode previousRow width prompt =
   ( moveUp
       ++ "\r"
       ++ reset
-      ++ clearToEnd
-      ++ backgroundFor mode
       ++ concatMap renderRow (zip3 [0 :: Int ..] rows prefixCounts)
+      ++ clearToEnd
       ++ moveDown
       ++ "\r"
       ++ moveRight
@@ -36,12 +39,17 @@ promptRenderText termPrompt mode previousRow width prompt =
   )
   where
     prefix = prefixFor termPrompt mode
-    rows = physicalRows width prefix prompt
+    plainRows = physicalRows width prefix prompt
     (cursorRow, cursorColumn) = cursorPosition width prefix prompt
-    total = length rows
+    total = length plainRows
     suggestionCount = suggestionRowCount width prompt
     inputRowCount = total - suggestionCount
-    prefixCounts = prefixCharacterCounts (length prefix) rows
+    rows
+      | mode == LlmMode =
+          renderMarkdownRows (take inputRowCount plainRows)
+            ++ drop inputRowCount plainRows
+      | otherwise = plainRows
+    prefixCounts = prefixCharacterCounts width prefix plainRows
     moveUp
       | previousRow > 0 = "\ESC[" ++ show previousRow ++ "A"
       | otherwise = ""
@@ -53,26 +61,30 @@ promptRenderText termPrompt mode previousRow width prompt =
       | otherwise = ""
     renderRow (index, row, prefixCount) =
       let (prefixPart, rest) = splitAt prefixCount row
-          suggestionReset
-            | suggestionCount > 0 && index == inputRowCount = reset
-            | otherwise = ""
           prefixOutput
-            | prefixCount > 0 =
-                prefixForegroundFor mode ++ prefixPart ++ defaultForeground
+            | prefixCount > 0 = prefixForegroundFor mode ++ prefixPart ++ reset
+            | otherwise = ""
+          styleReset
+            | mode == LlmMode && '\ESC' `elem` rest = reset
             | otherwise = ""
           newline
             | index < total - 1 = "\n"
             | otherwise = ""
-       in suggestionReset ++ prefixOutput ++ rest ++ clearLine ++ newline
+       in prefixOutput ++ rest ++ styleReset ++ clearLine ++ newline
 
 -- | Render a command requested by the model as a prompt line, followed by a
--- newline. Tool calls use a dark red background and a bright red prompt so
--- they are visually distinct from user-entered commands.
+-- newline. Tool calls use a bright red prompt so they stand out from
+-- user-entered commands.
 toolPromptText :: String -> Int -> String -> String
-toolPromptText termPrompt width command =
-  fst (promptRenderText termPrompt ToolMode 0 width (setPromptText command initialPrompt))
+toolPromptText toolName width command =
+  fst (promptRenderText (toolPrefix toolName) ToolMode 0 width (setPromptText command initialPrompt))
     ++ reset
     ++ "\n"
+
+-- | The prefix shown before a tool call. Like every prompt it occupies its own
+-- line above the command.
+toolPrefix :: String -> String
+toolPrefix toolName = "tool " ++ toolName ++ ":\n"
 
 -- | Render the sequence that moves from one cursor position to another.
 moveCursorText :: (Int, Int) -> (Int, Int) -> String
@@ -89,32 +101,41 @@ moveCursorText (oldRow, _) (newRow, newColumn) =
       | newColumn > 0 = "\ESC[" ++ show newColumn ++ "C"
       | otherwise = ""
 
--- | Render the initial prompt line for a mode.
+-- | Clear the line before the first prompt frame is drawn.
 startPromptText :: PromptMode -> String
-startPromptText mode = backgroundFor mode ++ clearLine
+startPromptText _ = clearLine
 
 prefixFor :: String -> PromptMode -> String
 prefixFor termPrompt TermMode = termPrompt
 prefixFor termPrompt ToolMode = termPrompt
-prefixFor _ LlmMode = ""
-
-backgroundFor :: PromptMode -> String
-backgroundFor mode =
-  case mode of
-    LlmMode -> "\ESC[48;2;24;0;24m"
-    TermMode -> "\ESC[48;2;0;0;40m"
-    ToolMode -> "\ESC[48;2;40;0;0m"
+prefixFor _ LlmMode = "ask:\n"
 
 prefixForegroundFor :: PromptMode -> String
-prefixForegroundFor TermMode = tealForeground
-prefixForegroundFor ToolMode = brightRedForeground
-prefixForegroundFor LlmMode = tealForeground
+prefixForegroundFor TermMode = boldVibrantPink
+prefixForegroundFor ToolMode = boldTeal
+prefixForegroundFor LlmMode = boldVibrantPink
 
-tealForeground, brightRedForeground, grayForeground, defaultForeground, clearToEnd, clearLine, reset :: String
-tealForeground = "\ESC[38;2;0;255;200m"
-brightRedForeground = "\ESC[38;2;255;0;0m"
+-- | Foreground for the 'output:' label printed before command output. It is a
+-- light version of the colour used by the command's prompt.
+outputForeground :: PromptMode -> String
+outputForeground TermMode = lightPinkForeground
+outputForeground ToolMode = lightTealForeground
+outputForeground LlmMode = grayForeground
+
+boldVibrantPink,
+  boldTeal,
+  lightPinkForeground,
+  lightTealForeground,
+  grayForeground,
+  clearToEnd,
+  clearLine,
+  reset :: String
+
+boldVibrantPink = "\ESC[1;38;2;255;20;147m"
+boldTeal = "\ESC[1;38;2;0;255;200m"
+lightPinkForeground = "\ESC[38;2;255;150;205m"
+lightTealForeground = "\ESC[38;2;140;255;225m"
 grayForeground = "\ESC[38;2;160;160;160m"
-defaultForeground = "\ESC[39m"
 clearToEnd = "\ESC[0J"
 clearLine = "\ESC[K"
 reset = "\ESC[0m"

@@ -5,14 +5,29 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- LLM-mode input is highlighted as Markdown while typing, including inline
+  emphasis, links, lists, and fenced code blocks.
+- LLM mode shows a bold pink `ask:` line before the input, and its replies are
+  labelled with bold teal `think:` and `answer:` lines.
+- Shell and tool output is preceded by an `output:` line in a light version of
+  the command's role colour.
+
 ### Changed
 
 - Term-mode and tool commands now always run in a fresh `/bin/sh` in the
   sandbox working directory. Shell state such as `cd` and exported variables
   no longer persists between commands.
 - `Ctrl+D` on empty input now exits the shell in both llm and term mode.
-- Term mode uses a fixed `run:` prompt prefix instead of the working
-  directory, since commands do not share a shell.
+- Term mode uses a fixed `shell:` label instead of the working directory,
+  since commands do not share a shell.
+- Every prompt label occupies its own line above the input: `ask:`, `shell:`,
+  and `tool shell:`.
+- Tool calls are shown with a bold teal `tool shell:` line.
+- The `run_shell_command` tool has been renamed to `shell`.
+- Removed all background colouring. Modes are distinguished by their prompt
+  prefixes and foreground colours instead.
 - `mkHutianShellFlake` now requires every option: `packages`, `systemPrompt`,
   `model`, `llamaUrl`, `readOnly`, and `nix`. The `src`, `systems`, and
   `pkgsFor` options were removed from the helper. Missing options are reported
@@ -32,6 +47,11 @@ All notable changes to Hutian are documented here. The format follows
 - The `HUTIAN_LLAMA_URL`, `HUTIAN_LLAMA_MODEL`, `HUTIAN_SYSTEM_PROMPT`, and
   `HUTIAN_WORKDIR` environment variables, the `GVISOR_PATH` variable, the
   `nix/required-option.nix` helper, and the `required-options` check.
+
+### Fixed
+
+- LLM-mode input redraws as a single frame, so highlighted input no longer
+  flickers while typing.
 
 ## [0.3.0.0] - 2026-11-10
 

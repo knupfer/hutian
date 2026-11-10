@@ -62,6 +62,8 @@ tests =
         (result, output) <-
           maybe (assertFailure "runLlm timed out" >> pure (Nothing, "")) pure captured
         result @?= Just "# Answer\n**bold**\n"
+        assertBool "thinking should be labelled" ("\ESC[1;38;2;0;255;200mthink:" `isInfixOf` output)
+        assertBool "answer should be labelled" ("\ESC[1;38;2;0;255;200manswer:" `isInfixOf` output)
         assertBool "thinking should be grey" ("\ESC[38;5;245m" `isInfixOf` output)
         assertBool "heading should be highlighted" ("\ESC[38;5;81m" `isInfixOf` output)
         assertBool "bold should be highlighted" ("\ESC[1;38;5;222m" `isInfixOf` output)
@@ -81,7 +83,7 @@ tests =
         (result, _) <-
           maybe (assertFailure "runLlmWithTools timed out" >> pure (emptyResult, "")) pure captured
         llmToolCalls result
-          @?= [ToolCall "call-1" "run_shell_command" "{\"command\":\"ls\"}"]
+          @?= [ToolCall "call-1" "shell" "{\"command\":\"ls\"}"]
         llmResponseText result @?= Nothing
     ]
 
@@ -135,7 +137,7 @@ toolCallChunks =
                                   , "type" .= ("function" :: String)
                                   , "function"
                                       .= Aeson.object
-                                        [ "name" .= ("run_shell_command" :: String)
+                                        [ "name" .= ("shell" :: String)
                                         , "arguments" .= ("{\"command\":" :: String)
                                         ]
                                   ]

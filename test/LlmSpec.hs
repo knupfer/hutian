@@ -140,33 +140,33 @@ unitTests =
                     KeyMap.lookup "type" tool @?= Just (String "function")
                     case KeyMap.lookup "function" tool of
                       Just (Object functionObject) ->
-                        KeyMap.lookup "name" functionObject @?= Just (String "run_shell_command")
+                        KeyMap.lookup "name" functionObject @?= Just (String "shell")
                       other -> assertFailure ("missing function: " ++ show other)
                   other -> assertFailure ("unexpected tools: " ++ show other)
               other -> assertFailure ("missing tools: " ++ show other)
           other -> assertFailure ("unexpected request body: " ++ show other)
     , testCase "toolCommand parses the command argument" $ do
-        toolCommand (ToolCall "id" "run_shell_command" "{\"command\":\"ls -la\"}")
+        toolCommand (ToolCall "id" "shell" "{\"command\":\"ls -la\"}")
           @?= Right "ls -la"
         assertBool
           "unknown tool should fail"
           (isLeft (toolCommand (ToolCall "id" "other" "{}")))
         assertBool
           "malformed arguments should fail"
-          (isLeft (toolCommand (ToolCall "id" "run_shell_command" "not-json")))
+          (isLeft (toolCommand (ToolCall "id" "shell" "not-json")))
     , testCase "extractToolCalls reads streamed fragments" $ do
         let line =
-              "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"run_shell_command\",\"arguments\":\"{\\\"command\\\":\"}}]}}]}"
+              "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"shell\",\"arguments\":\"{\\\"command\\\":\"}}]}}]}"
         case parseStreamLine line of
           Just event ->
             eventToolCalls event
-              @?= [ToolCallDelta 0 (Just "call-1") (Just "run_shell_command") (Just "{\"command\":")]
+              @?= [ToolCallDelta 0 (Just "call-1") (Just "shell") (Just "{\"command\":")]
           Nothing -> assertFailure "tool call event did not parse"
     , testCase "mergeToolCallDeltas assembles streamed arguments" $ do
-        let first = ToolCallDelta 0 (Just "call-1") (Just "run_shell_command") (Just "{\"command\":")
+        let first = ToolCallDelta 0 (Just "call-1") (Just "shell") (Just "{\"command\":")
             second = ToolCallDelta 0 Nothing Nothing (Just "\"ls\"}")
         mergeToolCallDeltas [] [first, second]
-          @?= [ToolCall "call-1" "run_shell_command" "{\"command\":\"ls\"}"]
+          @?= [ToolCall "call-1" "shell" "{\"command\":\"ls\"}"]
     , testCase "parseStreamLine parses SSE and bare JSON lines" $ do
         parseStreamLine "" @?= Nothing
         parseStreamLine "   " @?= Nothing

@@ -319,7 +319,7 @@ renderPrompt interactive termPrompt mode previousRow prompt
   | otherwise = do
       width <- terminalWidth
       let (output, position) = promptRenderText termPrompt mode previousRow width prompt
-      putStr output
+      putStr (syncStart ++ output ++ syncEnd)
       hFlush stdout
       pure position
 
@@ -346,16 +346,25 @@ startPromptLine mode = do
   putStr (startPromptText mode)
   hFlush stdout
 
--- | Show a command requested by the model with the tool-call colors.
+-- | Show a command requested by the model with the tool-call prefix.
 renderToolCommand :: String -> String -> IO ()
-renderToolCommand termPrompt command = do
+renderToolCommand toolName command = do
   interactive <- hIsTerminalDevice stdout
   if interactive
     then do
       width <- terminalWidth
-      putStr (toolPromptText termPrompt width command)
+      putStr (toolPromptText toolName width command)
     else putStrLn command
   hFlush stdout
 
 escape :: Char
 escape = '\ESC'
+
+-- | Begin a synchronized update, so terminals that support it draw the whole
+-- prompt at once instead of flashing partially rendered frames.
+syncStart :: String
+syncStart = "\ESC[?2026h"
+
+-- | End a synchronized update.
+syncEnd :: String
+syncEnd = "\ESC[?2026l"

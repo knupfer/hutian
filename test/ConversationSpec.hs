@@ -45,7 +45,7 @@ unitTests =
     , testCase "appendTerminal records terminal commands" $ do
         appendTerminal "ls -la" emptyConversation @?= [TerminalEntry "ls -la"]
     , testCase "assistant tool calls and results use tool messages" $ do
-        let call = ToolCall "call-1" "run_shell_command" "{\"command\":\"ls\"}"
+        let call = ToolCall "call-1" "shell" "{\"command\":\"ls\"}"
             conversation =
               appendToolResult "call-1" "file.txt"
                 (appendAssistantToolCalls "checking" [call] emptyConversation)

@@ -4,6 +4,7 @@ module Hutian.Markdown
   , initialMarkdownState
   , renderMarkdown
   , renderMarkdownWith
+  , renderMarkdownRows
   , finishMarkdown
   , finishMarkdownWith
   ) where
@@ -54,6 +55,33 @@ renderMarkdownWith base state chunk =
           (state { markdownPartial = partial })
           completeLines
    in (state', unlines (concat renderedLines))
+
+-- | Highlight already-wrapped Markdown rows for a live editor. Every input row
+-- produces exactly one output row, so the result can be rendered while the
+-- user is still typing. Fenced code blocks are highlighted across rows.
+renderMarkdownRows :: [String] -> [String]
+renderMarkdownRows = go
+  where
+    go [] = []
+    go (row : rest) =
+      case fenceStart row of
+        Just (fence, language) ->
+          let (body, afterFence) = break (isFenceClose fence) rest
+              (closing, remaining) =
+                case afterFence of
+                  close : more -> ([close], more)
+                  [] -> ([], [])
+           in styled fenceColour row
+                : highlightBody language body
+                ++ map (styled fenceColour) closing
+                ++ go remaining
+        Nothing -> renderNormal "" row : go rest
+
+    highlightBody language body =
+      let highlighted = highlightCode language body
+       in if length highlighted == length body
+            then highlighted
+            else map (styled codeColour) body
 
 finishMarkdown :: MarkdownState -> String
 finishMarkdown = finishMarkdownWith ""
