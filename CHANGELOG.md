@@ -31,6 +31,8 @@ All notable changes to Hutian are documented here. The format follows
 - Refined the Markdown palette into one consistent scheme: a blue-to-rose
   heading ramp, warm yellow emphasis, green code and fence markers, underlined
   teal links, peach list markers, and muted grey quotes and rules.
+- Markdown highlight colours are scaled down in thinking blocks, including
+  syntax-highlighted code, so reasoning stays visually subordinate.
 - `mkHutianShellFlake` now requires every option: `packages`, `systemPrompt`,
   `model`, `llamaUrl`, `readOnly`, and `nix`. The `src`, `systems`, and
   `pkgsFor` options were removed from the helper. Missing options are reported

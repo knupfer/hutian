@@ -103,6 +103,26 @@ unitTests =
             rendered = renderAllWith "\ESC[38;5;245m" source
         assertBool "expected grey base color" ("\ESC[38;5;245m" `isInfixOf` rendered)
         stripAnsi rendered @?= source
+    , testCase "thinking text dims the Markdown highlight colours" $ do
+        let source = "# Head\n**bold** `code` [link](https://example.test)\n"
+            rendered = renderAllWith thinkingBase source
+        assertBool "dim heading" ("\ESC[1;38;2;82;108;150m" `isInfixOf` rendered)
+        assertBool "dim bold" ("\ESC[1;38;2;149;136;105m" `isInfixOf` rendered)
+        assertBool "dim code" ("\ESC[38;2;100;136;97m" `isInfixOf` rendered)
+        assertBool "dim link" ("\ESC[4;38;2;89;136;128m" `isInfixOf` rendered)
+        assertBool "base colour is unchanged" (thinkingBase `isInfixOf` rendered)
+        assertBool
+          "normal emphasis colour is gone"
+          (not ("\ESC[1;38;2;249;226;175m" `isInfixOf` rendered))
+        stripAnsi rendered @?= source
+    , testCase "thinking code blocks dim Skylighting colours too" $ do
+        let source = "```haskell\nmain = putStrLn \"hi\"\n```\n"
+            normal = renderAll source
+            dimmed = renderAllWith thinkingBase source
+        assertBool "dimmed fence differs from normal" (dimmed /= normal)
+        assertBool "dimmed fence markers" ("\ESC[38;2;100;136;97m" `isInfixOf` dimmed)
+        assertBool "base colour is unchanged" (thinkingBase `isInfixOf` dimmed)
+        stripAnsi dimmed @?= source
     , testCase "fenced code uses its language lexer" $ do
         let source = "```haskell\nmain = putStrLn \"hi\"\n```\n"
             plain = renderAll "```\nmain = putStrLn \"hi\"\n```\n"
@@ -147,6 +167,9 @@ propertyTests =
 
 renderAll :: String -> String
 renderAll = renderAllWith ""
+
+thinkingBase :: String
+thinkingBase = "\ESC[38;2;130;130;130m"
 
 renderAllWith :: String -> String -> String
 renderAllWith base source =

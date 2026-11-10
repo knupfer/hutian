@@ -79,7 +79,8 @@ is syntax-highlighted as Markdown while you type, including headings, emphasis,
 links, lists, and fenced code blocks. Replies use the same highlighting.
 Fenced blocks tagged with a language use that language's syntax highlighter.
 Reasoning/thinking tokens are shown in grey under a bold teal `think:` line,
-and the reply is shown under a bold teal `answer:` line.
+with dimmed Markdown and code highlighting, and the reply is shown under a bold
+teal `answer:` line.
 
 Every LLM request includes the current session's prior conversation: earlier
 LLM prompts, assistant replies, commands submitted in term mode, and tool
