@@ -21,8 +21,11 @@
       llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
 
       # Mount the host working directory read-only at /source. Set this to
-      # true to let the model inspect a project without modifying it.
+      # true when the model should only inspect the project.
       readOnly = false;
+
+      # Include Nix and connect it to the host Nix daemon.
+      nix = false;
 
       systemPrompt = ''
         You are a coding agent operating inside the Hutian sandbox.
@@ -62,8 +65,5 @@
         - Ask a question only when a decision cannot be inferred from the
           repository or the user request.
       '';
-
-      # Include Nix and connect it to the host Nix daemon:
-      # nix = true;
     };
 }

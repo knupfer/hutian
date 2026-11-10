@@ -3,7 +3,7 @@
 -- | Entry point and interactive shell for the hutian sandbox.
 module Main (main) where
 
-import Control.Exception (IOException, catch, finally)
+import Control.Exception (finally)
 import Control.Monad (foldM)
 import Data.Maybe (fromMaybe)
 import GHC.IO.Encoding (setLocaleEncoding)
@@ -33,6 +33,8 @@ import Hutian.History
 import Hutian.Interrupt (InterruptFlag, clearInterrupt, newInterruptFlag)
 import Hutian.Llm
   ( LlmResult (..)
+  , LlmSettings
+  , parseLlmSettings
   , runLlmContinuation
   , runLlmWithTools
   , toolCommand
@@ -51,13 +53,14 @@ import Hutian.Terminal
   , renderToolCommand
   , resetTerminal
   )
-import System.Directory (setCurrentDirectory)
-import System.Environment (lookupEnv)
+import System.Environment (getArgs)
+import System.Exit (ExitCode (..), exitWith)
 import System.IO
 
 -- | Everything the interactive loop carries between prompts.
 data ShellState = ShellState
-  { shellCommands :: [String]
+  { shellSettings :: LlmSettings
+  , shellCommands :: [String]
   , shellTermHistory :: [String]
   , shellLlmHistory :: [String]
   , shellInterrupt :: InterruptFlag
@@ -72,23 +75,28 @@ main = do
   hSetEncoding stdout utf8
   hSetEncoding stderr utf8
   hSetBuffering stdout LineBuffering
-  workdir <- fromMaybe "/" <$> lookupEnv "HUTIAN_WORKDIR"
-  setCurrentDirectory workdir `catch` \(_ :: IOException) -> pure ()
-  commands <- executableCommands
-  termHistory <- loadHistoryFile termHistoryFile
-  llmHistory <- loadHistoryFile llmHistoryFile
-  interruptFlag <- newInterruptFlag
-  let state =
-        ShellState
-          { shellCommands = commands
-          , shellTermHistory = termHistory
-          , shellLlmHistory = llmHistory
-          , shellInterrupt = interruptFlag
-          , shellMode = LlmMode
-          , shellBuffers = initialPromptBuffers
-          , shellConversation = emptyConversation
-          }
-  shellLoop state `finally` resetTerminal
+  arguments <- getArgs
+  case parseLlmSettings arguments of
+    Left message -> do
+      hPutStrLn stderr message
+      exitWith (ExitFailure 2)
+    Right settings -> do
+      commands <- executableCommands
+      termHistory <- loadHistoryFile termHistoryFile
+      llmHistory <- loadHistoryFile llmHistoryFile
+      interruptFlag <- newInterruptFlag
+      let state =
+            ShellState
+              { shellSettings = settings
+              , shellCommands = commands
+              , shellTermHistory = termHistory
+              , shellLlmHistory = llmHistory
+              , shellInterrupt = interruptFlag
+              , shellMode = LlmMode
+              , shellBuffers = initialPromptBuffers
+              , shellConversation = emptyConversation
+              }
+      shellLoop state `finally` resetTerminal
 
 -- | The fixed prompt shown for term-mode commands. It deliberately does not
 -- look like a shell working-directory prompt because commands do not persist
@@ -122,7 +130,12 @@ shellLoop state = do
           (shellLlmHistory state)
       clearInterrupt (shellInterrupt state)
       conversation <-
-        runInput (shellInterrupt state) nextMode text (shellConversation state)
+        runInput
+          (shellSettings state)
+          (shellInterrupt state)
+          nextMode
+          text
+          (shellConversation state)
       shellLoop
         prompted
           { shellTermHistory = termHistory'
@@ -141,20 +154,21 @@ rememberInput mode text termHistory llmHistory =
       appendHistoryFile llmHistoryFile text
       pure (termHistory, llmHistory ++ [text])
 
-runInput :: InterruptFlag -> PromptMode -> String -> Conversation -> IO Conversation
-runInput interruptFlag LlmMode text conversation =
-  runLlmInput interruptFlag conversation text
-runInput interruptFlag TermMode text conversation =
+runInput :: LlmSettings -> InterruptFlag -> PromptMode -> String -> Conversation -> IO Conversation
+runInput settings interruptFlag LlmMode text conversation =
+  runLlmInput settings interruptFlag conversation text
+runInput _ interruptFlag TermMode text conversation =
   runTerminalInput interruptFlag conversation text
-runInput interruptFlag ToolMode text conversation =
+runInput _ interruptFlag ToolMode text conversation =
   runTerminalInput interruptFlag conversation text
 
 -- | Run a prompt through the model, executing any shell tools it requests and
 -- feeding the results back until it produces a final answer.
-runLlmInput :: InterruptFlag -> Conversation -> String -> IO Conversation
-runLlmInput interruptFlag conversation prompt = do
-  result <- runLlmWithTools interruptFlag conversation prompt
+runLlmInput :: LlmSettings -> InterruptFlag -> Conversation -> String -> IO Conversation
+runLlmInput settings interruptFlag conversation prompt = do
+  result <- runLlmWithTools interruptFlag settings conversation prompt
   continueLlm
+    settings
     interruptFlag
     (recordPromptResult prompt result conversation)
     result
@@ -180,16 +194,17 @@ recordContinuationResult result conversation =
         calls
         conversation
 
-continueLlm :: InterruptFlag -> Conversation -> LlmResult -> Int -> IO Conversation
-continueLlm interruptFlag conversation result rounds
+continueLlm :: LlmSettings -> InterruptFlag -> Conversation -> LlmResult -> Int -> IO Conversation
+continueLlm settings interruptFlag conversation result rounds
   | null (llmToolCalls result) = pure conversation
   | rounds >= maxToolRounds = do
       putStrLn "llm: stopped after the maximum number of tool calls"
       pure (rejectToolCalls conversation (llmToolCalls result))
   | otherwise = do
       conversation' <- runToolCalls interruptFlag conversation (llmToolCalls result)
-      next <- runLlmContinuation interruptFlag conversation'
+      next <- runLlmContinuation interruptFlag settings conversation'
       continueLlm
+        settings
         interruptFlag
         (recordContinuationResult next conversation')
         next

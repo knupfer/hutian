@@ -13,11 +13,25 @@ All notable changes to Hutian are documented here. The format follows
 - `Ctrl+D` on empty input now exits the shell in both llm and term mode.
 - Term mode uses a fixed `run:` prompt prefix instead of the working
   directory, since commands do not share a shell.
+- `mkHutianShellFlake` now requires every option: `packages`, `systemPrompt`,
+  `model`, `llamaUrl`, `readOnly`, and `nix`. The `src`, `systems`, and
+  `pkgsFor` options were removed from the helper. Missing options are reported
+  by name, with the full required set, instead of Nix's low-level argument
+  error.
+- Llama connection settings are passed to `hutian-shell` as `--llama-url`,
+  `--model`, and `--system-prompt` arguments instead of `HUTIAN_*` environment
+  variables.
+- The launcher starts the sandbox with `runsc -cwd /source`, sets
+  `TERM=xterm-256color` and `LANG=C.UTF-8` directly, and no longer reads the
+  host's `TERM`, `LANG`, or `NIX_CONFIG`.
 
 ### Removed
 
 - The term-mode `cd`, `pwd`, `llm`, `exit`, and `quit` builtins. `help` is the
   only remaining builtin.
+- The `HUTIAN_LLAMA_URL`, `HUTIAN_LLAMA_MODEL`, `HUTIAN_SYSTEM_PROMPT`, and
+  `HUTIAN_WORKDIR` environment variables, the `GVISOR_PATH` variable, the
+  `nix/required-option.nix` helper, and the `required-options` check.
 
 ## [0.3.0.0] - 2026-11-10
 

@@ -1,6 +1,6 @@
 {
   pkgs,
-  src ? ../.,
+  src,
 }:
 
 let

@@ -14,7 +14,7 @@ import Data.List (isInfixOf)
 import Data.Maybe (fromMaybe)
 import Hutian.Conversation (ConversationEntry (..), ToolCall (..))
 import Hutian.Interrupt (newInterruptFlag)
-import Hutian.Llm (LlmResult (..), runLlm, runLlmWithTools)
+import Hutian.Llm (LlmResult (..), LlmSettings (..), runLlm, runLlmWithTools)
 import Network.Socket
   ( Family (AF_INET)
   , SockAddr (SockAddrInet)
@@ -43,7 +43,6 @@ import System.Posix.Types (Fd)
 import System.Timeout (timeout)
 import Test.Tasty
 import Test.Tasty.HUnit
-import TestSupport (withEnv)
 
 tests :: TestTree
 tests =
@@ -51,19 +50,22 @@ tests =
     "llm-integration"
     [ testCase "runLlm streams reasoning, highlighted answer, and returns raw text" $ do
         (port, requestVar) <- startFakeServer streamingChunks
-        withLlmEnvironment port $ do
-          flag <- newInterruptFlag
-          captured <-
-            timeout 7000000 $
-              captureStdout $
-                runLlm flag [UserEntry "prior", AssistantEntry "previous"] "current"
-          (result, output) <-
-            maybe (assertFailure "runLlm timed out" >> pure (Nothing, "")) pure captured
-          result @?= Just "# Answer\n**bold**\n"
-          assertBool "thinking should be grey" ("\ESC[38;5;245m" `isInfixOf` output)
-          assertBool "heading should be highlighted" ("\ESC[38;5;81m" `isInfixOf` output)
-          assertBool "bold should be highlighted" ("\ESC[1;38;5;222m" `isInfixOf` output)
-          assertBool "reasoning should not be part of the answer" (not ("thinking" `isInfixOf` fromMaybe "" result))
+        flag <- newInterruptFlag
+        captured <-
+          timeout 7000000 $
+            captureStdout $
+              runLlm
+                flag
+                (settingsFor port)
+                [UserEntry "prior", AssistantEntry "previous"]
+                "current"
+        (result, output) <-
+          maybe (assertFailure "runLlm timed out" >> pure (Nothing, "")) pure captured
+        result @?= Just "# Answer\n**bold**\n"
+        assertBool "thinking should be grey" ("\ESC[38;5;245m" `isInfixOf` output)
+        assertBool "heading should be highlighted" ("\ESC[38;5;81m" `isInfixOf` output)
+        assertBool "bold should be highlighted" ("\ESC[1;38;5;222m" `isInfixOf` output)
+        assertBool "reasoning should not be part of the answer" (not ("thinking" `isInfixOf` fromMaybe "" result))
         request <- fromMaybe "" <$> timeout 2000000 (takeMVar requestVar)
         assertBool "fake server did not receive a request" (not (null request))
         assertBool "prior user history missing from HTTP request" ("prior" `isInfixOf` request)
@@ -71,18 +73,25 @@ tests =
         assertBool "current prompt missing from HTTP request" ("current" `isInfixOf` request)
     , testCase "runLlmWithTools returns streamed tool calls" $ do
         (port, _) <- startFakeServer toolCallChunks
-        withLlmEnvironment port $ do
-          flag <- newInterruptFlag
-          captured <-
-            timeout 7000000 $
-              captureStdout $
-                runLlmWithTools flag [UserEntry "prior"] "run ls"
-          (result, _) <-
-            maybe (assertFailure "runLlmWithTools timed out" >> pure (emptyResult, "")) pure captured
-          llmToolCalls result
-            @?= [ToolCall "call-1" "run_shell_command" "{\"command\":\"ls\"}"]
-          llmResponseText result @?= Nothing
+        flag <- newInterruptFlag
+        captured <-
+          timeout 7000000 $
+            captureStdout $
+              runLlmWithTools flag (settingsFor port) [UserEntry "prior"] "run ls"
+        (result, _) <-
+          maybe (assertFailure "runLlmWithTools timed out" >> pure (emptyResult, "")) pure captured
+        llmToolCalls result
+          @?= [ToolCall "call-1" "run_shell_command" "{\"command\":\"ls\"}"]
+        llmResponseText result @?= Nothing
     ]
+
+settingsFor :: Int -> LlmSettings
+settingsFor port =
+  LlmSettings
+    { settingUrl = "http://127.0.0.1:" ++ show port ++ "/v1/chat/completions"
+    , settingModel = "test-model"
+    , settingSystemPrompt = "system prompt"
+    }
 
 emptyResult :: LlmResult
 emptyResult = LlmResult Nothing []
@@ -207,12 +216,6 @@ responseFor chunks =
               ++ "Connection: close\r\n\r\n"
           )
    in headers <> body
-
-withLlmEnvironment :: Int -> IO a -> IO a
-withLlmEnvironment port action = do
-  withEnv "HUTIAN_LLAMA_URL" ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions") $
-    withEnv "HUTIAN_LLAMA_MODEL" "test-model" $
-      withEnv "HUTIAN_SYSTEM_PROMPT" "system prompt" action
 
 captureStdout :: IO a -> IO (a, String)
 captureStdout action = do

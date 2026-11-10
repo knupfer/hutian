@@ -30,8 +30,43 @@ unitTests :: TestTree
 unitTests =
   testGroup
     "unit"
-    [ testCase "default endpoint is the chat completions endpoint" $
-        defaultEndpoint @?= "http://127.0.0.1:8080/v1/chat/completions"
+    [ testCase "parseLlmSettings accepts the required options in any order" $ do
+        parseLlmSettings
+          [ "--system-prompt"
+          , "system rules"
+          , "--model"
+          , "test-model"
+          , "--llama-url"
+          , "http://127.0.0.1:8080/v1/chat/completions"
+          ]
+          @?= Right
+            ( LlmSettings
+                "http://127.0.0.1:8080/v1/chat/completions"
+                "test-model"
+                "system rules"
+            )
+        parseLlmSettings
+          [ "--llama-url"
+          , "http://example.test/completion"
+          , "--model"
+          , "m"
+          , "--system-prompt"
+          , ""
+          ]
+          @?= Right (LlmSettings "http://example.test/completion" "m" "")
+    , testCase "parseLlmSettings reports missing options, missing values, and unknown arguments" $ do
+        case parseLlmSettings [] of
+          Left message -> do
+            assertBool "missing url should be named" ("--llama-url" `isInfixOf` message)
+            assertBool "missing model should be named" ("--model" `isInfixOf` message)
+            assertBool "missing prompt should be named" ("--system-prompt" `isInfixOf` message)
+          Right _ -> assertFailure "empty arguments should fail"
+        case parseLlmSettings ["--llama-url"] of
+          Left message -> assertBool "missing value should be named" ("--llama-url" `isInfixOf` message)
+          Right _ -> assertFailure "a flag without a value should fail"
+        case parseLlmSettings ["--unknown", "value"] of
+          Left message -> assertBool "unknown argument should be named" ("--unknown" `isInfixOf` message)
+          Right _ -> assertFailure "unknown arguments should fail"
     , testCase "apiFor recognizes chat and completion endpoints" $ do
         apiFor "http://127.0.0.1:8080/v1/chat/completions" @?= ChatApi
         apiFor "http://127.0.0.1:8080/completion" @?= CompletionApi

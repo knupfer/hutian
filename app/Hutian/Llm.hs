@@ -6,6 +6,8 @@ module Hutian.Llm
   ( runLlm
   , runLlmWithTools
   , runLlmContinuation
+  , LlmSettings (..)
+  , parseLlmSettings
   , LlmResult (..)
   , emptyLlmResult
   , Api (..)
@@ -25,7 +27,6 @@ module Hutian.Llm
   , mergeToolCallDeltas
   , isStop
   , decode
-  , defaultEndpoint
   ) where
 
 import Control.Applicative ((<|>))
@@ -38,7 +39,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
 import Data.Char (isSpace)
 import Data.List (isInfixOf)
-import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
+import Data.Maybe (fromMaybe, isNothing, listToMaybe, mapMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import qualified Data.Text.Encoding.Error as TextEncodingError
@@ -65,7 +66,6 @@ import Hutian.Markdown
   )
 import Network.HTTP.Client
 import Network.HTTP.Types.Status (statusCode)
-import System.Environment (lookupEnv)
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
 
 -- | The result of one streaming LLM request.
@@ -81,15 +81,14 @@ emptyLlmResult = LlmResult Nothing []
 -- | Run one LLM request for a user prompt, returning any tool calls that the
 -- model requested. Kept as a convenience wrapper for callers that only need
 -- the assistant text.
-runLlm :: InterruptFlag -> Conversation -> String -> IO (Maybe String)
-runLlm interruptFlag conversation prompt =
-  llmResponseText <$> runLlmWithTools interruptFlag conversation prompt
+runLlm :: InterruptFlag -> LlmSettings -> Conversation -> String -> IO (Maybe String)
+runLlm interruptFlag settings conversation prompt =
+  llmResponseText <$> runLlmWithTools interruptFlag settings conversation prompt
 
-runLlmWithTools :: InterruptFlag -> Conversation -> String -> IO LlmResult
-runLlmWithTools interruptFlag conversation prompt
+runLlmWithTools :: InterruptFlag -> LlmSettings -> Conversation -> String -> IO LlmResult
+runLlmWithTools interruptFlag settings conversation prompt
   | all isSpace prompt = pure emptyLlmResult
-  | otherwise = do
-      settings <- llmSettings
+  | otherwise =
       runRequest interruptFlag settings $
         requestBodyFor
           (apiFor (settingUrl settings))
@@ -99,9 +98,8 @@ runLlmWithTools interruptFlag conversation prompt
           prompt
 
 -- | Continue a conversation after tool results have been appended.
-runLlmContinuation :: InterruptFlag -> Conversation -> IO LlmResult
-runLlmContinuation interruptFlag conversation = do
-  settings <- llmSettings
+runLlmContinuation :: InterruptFlag -> LlmSettings -> Conversation -> IO LlmResult
+runLlmContinuation interruptFlag settings conversation =
   runRequest interruptFlag settings $
     continuationBodyFor
       (apiFor (settingUrl settings))
@@ -114,13 +112,53 @@ data LlmSettings = LlmSettings
   , settingModel :: String
   , settingSystemPrompt :: String
   }
+  deriving stock (Eq, Show)
 
-llmSettings :: IO LlmSettings
-llmSettings = do
-  url <- fromMaybe defaultEndpoint <$> lookupEnv "HUTIAN_LLAMA_URL"
-  model <- fromMaybe "default" <$> lookupEnv "HUTIAN_LLAMA_MODEL"
-  systemPrompt <- fromMaybe "" <$> lookupEnv "HUTIAN_SYSTEM_PROMPT"
-  pure (LlmSettings url model systemPrompt)
+-- | Parse the launcher-provided connection settings. All three options are
+-- required so the shell never falls back to ambient environment variables.
+parseLlmSettings :: [String] -> Either String LlmSettings
+parseLlmSettings = go Nothing Nothing Nothing
+  where
+    go (Just url) (Just model) (Just systemPrompt) [] =
+      Right (LlmSettings url model systemPrompt)
+    go url model systemPrompt [] =
+      Left
+        ( "missing required argument"
+            ++ plural
+            ++ ": "
+            ++ unwords (missingArguments url model systemPrompt)
+            ++ "\n"
+            ++ llmUsage
+        )
+      where
+        plural =
+          if length (missingArguments url model systemPrompt) > 1
+            then "s"
+            else ""
+    go _ _ _ ["--llama-url"] = missingValue "--llama-url"
+    go _ _ _ ["--model"] = missingValue "--model"
+    go _ _ _ ["--system-prompt"] = missingValue "--system-prompt"
+    go _ model systemPrompt ("--llama-url" : value : rest) =
+      go (Just value) model systemPrompt rest
+    go url _ systemPrompt ("--model" : value : rest) =
+      go url (Just value) systemPrompt rest
+    go url model _ ("--system-prompt" : value : rest) =
+      go url model (Just value) rest
+    go _ _ _ (argument : _) =
+      Left ("unknown argument: " ++ argument ++ "\n" ++ llmUsage)
+
+    missingValue flag = Left ("missing value for " ++ flag ++ "\n" ++ llmUsage)
+
+missingArguments :: Maybe String -> Maybe String -> Maybe String -> [String]
+missingArguments url model systemPrompt =
+  concat
+    [ [ "--llama-url" | isNothing url ]
+    , [ "--model" | isNothing model ]
+    , [ "--system-prompt" | isNothing systemPrompt ]
+    ]
+
+llmUsage :: String
+llmUsage = "usage: hutian-shell --llama-url URL --model MODEL --system-prompt PROMPT"
 
 runRequest :: InterruptFlag -> LlmSettings -> Aeson.Value -> IO LlmResult
 runRequest interruptFlag settings body = do
@@ -135,9 +173,6 @@ runRequest interruptFlag settings body = do
       hPutStrLn stderr ("llm: " ++ show exception)
       pure emptyLlmResult
     Right response -> pure response
-
-defaultEndpoint :: String
-defaultEndpoint = "http://127.0.0.1:8080/v1/chat/completions"
 
 data Api
   = ChatApi

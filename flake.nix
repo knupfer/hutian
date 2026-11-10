@@ -8,8 +8,6 @@
     let
       inherit (nixpkgs) lib;
 
-      requiredOption = import ./nix/required-option.nix;
-
       defaultSystems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -17,8 +15,35 @@
       forAllSystems = lib.genAttrs defaultSystems;
       pkgsFor = system: nixpkgs.legacyPackages.${system};
 
-      # Used only by this flake's own package. Consumers must pass their own
-      # required `systemPrompt`, `model`, `llamaUrl`, and `readOnly` options.
+      # Keep every helper option mandatory while naming any that are missing
+      # instead of relying on Nix's low-level argument error.
+      shellOptions = [
+        "packages"
+        "systemPrompt"
+        "model"
+        "llamaUrl"
+        "readOnly"
+        "nix"
+      ];
+
+      requireOptions =
+        helper: names: args:
+        let
+          missing = builtins.filter (name: !(args ? ${name})) names;
+          plural = lib.optionalString (builtins.length missing != 1) "s";
+        in
+        if missing == [ ] then
+          args
+        else
+          throw ''
+            hutian: ${helper} is missing required option${plural}: ${lib.concatStringsSep ", " missing}
+
+            Required options: ${lib.concatStringsSep ", " names}.
+            See README.md for a complete example.
+          '';
+
+      # Used only by this flake's own package. Consumers must pass every
+      # option explicitly.
       defaults = {
         systemPrompt = ''
           You are a careful coding assistant working inside a sandboxed shell.
@@ -28,9 +53,27 @@
         model = "default";
         llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
         readOnly = false;
+        nix = false;
       };
 
-      mkHutianShell = import ./nix/hutian.nix;
+      # Always build the Haskell package from this flake's source.
+      mkHutianShell =
+        args:
+        let
+          checked = requireOptions "mkHutianShell" ([ "pkgs" ] ++ shellOptions) args;
+        in
+        import ./nix/hutian.nix {
+          inherit (checked)
+            pkgs
+            packages
+            systemPrompt
+            model
+            llamaUrl
+            readOnly
+            nix
+            ;
+          src = self;
+        };
 
       mkApp = program: {
         type = "app";
@@ -39,65 +82,47 @@
       };
 
       # Convenience helper for consumer flakes: derive packages and apps for
-      # every system from a single package selector.
+      # every supported system from a single package selector.
       mkHutianShellFlake =
-        nixpkgs:
-        {
-          packages ? requiredOption "mkHutianShellFlake" "packages" "packages = pkgs: [ pkgs.git pkgs.jq ];",
-          systemPrompt ?
-            requiredOption "mkHutianShellFlake" "systemPrompt"
-              ''systemPrompt = "You are a coding assistant.";'',
-          model ? requiredOption "mkHutianShellFlake" "model" ''model = "your-model";'',
-          llamaUrl ?
-            requiredOption "mkHutianShellFlake" "llamaUrl"
-              ''llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";'',
-          readOnly ? requiredOption "mkHutianShellFlake" "readOnly" "readOnly = false;",
-          nix ? false,
-          src ? null,
-          systems ? defaultSystems,
-          pkgsFor ? (system: nixpkgs.legacyPackages.${system}),
-        }:
+        nixpkgs: args:
         let
+          checked = requireOptions "mkHutianShellFlake" shellOptions args;
+          inherit (checked)
+            packages
+            systemPrompt
+            model
+            llamaUrl
+            readOnly
+            nix
+            ;
           mkPackage =
             system:
             let
-              pkgs = pkgsFor system;
+              pkgs = nixpkgs.legacyPackages.${system};
             in
-            mkHutianShell (
-              {
-                inherit
-                  pkgs
-                  nix
-                  systemPrompt
-                  model
-                  llamaUrl
-                  readOnly
-                  ;
-                packages = packages pkgs;
-              }
-              // lib.optionalAttrs (src != null) { inherit src; }
-            );
+            mkHutianShell {
+              inherit
+                pkgs
+                systemPrompt
+                model
+                llamaUrl
+                readOnly
+                nix
+                ;
+              packages = packages pkgs;
+            };
         in
         {
-          packages = lib.genAttrs systems (system: {
+          packages = lib.genAttrs defaultSystems (system: {
             default = mkPackage system;
           });
 
-          apps = lib.genAttrs systems (system: {
+          apps = lib.genAttrs defaultSystems (system: {
             default = mkApp "${mkPackage system}/bin/hutian";
           });
         };
 
-      built = mkHutianShellFlake nixpkgs {
-        inherit (defaults)
-          systemPrompt
-          model
-          llamaUrl
-          readOnly
-          ;
-        packages = _: [ ];
-        src = self;
-      };
+      built = mkHutianShellFlake nixpkgs (defaults // { packages = _: [ ]; });
     in
     {
       # Import this from another flake:
@@ -109,6 +134,7 @@
       #     model = "your-model";
       #     llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
       #     readOnly = false;
+      #     nix = false;
       #   }
       #
       # Or, for a minimal consumer flake:
@@ -120,6 +146,7 @@
       #       model = "your-model";
       #       llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
       #       readOnly = false;
+      #       nix = false;
       #     };
       lib = { inherit mkHutianShell mkHutianShellFlake; };
 
@@ -142,7 +169,7 @@
             model = "probe-model";
             llamaUrl = "http://probe.invalid/v1/chat/completions";
             readOnly = false;
-            src = self;
+            nix = false;
           };
           readOnlyProbe = mkHutianShell {
             inherit pkgs;
@@ -151,13 +178,15 @@
             model = "probe-model";
             llamaUrl = "http://probe.invalid/v1/chat/completions";
             readOnly = true;
-            src = self;
+            nix = false;
           };
           expected = [
-            "HUTIAN_SYSTEM_PROMPT="
+            "--llama-url"
+            "--model"
+            "--system-prompt"
             "probe system prompt"
-            "HUTIAN_LLAMA_MODEL=probe-model"
-            "HUTIAN_LLAMA_URL=http://probe.invalid/v1/chat/completions"
+            "probe-model"
+            "http://probe.invalid/v1/chat/completions"
           ];
         in
         {
@@ -165,10 +194,14 @@
           haskell-lint = lint.haskell;
           nix-lint = lint.nix;
           inherit (lint) liquid;
-          required-options = pkgs.runCommand "hutian-required-options-check" { } ''
+          configuration = pkgs.runCommand "hutian-configuration-check" { } ''
             ${lib.concatMapStrings (pattern: ''
-              ${pkgs.gnugrep}/bin/grep -F ${lib.escapeShellArg pattern} ${probe}/bin/hutian
+              ${pkgs.gnugrep}/bin/grep -F -- ${lib.escapeShellArg pattern} ${probe}/bin/hutian
             '') expected}
+            if ${pkgs.gnugrep}/bin/grep -F -- 'HUTIAN_' ${probe}/bin/hutian; then
+              echo "the launcher must not set HUTIAN_ environment variables" >&2
+              exit 1
+            fi
             ${pkgs.coreutils}/bin/touch $out
           '';
           read-only-option = pkgs.runCommand "hutian-read-only-option-check" { } ''

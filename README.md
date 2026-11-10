@@ -112,21 +112,17 @@ combine steps in one command, for example `cd sub && make`.
 Term command history is stored in `/tmp/hutian-shell-history`, and LLM prompt
 history in `/tmp/hutian-llm-history`.
 
-The flake requires explicit `llamaUrl` and `readOnly` options. Hutian expects
-an OpenAI-compatible llama.cpp chat endpoint; a native `/completion` URL is
-also supported.
+The flake requires explicit `packages`, `systemPrompt`, `model`, `llamaUrl`,
+`readOnly`, and `nix` options. Hutian expects an OpenAI-compatible llama.cpp
+chat endpoint; a native `/completion` URL is also supported.
 
 ```text
 http://127.0.0.1:8080/v1/chat/completions
 ```
 
-Configure it with:
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `HUTIAN_LLAMA_URL` | set by `llamaUrl` | llama.cpp endpoint. A native `/completion` URL is also supported. |
-| `HUTIAN_LLAMA_MODEL` | set by `model` | Model name sent to llama.cpp. |
-| `HUTIAN_SYSTEM_PROMPT` | set by `systemPrompt` | System message sent to llama.cpp. |
+The launcher passes `llamaUrl`, `model`, and `systemPrompt` to the shell as
+`--llama-url`, `--model`, and `--system-prompt` arguments. The shell reads no
+Hutian-specific environment variables.
 
 The sandbox uses gVisor's `sandbox` network mode by default, which can reach a
 server bound to the host's loopback interface.
@@ -137,9 +133,9 @@ server bound to the host's loopback interface.
 package selector. Each selected package's runtime closure is mounted under
 `/nix/store`, and its `bin` directory is added to `PATH`.
 
-The required `systemPrompt`, `model`, `llamaUrl`, and `readOnly` arguments
-configure the system message, model name, llama.cpp endpoint, and whether the
-host working directory is writable:
+The `systemPrompt`, `model`, `llamaUrl`, `readOnly`, and `nix` arguments are
+all required and configure the system message, model name, llama.cpp endpoint,
+whether the host working directory is writable, and whether Nix is available:
 
 ```nix
 {
@@ -152,6 +148,7 @@ host working directory is writable:
       model = "your-model";
       llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
       readOnly = false;
+      nix = false;
       systemPrompt = ''
         You are a careful coding assistant working in a sandboxed shell.
       '';
@@ -164,19 +161,8 @@ the working directory, but any attempt to write to it fails with a read-only
 filesystem error. This is useful when the model should only inspect a project.
 
 Then run `nix run .` from that project. Package versions come from the consumer
-flake's lock file. Omitting a required argument fails with an error that names
-the missing option and shows an example value.
-
-To use a custom package set, such as one with overlays, pass `pkgsFor`:
-
-```nix
-pkgsFor = system:
-  nixpkgs.legacyPackages.${system}.extend (final: prev: {
-    # your overlay
-  });
-```
-
-`pkgsFor` defaults to `system: nixpkgs.legacyPackages.${system}`.
+flake's lock file. Every option is mandatory, and omitting one fails with an
+error that lists the missing options.
 
 For a single system or an existing `pkgs` instance, use the lower-level builder:
 
@@ -187,6 +173,7 @@ hutian.lib.mkHutianShell {
   model = "your-model";
   llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
   readOnly = false;
+  nix = false;
   systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
 }
 ```
@@ -218,18 +205,18 @@ on the host. Flakes and the `nix` command are enabled automatically, and a CA
 bundle is provided for client-side HTTPS fetches.
 
 The sandbox still uses gVisor's network mode, but the host Nix store is visible
-in full while `nix = true`. Leave this option off when you only need the
-configured package closures.
+in full while `nix = true`. Set it to `false` when you only need the configured
+package closures.
 
 ## Configuration
+
+The sandbox receives a fixed `TERM=xterm-256color` and `LANG=C.UTF-8`. Only the
+gVisor runtime settings can be overridden from the host:
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `GVISOR_PLATFORM` | `systrap` | gVisor platform. Use `ptrace` if your host requires it. |
 | `GVISOR_NETWORK` | `sandbox` | gVisor network mode: `sandbox`, `host`, or `none`. |
-| `HUTIAN_LLAMA_URL` | set by `llamaUrl` | llama.cpp endpoint. |
-| `HUTIAN_LLAMA_MODEL` | set by `model` | llama.cpp model name. |
-| `HUTIAN_SYSTEM_PROMPT` | set by `systemPrompt` | System message sent to llama.cpp. |
 
 ## Security model
 
@@ -260,8 +247,9 @@ The code keeps pure logic separate from IO:
   `Hutian.Conversation` also represents tool calls and tool results.
 - `Hutian.History` owns the pure on-disk history codec.
 - `Hutian.Markdown` is a pure streaming renderer for Markdown and ANSI styles.
-- `Hutian.Llm` keeps SSE parsing, tool-call accumulation, and request building
-  pure, with IO limited to HTTP and terminal output.
+- `Hutian.Llm` keeps SSE parsing, tool-call accumulation, request building, and
+  command-line settings parsing pure, with IO limited to HTTP and terminal
+  output.
 - `Hutian.Terminal`, `Hutian.Shell`, and `Hutian.Interrupt` are thin IO adapters
   over those pure cores.
 - `Main` is a small interpreter over `Command`, `TerminalInput`, and
@@ -309,11 +297,11 @@ $ nix build .#packages.x86_64-linux.default
 The package build runs the suite as part of the standard build. With a local
 Cabal setup, `cabal test` runs the same tests directly.
 
-The flake also exposes a check that verifies the required Nix options are
-propagated:
+The flake also exposes a check that verifies the Nix options are passed to the
+launcher as command-line arguments:
 
 ```console
-$ nix build .#checks.x86_64-linux.required-options
+$ nix build .#checks.x86_64-linux.configuration
 ```
 
 ## Linting

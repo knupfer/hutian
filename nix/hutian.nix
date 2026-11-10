@@ -1,19 +1,12 @@
-let
-  requiredOption = import ./required-option.nix;
-in
 {
   pkgs,
-  packages ? [ ],
-  systemPrompt ?
-    requiredOption "mkHutianShell" "systemPrompt"
-      ''systemPrompt = "You are a coding assistant.";'',
-  model ? requiredOption "mkHutianShell" "model" ''model = "your-model";'',
-  llamaUrl ?
-    requiredOption "mkHutianShell" "llamaUrl"
-      ''llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";'',
-  readOnly ? requiredOption "mkHutianShell" "readOnly" "readOnly = false;",
-  nix ? false,
-  src ? ../.,
+  src,
+  packages,
+  systemPrompt,
+  model,
+  llamaUrl,
+  readOnly,
+  nix,
 }:
 
 let
@@ -33,6 +26,7 @@ let
   };
 
   binPath = lib.makeBinPath allPackages;
+  pathEnv = "/bin" + lib.optionalString (binPath != "") ":${binPath}";
 
   stateDir = "${dirOf storeDir}/var/nix";
 
@@ -75,46 +69,45 @@ let
       nixVolumes=()
       nixRunscArgs=()
       ${lib.optionalString nix ''
-                # Expose the host store and, when present, the Nix daemon socket.
-                # Builds are performed by the host daemon; the sandbox only reads the
-                # resulting store paths.
-                nixVolumes+=(-volume "${storeDir}:${storeDir}")
-                if [ -S "${stateDir}/daemon-socket/socket" ]; then
-                  nixVolumes+=(-volume "${stateDir}/daemon-socket:${stateDir}/daemon-socket")
-                  nixRunscArgs+=(--host-uds=open)
-                  nixEnv+=(
-                    NIX_REMOTE=daemon
-                    NIX_STATE_DIR=${stateDir}
-                  )
-                fi
+        # Expose the host store and, when present, the Nix daemon socket.
+        # Builds are performed by the host daemon; the sandbox only reads the
+        # resulting store paths.
+        nixVolumes+=(-volume "${storeDir}:${storeDir}")
+        if [ -S "${stateDir}/daemon-socket/socket" ]; then
+          nixVolumes+=(-volume "${stateDir}/daemon-socket:${stateDir}/daemon-socket")
+          nixRunscArgs+=(--host-uds=open)
+          nixEnv+=(
+            NIX_REMOTE=daemon
+            NIX_STATE_DIR=${stateDir}
+          )
+        fi
 
-                nixEnv+=(
-                  NIX_CONFIG="experimental-features = nix-command flakes''${NIX_CONFIG:+
-        $NIX_CONFIG}"
-                  NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
-                  XDG_CACHE_HOME=/tmp/nix-cache
-                )
+        nixEnv+=(
+          NIX_CONFIG="experimental-features = nix-command flakes"
+          NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+          XDG_CACHE_HOME=/tmp/nix-cache
+        )
       ''}
 
       if [ "$#" -eq 0 ]; then
-        set -- ${hutianShell}/bin/hutian-shell
-      else
-        # shellcheck disable=SC2016
-        set -- /bin/sh -c 'cd /source && HOME=/source PATH="/bin''${GVISOR_PATH:+:$GVISOR_PATH}"; export HOME PATH; "$@"' sh "$@"
+        set -- ${hutianShell}/bin/hutian-shell \
+          --llama-url ${lib.escapeShellArg llamaUrl} \
+          --model ${lib.escapeShellArg model} \
+          --system-prompt ${lib.escapeShellArg systemPrompt}
       fi
+
+      # runsc resolves -cwd on the host, so start in / and enter /source after
+      # the volume is mounted.
+      # shellcheck disable=SC2016
+      set -- /bin/sh -c 'cd /source && "$@"' sh "$@"
 
       sandbox=(
         env -i
-        PATH=/bin:${binPath}
+        PATH=${pathEnv}
         HOME=/source
-        GVISOR_PATH=${binPath}
-        TERM="''${TERM:-xterm-256color}"
-        LANG="''${LANG:-C.UTF-8}"
+        TERM=xterm-256color
+        LANG=C.UTF-8
         TMPDIR=/tmp
-        HUTIAN_WORKDIR=/source
-        HUTIAN_LLAMA_URL=${lib.escapeShellArg llamaUrl}
-        HUTIAN_LLAMA_MODEL=${lib.escapeShellArg model}
-        HUTIAN_SYSTEM_PROMPT=${lib.escapeShellArg systemPrompt}
         "''${nixEnv[@]}"
         "$(command -v runsc)"
           --rootless
