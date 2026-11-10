@@ -94,7 +94,7 @@ main = do
 -- look like a shell working-directory prompt because commands do not persist
 -- shell state between invocations.
 termPrompt :: String
-termPrompt = "exec: "
+termPrompt = "run: "
 
 shellLoop :: ShellState -> IO ()
 shellLoop state = do

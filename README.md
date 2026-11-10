@@ -99,7 +99,7 @@ Explain what a syscall is.
 
 ### Term mode
 
-Term mode uses a dark blue background, shows a teal `exec:` prefix before the
+Term mode uses a dark blue background, shows a teal `run:` prefix before the
 input, and prints command output in gray on a slightly darker blue background.
 `help` shows the builtin help; every other line is executed with `/bin/sh -c`
 in the sandbox working directory.

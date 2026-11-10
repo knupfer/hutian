@@ -11,7 +11,7 @@ All notable changes to Hutian are documented here. The format follows
   sandbox working directory. Shell state such as `cd` and exported variables
   no longer persists between commands.
 - `Ctrl+D` on empty input now exits the shell in both llm and term mode.
-- Term mode uses a fixed `exec:` prompt prefix instead of the working
+- Term mode uses a fixed `run:` prompt prefix instead of the working
   directory, since commands do not share a shell.
 
 ### Removed
