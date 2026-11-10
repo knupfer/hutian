@@ -38,7 +38,6 @@ import Hutian.Llm
   , toolCommand
   )
 import Hutian.Output (termOutputBackground, withGrayOutput)
-import Hutian.Paths (displayPath)
 import Hutian.Shell
   ( executableCommands
   , runShellCommand
@@ -52,7 +51,7 @@ import Hutian.Terminal
   , renderToolCommand
   , resetTerminal
   )
-import System.Directory (getCurrentDirectory, setCurrentDirectory)
+import System.Directory (setCurrentDirectory)
 import System.Environment (lookupEnv)
 import System.IO
 
@@ -91,11 +90,14 @@ main = do
           }
   shellLoop state `finally` resetTerminal
 
+-- | The fixed prompt shown for term-mode commands. It deliberately does not
+-- look like a shell working-directory prompt because commands do not persist
+-- shell state between invocations.
+termPrompt :: String
+termPrompt = "exec: "
+
 shellLoop :: ShellState -> IO ()
 shellLoop state = do
-  home <- fromMaybe "/" <$> lookupEnv "HOME"
-  cwd <- getCurrentDirectory
-  let termPrompt = displayPath home cwd ++ " "
   (nextMode, input, nextBuffers) <-
     promptForInput
       (shellCommands state)
@@ -215,16 +217,9 @@ runToolCall interruptFlag conversation call =
     Left message ->
       pure (appendToolResult (toolCallId call) ("tool error: " ++ message) conversation)
     Right command -> do
-      termPrompt <- currentTermPrompt
       renderToolCommand termPrompt command
       output <- runShellCommandOutput interruptFlag command
       pure (appendToolResult (toolCallId call) output conversation)
-
-currentTermPrompt :: IO String
-currentTermPrompt = do
-  home <- fromMaybe "/" <$> lookupEnv "HOME"
-  cwd <- getCurrentDirectory
-  pure (displayPath home cwd ++ " ")
 
 runTerminalInput :: InterruptFlag -> Conversation -> String -> IO Conversation
 runTerminalInput interruptFlag conversation text =

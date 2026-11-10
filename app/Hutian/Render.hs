@@ -58,7 +58,7 @@ promptRenderText termPrompt mode previousRow width prompt =
             | otherwise = ""
           prefixOutput
             | prefixCount > 0 =
-                pathForegroundFor mode ++ prefixPart ++ defaultForeground
+                prefixForegroundFor mode ++ prefixPart ++ defaultForeground
             | otherwise = ""
           newline
             | index < total - 1 = "\n"
@@ -66,8 +66,8 @@ promptRenderText termPrompt mode previousRow width prompt =
        in suggestionReset ++ prefixOutput ++ rest ++ clearLine ++ newline
 
 -- | Render a command requested by the model as a prompt line, followed by a
--- newline. Tool calls use a dark red background and a bright red path so they
--- are visually distinct from user-entered commands.
+-- newline. Tool calls use a dark red background and a bright red prompt so
+-- they are visually distinct from user-entered commands.
 toolPromptText :: String -> Int -> String -> String
 toolPromptText termPrompt width command =
   fst (promptRenderText termPrompt ToolMode 0 width (setPromptText command initialPrompt))
@@ -105,10 +105,10 @@ backgroundFor mode =
     TermMode -> "\ESC[48;2;0;0;40m"
     ToolMode -> "\ESC[48;2;40;0;0m"
 
-pathForegroundFor :: PromptMode -> String
-pathForegroundFor TermMode = tealForeground
-pathForegroundFor ToolMode = brightRedForeground
-pathForegroundFor LlmMode = tealForeground
+prefixForegroundFor :: PromptMode -> String
+prefixForegroundFor TermMode = tealForeground
+prefixForegroundFor ToolMode = brightRedForeground
+prefixForegroundFor LlmMode = tealForeground
 
 tealForeground, brightRedForeground, grayForeground, defaultForeground, clearToEnd, clearLine, reset :: String
 tealForeground = "\ESC[38;2;0;255;200m"

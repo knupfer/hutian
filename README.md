@@ -22,7 +22,7 @@ through BusyBox `ash`, so shell builtins and redirection work as expected.
 In LLM mode the model can also call a shell tool. Commands requested by the
 model run through the same `/bin/sh -c` execution path as term mode, and the
 input lines used to show them have a dark red background with a bright red
-path.
+prompt.
 
 ## Quick start
 
@@ -99,10 +99,10 @@ Explain what a syscall is.
 
 ### Term mode
 
-Term mode uses a dark blue background, shows the sandbox working directory in
-vibrant teal before the input, and prints command output in gray on a slightly
-darker blue background. `help` shows the builtin help; every other line is
-executed with `/bin/sh -c` in the sandbox working directory.
+Term mode uses a dark blue background, shows a teal `exec:` prefix before the
+input, and prints command output in gray on a slightly darker blue background.
+`help` shows the builtin help; every other line is executed with `/bin/sh -c`
+in the sandbox working directory.
 
 Each term-mode command runs in a fresh shell, so `cd`, exported variables, and
 other shell state do not carry over between commands. Use absolute paths or

@@ -48,17 +48,17 @@ tests =
         startPromptText TermMode @?= "\ESC[48;2;0;0;40m\ESC[K"
         startPromptText LlmMode @?= "\ESC[48;2;24;0;24m\ESC[K"
         startPromptText ToolMode @?= "\ESC[48;2;40;0;0m\ESC[K"
-    , testCase "tool prompts use a dark red background and bright red path" $ do
+    , testCase "tool prompts use a dark red background and bright red prefix" $ do
         let prompt = setPromptText "ls" initialPrompt
             (output, _) = promptRenderText "~ $ " ToolMode 0 80 prompt
         assertBool "tool background" ("\ESC[48;2;40;0;0m" `isInfixOf` output)
-        assertBool "bright red path" ("\ESC[38;2;255;0;0m" `isInfixOf` output)
-        assertBool "path text" ("~ $ " `isInfixOf` output)
+        assertBool "bright red prefix" ("\ESC[38;2;255;0;0m" `isInfixOf` output)
+        assertBool "prefix text" ("~ $ " `isInfixOf` output)
         assertBool "command text" ("ls" `isInfixOf` output)
     , testCase "toolPromptText renders a command and resets colors" $ do
         let output = toolPromptText "~ $ " 80 "echo hi"
         assertBool "tool background" ("\ESC[48;2;40;0;0m" `isInfixOf` output)
-        assertBool "bright red path" ("\ESC[38;2;255;0;0m" `isInfixOf` output)
+        assertBool "bright red prefix" ("\ESC[38;2;255;0;0m" `isInfixOf` output)
         assertBool "command text" ("echo hi" `isInfixOf` output)
         assertBool "resets colors" ("\ESC[0m" `isInfixOf` output)
     , testCase "toolPromptText resets the background before the final newline" $ do
