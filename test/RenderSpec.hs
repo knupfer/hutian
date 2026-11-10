@@ -34,10 +34,10 @@ tests =
             prompt = setPromptText source initialPrompt
             (output, position) = promptRenderText termLine LlmMode 0 80 prompt
             stripped = stripAnsi output
-        assertBool "heading style" ("\ESC[38;5;81m" `isInfixOf` output)
-        assertBool "bold style" ("\ESC[1;38;5;222m" `isInfixOf` output)
-        assertBool "code style" ("\ESC[38;5;220m" `isInfixOf` output)
-        assertBool "list marker style" ("\ESC[1;38;5;214m" `isInfixOf` output)
+        assertBool "heading style" ("\ESC[1;38;2;137;180;250m" `isInfixOf` output)
+        assertBool "bold style" ("\ESC[1;38;2;249;226;175m" `isInfixOf` output)
+        assertBool "code style" ("\ESC[38;2;166;227;161m" `isInfixOf` output)
+        assertBool "list marker style" ("\ESC[1;38;2;250;179;135m" `isInfixOf` output)
         assertBool "preserves the markdown text" (all (`isInfixOf` stripped) (lines source))
         position @?= cursorPosition 80 "ask:\n" prompt
         position @?= (3, 6)
@@ -45,13 +45,13 @@ tests =
         let source = "```\nmain = putStrLn \"hi\"\n```"
             prompt = setPromptText source initialPrompt
             (output, _) = promptRenderText termLine LlmMode 0 80 prompt
-        assertBool "fence style" ("\ESC[38;5;81m" `isInfixOf` output)
-        assertBool "code style" ("\ESC[38;5;220m" `isInfixOf` output)
+        assertBool "fence style" ("\ESC[38;2;166;227;161m" `isInfixOf` output)
+        assertBool "code style" ("\ESC[38;2;166;227;161m" `isInfixOf` output)
         assertBool "preserves the markdown text" (all (`isInfixOf` stripAnsi output) (lines source))
     , testCase "term prompt does not apply markdown highlighting" $ do
         let prompt = setPromptText "# not markdown" initialPrompt
             (output, _) = promptRenderText termLine TermMode 0 80 prompt
-        assertBool "no heading style" (not ("\ESC[38;5;81m" `isInfixOf` output))
+        assertBool "no heading style" (not ("\ESC[1;38;2;137;180;250m" `isInfixOf` output))
     , testCase "prompt rendering uses no background colors" $ do
         let termPrompt = setPromptText "abc" initialPrompt
             (termOutput, _) = promptRenderText termLine TermMode 0 80 termPrompt

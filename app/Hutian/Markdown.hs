@@ -313,7 +313,7 @@ highlightInline base ('*' : rest) =
         ++ "*"
         ++ sanitize body
         ++ "*"
-        ++ italicOff
+        ++ italicOff base
         ++ highlightInline base after
     _ -> '*' : highlightInline base rest
 highlightInline base ('_' : rest) =
@@ -323,7 +323,7 @@ highlightInline base ('_' : rest) =
         ++ "_"
         ++ sanitize body
         ++ "_"
-        ++ italicOff
+        ++ italicOff base
         ++ highlightInline base after
     _ -> '_' : highlightInline base rest
 highlightInline base ('[' : rest) =
@@ -337,8 +337,7 @@ highlightInline base ('[' : rest) =
             ++ "]("
             ++ sanitize url
             ++ ")"
-            ++ "\ESC[24m"
-            ++ restoreForeground base
+            ++ linkOff base
             ++ highlightInline base more
         _ -> '[' : highlightInline base rest
     _ -> '[' : highlightInline base rest
@@ -372,33 +371,43 @@ restoreForeground base
   | null base = "\ESC[39m"
   | otherwise = base
 
-reset, boldColour, italicColour, italicOff :: String
+reset, boldColour, italicColour, codeColour, fenceColour, dimColour :: String
+
+-- | The Markdown palette is grouped by role so related elements share a hue:
+-- headings climb a blue-to-rose ramp, emphasis is warm yellow, code and fence
+-- markers are green, links are underlined teal, list markers are peach, and
+-- quotes and rules are muted grey.
 reset = "\ESC[0m"
-boldColour = "\ESC[1;38;5;222m"
-italicColour = "\ESC[3m"
-italicOff = "\ESC[23m"
+boldColour = "\ESC[1;38;2;249;226;175m"
+italicColour = "\ESC[3;38;2;249;226;175m"
+codeColour = "\ESC[38;2;166;227;161m"
+fenceColour = codeColour
+dimColour = "\ESC[2;38;2;127;132;156m"
 
 boldOff :: String -> String
 boldOff base = "\ESC[22m" ++ restoreForeground base
 
-strikeColour, strikeOff, codeColour, fenceColour, dimColour :: String
+italicOff :: String -> String
+italicOff base = "\ESC[23m" ++ restoreForeground base
+
+strikeColour, strikeOff :: String
 strikeColour = "\ESC[9m"
 strikeOff = "\ESC[29m"
-codeColour = "\ESC[38;5;220m"
-fenceColour = "\ESC[38;5;81m"
-dimColour = "\ESC[2;38;5;245m"
 
 blockQuoteColour, markerColour, linkColour :: String
-blockQuoteColour = "\ESC[38;5;244m"
-markerColour = "\ESC[1;38;5;214m"
-linkColour = "\ESC[4;38;5;81m"
+blockQuoteColour = "\ESC[38;2;147;153;178m"
+markerColour = "\ESC[1;38;2;250;179;135m"
+linkColour = "\ESC[4;38;2;148;226;213m"
+
+linkOff :: String -> String
+linkOff base = "\ESC[24m" ++ restoreForeground base
 
 headingColour :: Int -> String
 headingColour level =
-  "\ESC[1m" ++ case level of
-    1 -> "\ESC[38;5;81m"
-    2 -> "\ESC[38;5;117m"
-    3 -> "\ESC[38;5;153m"
-    4 -> "\ESC[38;5;183m"
-    5 -> "\ESC[38;5;219m"
-    _ -> "\ESC[38;5;245m"
+  case level of
+    1 -> "\ESC[1;38;2;137;180;250m"
+    2 -> "\ESC[1;38;2;180;190;254m"
+    3 -> "\ESC[1;38;2;203;166;247m"
+    4 -> "\ESC[1;38;2;245;194;231m"
+    5 -> "\ESC[1;38;2;235;160;172m"
+    _ -> "\ESC[1;38;2;166;173;200m"

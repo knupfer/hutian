@@ -26,21 +26,21 @@ unitTests =
     "unit"
     [ testCase "headings are highlighted without changing the text" $ do
         let rendered = renderAll "# Heading\n"
-        assertBool "expected ANSI heading style" ("\ESC[38;5;81m" `isInfixOf` rendered)
+        assertBool "expected ANSI heading style" ("\ESC[1;38;2;137;180;250m" `isInfixOf` rendered)
         stripAnsi rendered @?= "# Heading\n"
     , testCase "inline emphasis and code are highlighted" $ do
         let source = "Use **bold**, *italic*, and `code`.\n"
             rendered = renderAll source
-        assertBool "expected bold style" ("\ESC[1;38;5;222m" `isInfixOf` rendered)
-        assertBool "expected italic style" ("\ESC[3m" `isInfixOf` rendered)
-        assertBool "expected code style" ("\ESC[38;5;220m" `isInfixOf` rendered)
+        assertBool "expected bold style" ("\ESC[1;38;2;249;226;175m" `isInfixOf` rendered)
+        assertBool "expected italic style" ("\ESC[3;38;2;249;226;175m" `isInfixOf` rendered)
+        assertBool "expected code style" ("\ESC[38;2;166;227;161m" `isInfixOf` rendered)
         stripAnsi rendered @?= source
     , testCase "fenced code blocks stay highlighted across lines and chunks" $ do
         let (state1, output1) = renderMarkdown initialMarkdownState "```\ncode\n"
             (state2, output2) = renderMarkdown state1 "```\nafter\n"
             rendered = output1 ++ output2 ++ finishMarkdown state2
         stripAnsi rendered @?= "```\ncode\n```\nafter\n"
-        assertBool "expected fence style" ("\ESC[38;5;81m" `isInfixOf` rendered)
+        assertBool "expected fence style" ("\ESC[38;2;166;227;161m" `isInfixOf` rendered)
     , testCase "incomplete lines are buffered until the next chunk" $ do
         let (state1, output1) = renderMarkdown initialMarkdownState "hel"
             (state2, output2) = renderMarkdown state1 "lo\n"
@@ -50,7 +50,7 @@ unitTests =
         stripAnsi (renderAll "a\ESC[31mb") @?= "a [31mb"
     , testCase "list markers are colored" $ do
         let rendered = renderAll "- item\n1. ordered\n"
-        assertBool "expected marker style" ("\ESC[1;38;5;214m" `isInfixOf` rendered)
+        assertBool "expected marker style" ("\ESC[1;38;2;250;179;135m" `isInfixOf` rendered)
         stripAnsi rendered @?= "- item\n1. ordered\n"
     , testCase "all heading levels use distinct styles" $
         mapM_
@@ -61,37 +61,37 @@ unitTests =
                (colour `isInfixOf` rendered)
              stripAnsi rendered @?= source
           )
-          [ (1 :: Int, "# one\n", "\ESC[38;5;81m")
-          , (2, "## two\n", "\ESC[38;5;117m")
-          , (3, "### three\n", "\ESC[38;5;153m")
-          , (4, "#### four\n", "\ESC[38;5;183m")
-          , (5, "##### five\n", "\ESC[38;5;219m")
-          , (6, "###### six\n", "\ESC[38;5;245m")
+          [ (1 :: Int, "# one\n", "\ESC[1;38;2;137;180;250m")
+          , (2, "## two\n", "\ESC[1;38;2;180;190;254m")
+          , (3, "### three\n", "\ESC[1;38;2;203;166;247m")
+          , (4, "#### four\n", "\ESC[1;38;2;245;194;231m")
+          , (5, "##### five\n", "\ESC[1;38;2;235;160;172m")
+          , (6, "###### six\n", "\ESC[1;38;2;166;173;200m")
           ]
     , testCase "blockquotes and horizontal rules are highlighted" $ do
         let quoted = renderAll "> quoted\n"
             rule = renderAll "---\n"
-        assertBool "expected blockquote style" ("\ESC[38;5;244m" `isInfixOf` quoted)
-        assertBool "expected rule style" ("\ESC[2;38;5;245m" `isInfixOf` rule)
+        assertBool "expected blockquote style" ("\ESC[38;2;147;153;178m" `isInfixOf` quoted)
+        assertBool "expected rule style" ("\ESC[2;38;2;127;132;156m" `isInfixOf` rule)
         stripAnsi quoted @?= "> quoted\n"
         stripAnsi rule @?= "---\n"
     , testCase "underscore italics, strikethrough, and links are highlighted" $ do
         let source = "_italic_ ~~gone~~ [text](https://example.test)\n"
             rendered = renderAll source
-        assertBool "expected italic style" ("\ESC[3m" `isInfixOf` rendered)
+        assertBool "expected italic style" ("\ESC[3;38;2;249;226;175m" `isInfixOf` rendered)
         assertBool "expected strikethrough style" ("\ESC[9m" `isInfixOf` rendered)
-        assertBool "expected link style" ("\ESC[4;38;5;81m" `isInfixOf` rendered)
+        assertBool "expected link style" ("\ESC[4;38;2;148;226;213m" `isInfixOf` rendered)
         stripAnsi rendered @?= source
     , testCase "escaped emphasis markers are not highlighted" $ do
         let rendered = renderAll "\\*literal\\*\n"
-        assertBool "escaped asterisks should stay plain" (not ("\ESC[3m" `isInfixOf` rendered))
+        assertBool "escaped asterisks should stay plain" (not ("\ESC[3;38;2;249;226;175m" `isInfixOf` rendered))
         stripAnsi rendered @?= "\\*literal\\*\n"
     , testCase "alternative list and fence markers are supported" $ do
         let lists = renderAll "* star\n+ plus\n2) paren\n"
             fence = renderAll "~~~\nbody\n~~~\n"
-        assertBool "expected marker style" ("\ESC[1;38;5;214m" `isInfixOf` lists)
-        assertBool "expected fence marker style" ("\ESC[38;5;81m" `isInfixOf` fence)
-        assertBool "expected code body style" ("\ESC[38;5;220m" `isInfixOf` fence)
+        assertBool "expected marker style" ("\ESC[1;38;2;250;179;135m" `isInfixOf` lists)
+        assertBool "expected fence marker style" ("\ESC[38;2;166;227;161m" `isInfixOf` fence)
+        assertBool "expected code body style" ("\ESC[38;2;166;227;161m" `isInfixOf` fence)
         stripAnsi lists @?= "* star\n+ plus\n2) paren\n"
         stripAnsi fence @?= "~~~\nbody\n~~~\n"
     , testCase "empty lines and Unicode are preserved" $ do
@@ -112,23 +112,23 @@ unitTests =
     , testCase "input rows are highlighted without changing their text or count" $ do
         let rows = ["# Heading", "Use **bold** and `code`.", "- item", ""]
             rendered = renderMarkdownRows rows
-        assertBool "expected heading style" ("\ESC[38;5;81m" `isInfixOf` concat rendered)
-        assertBool "expected bold style" ("\ESC[1;38;5;222m" `isInfixOf` concat rendered)
-        assertBool "expected code style" ("\ESC[38;5;220m" `isInfixOf` concat rendered)
-        assertBool "expected marker style" ("\ESC[1;38;5;214m" `isInfixOf` concat rendered)
+        assertBool "expected heading style" ("\ESC[1;38;2;137;180;250m" `isInfixOf` concat rendered)
+        assertBool "expected bold style" ("\ESC[1;38;2;249;226;175m" `isInfixOf` concat rendered)
+        assertBool "expected code style" ("\ESC[38;2;166;227;161m" `isInfixOf` concat rendered)
+        assertBool "expected marker style" ("\ESC[1;38;2;250;179;135m" `isInfixOf` concat rendered)
         length rendered @?= length rows
         map stripAnsi rendered @?= rows
     , testCase "input rows keep fenced code highlighted across rows" $ do
         let rows = ["```", "main = putStrLn \"hi\"", "```", "after"]
             rendered = renderMarkdownRows rows
-        assertBool "expected fence style" ("\ESC[38;5;81m" `isInfixOf` concat rendered)
-        assertBool "expected code style" ("\ESC[38;5;220m" `isInfixOf` concat rendered)
+        assertBool "expected fence style" ("\ESC[38;2;166;227;161m" `isInfixOf` concat rendered)
+        assertBool "expected code style" ("\ESC[38;2;166;227;161m" `isInfixOf` concat rendered)
         length rendered @?= length rows
         map stripAnsi rendered @?= rows
     , testCase "an unclosed fence highlights the remaining input rows" $ do
         let rows = ["```", "code", "more"]
             rendered = renderMarkdownRows rows
-        assertBool "expected fence style" ("\ESC[38;5;81m" `isInfixOf` concat rendered)
+        assertBool "expected fence style" ("\ESC[38;2;166;227;161m" `isInfixOf` concat rendered)
         length rendered @?= length rows
         map stripAnsi rendered @?= rows
     ]

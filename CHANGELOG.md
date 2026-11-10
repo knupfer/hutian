@@ -28,6 +28,9 @@ All notable changes to Hutian are documented here. The format follows
 - The `run_shell_command` tool has been renamed to `shell`.
 - Removed all background colouring. Modes are distinguished by their prompt
   prefixes and foreground colours instead.
+- Refined the Markdown palette into one consistent scheme: a blue-to-rose
+  heading ramp, warm yellow emphasis, green code and fence markers, underlined
+  teal links, peach list markers, and muted grey quotes and rules.
 - `mkHutianShellFlake` now requires every option: `packages`, `systemPrompt`,
   `model`, `llamaUrl`, `readOnly`, and `nix`. The `src`, `systems`, and
   `pkgsFor` options were removed from the helper. Missing options are reported
