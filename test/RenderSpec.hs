@@ -25,6 +25,16 @@ tests =
             (output, _) = promptRenderText "~ $ " LlmMode 0 80 prompt
         assertBool "llm background" ("\ESC[48;2;24;0;24m" `isInfixOf` output)
         assertBool "no term prefix" (not ("~ $ " `isInfixOf` output))
+    , testCase "prompt rows are not padded with spaces" $ do
+        let prompt = setPromptText "abc" initialPrompt
+            (output, _) = promptRenderText "~ $ " TermMode 0 80 prompt
+        assertBool "no trailing space padding" (not ("abc " `isInfixOf` output))
+        assertBool "erases the rest of the line instead" ("abc\ESC[K" `isInfixOf` output)
+    , testCase "llm prompt rows are not padded with spaces" $ do
+        let prompt = setPromptText "hello" initialPrompt
+            (output, _) = promptRenderText "~ $ " LlmMode 0 80 prompt
+        assertBool "no trailing space padding" (not ("hello " `isInfixOf` output))
+        assertBool "erases the rest of the line instead" ("hello\ESC[K" `isInfixOf` output)
     , testCase "rendering moves up by the previous cursor row" $ do
         let prompt = setPromptText "abc" initialPrompt
             (output, _) = promptRenderText "" TermMode 2 80 prompt

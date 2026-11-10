@@ -29,6 +29,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
+- Input lines are no longer padded with spaces, so copied prompt text stays
+  minimal. The mode background still extends to the end of each line.
 - Missing required `mkHutianShell`/`mkHutianShellFlake` options now report the
   option name and an example value instead of a missing flake attribute.
 - Term-mode command output is now gray on a slightly darker blue background,

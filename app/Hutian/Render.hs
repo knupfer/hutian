@@ -60,11 +60,10 @@ promptRenderText termPrompt mode previousRow width prompt =
             | prefixCount > 0 =
                 pathForegroundFor mode ++ prefixPart ++ defaultForeground
             | otherwise = ""
-          padding = replicate (max 0 (width - length row)) ' '
           newline
             | index < total - 1 = "\n"
             | otherwise = ""
-       in suggestionReset ++ prefixOutput ++ rest ++ padding ++ newline
+       in suggestionReset ++ prefixOutput ++ rest ++ clearLine ++ newline
 
 -- | Render a command requested by the model as a prompt line, followed by a
 -- newline. Tool calls use a dark red background and a bright red path so they
