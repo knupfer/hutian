@@ -5,6 +5,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0.0] - 2026-11-10
+
 ### Added
 
 - A required `readOnly` option. When true, the host working directory is
