@@ -5,6 +5,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0.0] - 2026-11-11
+
 ### Added
 
 - The terminal cursor is pink while the user is typing and blinks teal while
