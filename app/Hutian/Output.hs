@@ -1,26 +1,11 @@
--- | Gray terminal output and cursor styling.
+-- | Pure label and colour rendering for command output.
 module Hutian.Output
   ( grayOutputText
-  , withGrayOutput
   , outputLabelText
-  , printOutputLabel
-  , withRespondingCursor
   ) where
 
-import Control.Concurrent (forkIO, killThread, threadDelay)
-import Control.Exception (finally)
-import Control.Monad (when)
 import Hutian.Editor (PromptMode (..))
-import Hutian.Render
-  ( CursorStyle (..)
-  , cursorStyleText
-  , grayForeground
-  , hideCursorText
-  , outputForeground
-  , reset
-  , showCursorText
-  )
-import System.IO (hFlush, hIsTerminalDevice, hPutStr, stderr, stdout)
+import Hutian.Render (grayForeground, outputForeground, reset)
 
 -- | Wrap captured output in gray when it is going to a terminal.
 grayOutputText :: Bool -> String -> String
@@ -41,53 +26,3 @@ outputLabelText mode interactive
 outputLabel :: PromptMode -> String
 outputLabel ToolMode = "tool output:"
 outputLabel _ = "output:"
-
--- | Print the label shown on its own line before shell or tool output.
-printOutputLabel :: PromptMode -> IO ()
-printOutputLabel mode = do
-  interactive <- hIsTerminalDevice stdout
-  putStrLn (outputLabelText mode interactive)
-  hFlush stdout
-
--- | Print streamed output in gray, restoring the terminal afterwards.
-withGrayOutput :: IO a -> IO a
-withGrayOutput action = do
-  stdoutIsTerminal <- hIsTerminalDevice stdout
-  stderrIsTerminal <- hIsTerminalDevice stderr
-  let restore = do
-        when stdoutIsTerminal (putStr reset >> hFlush stdout)
-        when stderrIsTerminal (hPutStr stderr reset >> hFlush stderr)
-  when stdoutIsTerminal (putStr grayForeground >> hFlush stdout)
-  when stderrIsTerminal (hPutStr stderr grayForeground >> hFlush stderr)
-  action `finally` restore
-
--- | Show a blinking teal cursor while the model streams an answer, then return
--- to the pink user cursor. The blink is driven here because every streamed
--- write resets the terminal's own cursor blink timer. Non-terminal output is
--- left alone.
-withRespondingCursor :: IO a -> IO a
-withRespondingCursor action = do
-  interactive <- hIsTerminalDevice stdout
-  if not interactive
-    then action
-    else do
-      putStr (showCursorText ++ cursorStyleText RespondingCursor)
-      hFlush stdout
-      blinkThread <- forkIO blinkCursor
-      action `finally` do
-        killThread blinkThread
-        putStr (showCursorText ++ cursorStyleText UserCursor)
-        hFlush stdout
-
--- | Toggle the cursor independently of streamed output, starting visible.
-blinkCursor :: IO ()
-blinkCursor = loop True
-  where
-    loop visible = do
-      putStr (if visible then showCursorText else hideCursorText)
-      hFlush stdout
-      threadDelay blinkInterval
-      loop (not visible)
-
-blinkInterval :: Int
-blinkInterval = 500000

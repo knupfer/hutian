@@ -242,8 +242,9 @@ The code keeps pure logic separate from IO:
 
 - `Hutian.Command` parses term-mode input into a typed `Command` and classifies
   single-line versus multi-line input.
-- `Hutian.Editor` owns prompt state, key semantics, layout, and the pure
-  `PromptAction` routing used by the terminal loop.
+- `Hutian.Editor` owns prompt state, key semantics, and layout.
+- `Hutian.Prompt` is the pure prompt reducer: it turns a key and the current
+  state into a step such as redraw, move cursor, complete, or finish.
 - `Hutian.Completion` selects command and path completions.
 - `Hutian.Render` turns a prompt into ANSI output and cursor movement, including
   the tool-call prefix style.
@@ -252,12 +253,16 @@ The code keeps pure logic separate from IO:
 - `Hutian.History` owns the pure on-disk history codec.
 - `Hutian.Markdown` is a pure streaming renderer for Markdown and ANSI styles.
 - `Hutian.Llm` keeps SSE parsing, tool-call accumulation, request building, and
-  command-line settings parsing pure, with IO limited to HTTP and terminal
-  output.
-- `Hutian.Terminal`, `Hutian.Shell`, and `Hutian.Interrupt` are thin IO adapters
-  over those pure cores.
-- `Main` is a small interpreter over `Command`, `TerminalInput`, and
-  `ShellState`, and drives the tool-call loop.
+  command-line settings parsing pure, with IO limited to HTTP.
+- `Hutian.Console` is the single terminal IO boundary: writes, terminal
+  attributes, cursor styling, size, and stream colouring.
+- `Hutian.Terminal` is the prompt driver over `Hutian.Prompt` and
+  `Hutian.Console`.
+- `Hutian.Shell` returns captured command output as `CommandResult` data instead
+  of printing it.
+- `Hutian.History.Store` and `Hutian.Interrupt` are the file and signal
+  boundaries.
+- `Main` wires the boundaries together and drives the tool-call loop.
 
 The package uses `GHC2021` and compiles with strict warnings and `-Werror`.
 
@@ -271,6 +276,8 @@ nix/lint.nix              Shared lint and LiquidHaskell checks
 app/                      Haskell shell source
 app/Hutian/Command.hs     Typed term-mode command parsing
 app/Hutian/Completion.hs  Pure completion selection
+app/Hutian/Console.hs     Single terminal IO boundary
+app/Hutian/Prompt.hs      Pure prompt reducer
 app/Hutian/Render.hs      Pure ANSI prompt rendering
 test/                     Unit and property tests
 test/TestSupport.hs       Shared test helpers
@@ -283,10 +290,10 @@ CHANGELOG.md              Release notes
 ## Testing
 
 The test suite combines HUnit tests with QuickCheck properties for the editor
-state machine, prompt layout and rendering, command parsing, completion
-selection, history codecs, conversation history, LLM requests, streaming
-tool calls, Markdown rendering, code highlighting, path and shell helpers, and
-interrupt handling. It also includes integration tests for:
+state machine, the pure prompt reducer, prompt layout and rendering, command
+parsing, completion selection, history codecs, conversation history, LLM
+requests, streaming tool calls, Markdown rendering, code highlighting, path and
+shell helpers, and interrupt handling. It also includes integration tests for:
 
 - streaming LLM responses through a local HTTP server
 - history file persistence
@@ -323,7 +330,8 @@ the package check phase, so a normal `nix build` fails on lint errors.
 `nix flake check` runs the explicit checks along with the package build.
 
 LiquidHaskell verifies the pure `Hutian.Completion`, `Hutian.Paths`,
-`Hutian.Conversation`, `Hutian.Editor`, and `Hutian.History` modules:
+`Hutian.Conversation`, `Hutian.Editor`, `Hutian.History`, and `Hutian.Prompt`
+modules:
 
 ```console
 $ nix build .#checks.x86_64-linux.liquid

@@ -5,6 +5,12 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Terminal IO now goes through a single `Hutian.Console` boundary. Prompt
+  policy is a pure reducer in `Hutian.Prompt`, and `Hutian.Shell` returns
+  captured command output as data instead of printing it.
+
 ### Fixed
 
 - The cursor stays blinking teal for the whole model turn, including shell tool

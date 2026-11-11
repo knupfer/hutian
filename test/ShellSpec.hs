@@ -2,7 +2,8 @@ module ShellSpec (tests) where
 
 import Data.List (isInfixOf, nub)
 import Hutian.Shell
-  ( executableCommands
+  ( commandResultText
+  , executableCommands
   , runShellCommand
   , runShellCommandOutput
   , shellExitSuffix
@@ -29,23 +30,31 @@ tests =
     "shell"
     [ testCase "runShellCommand executes through /bin/sh" $ do
         path <- temporaryFilePath "hutian-shell-output"
-        runShellCommand ("printf hello > " ++ shellQuote path)
+        failure <- runShellCommand ("printf hello > " ++ shellQuote path)
+        failure @?= Right ()
         contents <- readFile path
         contents @?= "hello"
         removeFile path
     , testCase "runShellCommandOutput captures output and exit status" $ do
-        output <- runShellCommandOutput "printf hello"
-        output @?= "hello"
+        hello <- runShellCommandOutput "printf hello"
+        case hello of
+          Left message -> assertFailure message
+          Right output -> commandResultText output @?= "hello"
         failed <- runShellCommandOutput "printf bad >&2; exit 3"
-        assertBool "stderr should be captured" ("bad" `isInfixOf` failed)
-        assertBool "exit status should be reported" ("[exit 3]" `isInfixOf` failed)
+        case failed of
+          Left message -> assertFailure message
+          Right output -> do
+            assertBool "stderr should be captured" ("bad" `isInfixOf` commandResultText output)
+            assertBool "exit status should be reported" ("[exit 3]" `isInfixOf` commandResultText output)
     , testCase "commands cannot change the parent working directory" $
         withTemporaryDirectory "hutian-shell-cd" $ \directory -> do
           original <- getCurrentDirectory
-          runShellCommand ("cd " ++ directory)
+          _ <- runShellCommand ("cd " ++ directory)
           output <- runShellCommandOutput ("cd " ++ directory)
           changed <- getCurrentDirectory
-          output @?= ""
+          case output of
+            Left message -> assertFailure message
+            Right result -> commandResultText result @?= ""
           changed @?= original
     , testCase "executableCommands includes PATH entries and builtins" $
         withTemporaryDirectory "hutian-shell-path" $ \directory -> do

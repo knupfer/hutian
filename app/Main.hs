@@ -4,13 +4,30 @@
 module Main (main) where
 
 import Control.Exception (finally)
-import Control.Monad (foldM)
-import GHC.IO.Encoding (setLocaleEncoding)
+import Control.Monad (foldM, unless)
+import Data.List (isSuffixOf)
 import Hutian.Command
   ( Command (..)
   , TerminalInput (..)
   , classifyTerminalInput
+  , helpText
   , parseCommandLine
+  )
+import Hutian.Console
+  ( configureConsole
+  , consoleFlush
+  , consoleIsErrorInteractive
+  , consoleIsInteractive
+  , consoleWrite
+  , consoleWriteError
+  , consoleWriteErrorLine
+  , consoleWriteLine
+  , consoleWriteToolCommand
+  , printOutputLabel
+  , resetTerminal
+  , withGrayOutput
+  , withRespondingCursor
+  , withoutEcho
   )
 import Hutian.Conversation
   ( Conversation
@@ -50,21 +67,17 @@ import Hutian.Llm
   , runLlmWithTools
   , toolCommand
   )
-import Hutian.Output (printOutputLabel, withGrayOutput, withRespondingCursor)
+import Hutian.Output (grayOutputText)
 import Hutian.Shell
-  ( executableCommands
+  ( CommandResult (..)
+  , commandResultText
+  , executableCommands
   , runShellCommand
   , runShellCommandOutput
   )
-import Hutian.Terminal
-  ( promptForInput
-  , renderToolCommand
-  , resetTerminal
-  , withoutEcho
-  )
+import Hutian.Terminal (promptForInput)
 import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
-import System.IO
 
 -- | Everything the interactive loop carries between prompts.
 data ShellState = ShellState
@@ -79,14 +92,11 @@ data ShellState = ShellState
 
 main :: IO ()
 main = do
-  setLocaleEncoding utf8
-  hSetEncoding stdout utf8
-  hSetEncoding stderr utf8
-  hSetBuffering stdout LineBuffering
+  configureConsole
   arguments <- getArgs
   case parseLlmSettings arguments of
     Left message -> do
-      hPutStrLn stderr message
+      consoleWriteErrorLine message
       exitWith (ExitFailure 2)
     Right settings -> do
       commands <- executableCommands
@@ -197,10 +207,16 @@ runToolCall conversation call =
     Left message ->
       pure (appendToolResult (toolCallId call) ("tool error: " ++ message) conversation)
     Right command -> do
-      renderToolCommand (toolCallName call) command
+      consoleWriteToolCommand (toolCallName call) command
       printOutputLabel ToolMode
-      output <- runShellCommandOutput command
-      pure (appendToolResult (toolCallId call) output conversation)
+      result <- runShellCommandOutput command
+      case result of
+        Left message -> do
+          consoleWriteErrorLine message
+          pure (appendToolResult (toolCallId call) message conversation)
+        Right output -> do
+          displayCommandResult output
+          pure (appendToolResult (toolCallId call) (commandResultText output) conversation)
 
 runTerminalInput :: Conversation -> String -> IO Conversation
 runTerminalInput conversation text =
@@ -209,47 +225,36 @@ runTerminalInput conversation text =
     SingleLineInput line -> runTerminalLine conversation line
     MultiLineInput script -> do
       printOutputLabel TermMode
-      withGrayOutput (runShellCommand script)
+      withGrayOutput (runStreamingCommand script)
       pure (appendTerminal script conversation)
 
 runTerminalLine :: Conversation -> String -> IO Conversation
 runTerminalLine conversation line =
   case parseCommandLine line of
     CommandEmpty -> pure conversation
-    CommandHelp ->
-      withGrayOutput printHelp
-        >> pure (appendTerminal line conversation)
+    CommandHelp -> do
+      withGrayOutput (mapM_ consoleWriteLine helpText)
+      pure (appendTerminal line conversation)
     CommandShell commandLine -> do
       printOutputLabel TermMode
-      withGrayOutput (runShellCommand commandLine)
+      withGrayOutput (runStreamingCommand commandLine)
       pure (appendTerminal line conversation)
 
-printHelp :: IO ()
-printHelp =
-  mapM_
-    putStrLn
-    [ "The interactive input has two modes:"
-    , "  llm mode   send text to llama.cpp (pink ask: line)"
-    , "  term mode  run a shell command (shell: line)"
-    , "Ctrl+X toggles between the modes; each mode keeps its own input."
-    , "The app starts in llm mode."
-    , "In llm mode the model may call the shell tool. Tool calls are shown"
-    , "with a bold teal 'tool shell:' line."
-    , "Shell output is preceded by an 'output:' line; tool output by a"
-    , "'tool output:' line. Output is shown in gray."
-    , ""
-    , "Term-mode commands:"
-    , "  help       show this help"
-    , "Every other line is executed with /bin/sh in the sandbox working"
-    , "directory. Each command runs in a fresh shell, so cd, exported"
-    , "variables, and other shell state do not persist between commands."
-    , "Tab completes commands from PATH and filesystem paths; ambiguous"
-    , "matches are listed below the input."
-    , "Enter runs a command in term mode and adds a line in llm mode."
-    , "Up/Down recall history; trailing \\ or open quotes continue a command."
-    , "Ctrl+D on empty input exits; Enter runs term commands."
-    , "Ctrl+C clears the current input."
-    ]
+runStreamingCommand :: String -> IO ()
+runStreamingCommand command =
+  runShellCommand command >>= either consoleWriteErrorLine pure
+
+-- | Display captured command output the same way it would appear if the command
+-- had inherited the terminal.
+displayCommandResult :: CommandResult -> IO ()
+displayCommandResult result = do
+  stdoutInteractive <- consoleIsInteractive
+  stderrInteractive <- consoleIsErrorInteractive
+  let output = commandStdout result
+  consoleWrite (grayOutputText stdoutInteractive output)
+  consoleWriteError (grayOutputText stderrInteractive (commandStderr result))
+  unless (null output || "\n" `isSuffixOf` output) (consoleWrite "\n")
+  consoleFlush
 
 termHistoryFile, llmHistoryFile :: HistoryFile
 termHistoryFile = HistoryFile "/tmp/hutian-shell-history"

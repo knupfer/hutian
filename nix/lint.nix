@@ -89,7 +89,8 @@ in
           app/Hutian/Paths.hs \
           app/Hutian/Conversation.hs \
           app/Hutian/Editor.hs \
-          app/Hutian/History.hs
+          app/Hutian/History.hs \
+          app/Hutian/Prompt.hs
       '';
 
   # Check that closure paths of any size and plain files are bind-mounted into

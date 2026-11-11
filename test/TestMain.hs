@@ -11,6 +11,7 @@ import qualified LlmProtocolSpec
 import qualified LlmSpec
 import qualified MarkdownSpec
 import qualified PathsSpec
+import qualified PromptSpec
 import qualified RenderSpec
 import qualified ShellSpec
 import Test.Tasty
@@ -30,6 +31,7 @@ main =
       , LlmProtocolSpec.tests
       , MarkdownSpec.tests
       , PathsSpec.tests
+      , PromptSpec.tests
       , RenderSpec.tests
       , ShellSpec.tests
       , InterruptSpec.tests

@@ -53,6 +53,7 @@ executable hutian-shell
   other-modules:
       Hutian.Command
       Hutian.Completion
+      Hutian.Console
       Hutian.Conversation
       Hutian.Editor
       Hutian.History
@@ -64,6 +65,7 @@ executable hutian-shell
       Hutian.Markdown
       Hutian.Output
       Hutian.Paths
+      Hutian.Prompt
       Hutian.Render
       Hutian.Shell
       Hutian.Terminal
@@ -83,6 +85,7 @@ test-suite hutian-shell-test
       HistorySpec
       Hutian.Command
       Hutian.Completion
+      Hutian.Console
       Hutian.Conversation
       Hutian.Editor
       Hutian.History
@@ -94,6 +97,7 @@ test-suite hutian-shell-test
       Hutian.Markdown
       Hutian.Output
       Hutian.Paths
+      Hutian.Prompt
       Hutian.Render
       Hutian.Shell
       InterruptSpec
@@ -102,6 +106,7 @@ test-suite hutian-shell-test
       LlmSpec
       MarkdownSpec
       PathsSpec
+      PromptSpec
       RenderSpec
       ShellSpec
       TestSupport
@@ -112,3 +117,4 @@ test-suite hutian-shell-test
     , tasty
     , tasty-hunit
     , tasty-quickcheck
+    , terminal-size

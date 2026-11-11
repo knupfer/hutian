@@ -18,12 +18,12 @@ import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import Data.Char (isSpace)
 import qualified Data.Text as Text
+import Hutian.Console (consoleFlush, consoleWrite, consoleWriteErrorLine)
 import Hutian.Conversation (Conversation)
 import Hutian.Interrupt (InterruptFlag, isInterrupted)
 import Hutian.Llm.Protocol
 import Network.HTTP.Client
 import Network.HTTP.Types.Status (statusCode)
-import System.IO (hFlush, hPutStrLn, stderr, stdout)
 
 runLlm :: InterruptFlag -> LlmSettings -> Conversation -> String -> IO (Maybe String)
 runLlm interruptFlag settings conversation prompt =
@@ -59,7 +59,7 @@ runRequest interruptFlag settings body = do
       :: IO (Either SomeException LlmResult)
   case result of
     Left exception -> do
-      hPutStrLn stderr ("llm: " ++ show exception)
+      consoleWriteErrorLine ("llm: " ++ show exception)
       pure emptyLlmResult
     Right response -> pure response
 
@@ -80,7 +80,7 @@ streamCompletion interruptFlag url body = do
       then do
         responseBody <- readBody (Network.HTTP.Client.responseBody response) []
         let message = Text.unpack (Text.strip (decode responseBody))
-        hPutStrLn stderr ("llm: llama.cpp returned HTTP " ++ show code ++ errorSuffix message)
+        consoleWriteErrorLine ("llm: llama.cpp returned HTTP " ++ show code ++ errorSuffix message)
         pure emptyLlmResult
       else do
         finalState <-
@@ -92,7 +92,7 @@ streamCompletion interruptFlag url body = do
         let (endState, finalOutput) = finishStream finalState
         _ <- emitStreamOutput (endState, finalOutput)
         unless (streamSawData endState) $
-          hPutStrLn stderr "llm: no response content received"
+          consoleWriteErrorLine "llm: no response content received"
         pure (resultFromState endState)
 
 consumeResponse
@@ -131,14 +131,14 @@ processLine rawLine state =
 emitStreamOutput :: (StreamState, StreamOutput) -> IO StreamState
 emitStreamOutput (state, output) = do
   emit (outputText output)
-  maybe (pure ()) (hPutStrLn stderr . ("llm: " ++) . Text.unpack) (outputError output)
+  maybe (pure ()) (consoleWriteErrorLine . ("llm: " ++) . Text.unpack) (outputError output)
   pure state
 
 emit :: String -> IO ()
 emit output =
   unless (null output) $ do
-    putStr output
-    hFlush stdout
+    consoleWrite output
+    consoleFlush
 
 readBody :: BodyReader -> [BS.ByteString] -> IO BS.ByteString
 readBody reader chunks = do
