@@ -41,9 +41,9 @@ unitTests =
           ]
           @?= Right
             ( LlmSettings
-                "http://127.0.0.1:8080/v1/chat/completions"
-                "test-model"
-                "system rules"
+                (LlmUrl "http://127.0.0.1:8080/v1/chat/completions")
+                (ModelName "test-model")
+                (SystemPrompt "system rules")
             )
         parseLlmSettings
           [ "--llama-url"
@@ -53,7 +53,8 @@ unitTests =
           , "--system-prompt"
           , ""
           ]
-          @?= Right (LlmSettings "http://example.test/completion" "m" "")
+          @?= Right
+            (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt ""))
     , testCase "parseLlmSettings reports missing options, missing values, and unknown arguments" $ do
         case parseLlmSettings [] of
           Left message -> do
@@ -68,11 +69,11 @@ unitTests =
           Left message -> assertBool "unknown argument should be named" ("--unknown" `isInfixOf` message)
           Right _ -> assertFailure "unknown arguments should fail"
     , testCase "apiFor recognizes chat and completion endpoints" $ do
-        apiFor "http://127.0.0.1:8080/v1/chat/completions" @?= ChatApi
-        apiFor "http://127.0.0.1:8080/completion" @?= CompletionApi
-        apiFor "https://example.test/v1/chat/completions?stream=true" @?= ChatApi
+        apiFor (LlmUrl "http://127.0.0.1:8080/v1/chat/completions") @?= ChatApi
+        apiFor (LlmUrl "http://127.0.0.1:8080/completion") @?= CompletionApi
+        apiFor (LlmUrl "https://example.test/v1/chat/completions?stream=true") @?= ChatApi
     , testCase "chat request body has system and user messages" $
-        case requestBodyFor ChatApi "test-model" "system rules" emptyConversation "hello" of
+        case requestBodyFor ChatApi (ModelName "test-model") (SystemPrompt "system rules") emptyConversation "hello" of
           Object body -> do
             KeyMap.lookup "model" body @?= Just (String "test-model")
             KeyMap.lookup "stream" body @?= Just (Bool True)
@@ -91,8 +92,8 @@ unitTests =
         case
             requestBodyFor
               ChatApi
-              "test-model"
-              "system rules"
+              (ModelName "test-model")
+              (SystemPrompt "system rules")
               [UserEntry "previous question", AssistantEntry "previous answer", TerminalEntry "ls -la"]
               "new question"
           of
@@ -116,14 +117,14 @@ unitTests =
                 other -> assertFailure ("missing messages: " ++ show other)
             other -> assertFailure ("unexpected request body: " ++ show other)
     , testCase "chat request body omits an empty system message" $
-        case requestBodyFor ChatApi "test-model" "" emptyConversation "hello" of
+        case requestBodyFor ChatApi (ModelName "test-model") (SystemPrompt "") emptyConversation "hello" of
           Object body ->
             case KeyMap.lookup "messages" body of
               Just (Array messages) -> Vector.length messages @?= 1
               other -> assertFailure ("missing messages: " ++ show other)
           other -> assertFailure ("unexpected request body: " ++ show other)
     , testCase "completion request body prepends the system prompt" $
-        case requestBodyFor CompletionApi "test-model" "system rules" emptyConversation "hello" of
+        case requestBodyFor CompletionApi (ModelName "test-model") (SystemPrompt "system rules") emptyConversation "hello" of
           Object body -> do
             KeyMap.lookup "model" body @?= Just (String "test-model")
             KeyMap.lookup "prompt" body @?= Just (String "System: system rules\n\nUser: hello\n\nAssistant:")
@@ -131,7 +132,7 @@ unitTests =
             KeyMap.lookup "messages" body @?= Nothing
           other -> assertFailure ("unexpected request body: " ++ show other)
     , testCase "chat request body advertises the shell tool" $
-        case requestBodyFor ChatApi "test-model" "" emptyConversation "hello" of
+        case requestBodyFor ChatApi (ModelName "test-model") (SystemPrompt "") emptyConversation "hello" of
           Object body ->
             case KeyMap.lookup "tools" body of
               Just (Array tools) ->
@@ -258,7 +259,7 @@ prop_splitLinesNoNewline bytes =
 
 prop_apiFor :: String -> Property
 prop_apiFor url =
-  apiFor url === expected
+  apiFor (LlmUrl url) === expected
   where
     expected
       | "/v1/chat/completions" `isInfixOf` url = ChatApi
@@ -282,7 +283,7 @@ prop_requestBody :: String -> String -> String -> Property
 prop_requestBody model systemPrompt text =
   forAll (elements [ChatApi, CompletionApi]) $ \api ->
     counterexample (show (api, model, systemPrompt, text)) $
-      case Aeson.decode (Aeson.encode (requestBodyFor api model systemPrompt emptyConversation text)) of
+      case Aeson.decode (Aeson.encode (requestBodyFor api (ModelName model) (SystemPrompt systemPrompt) emptyConversation text)) of
         Just (Object body) ->
           KeyMap.lookup "model" body === Just (String (Text.pack model))
             .&&. KeyMap.lookup "stream" body === Just (Bool True)

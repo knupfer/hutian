@@ -26,8 +26,11 @@ import Hutian.Conversation
   )
 import Hutian.History
   ( InputDestination (..)
-  , appendHistoryFile
   , inputDestination
+  )
+import Hutian.History.Store
+  ( HistoryFile (..)
+  , appendHistoryFile
   , loadHistoryFile
   )
 import Hutian.Interrupt (InterruptFlag, clearInterrupt, newInterruptFlag)
@@ -175,24 +178,26 @@ runLlmInput settings interruptFlag conversation prompt = do
     0
 
 recordPromptResult :: String -> LlmResult -> Conversation -> Conversation
-recordPromptResult prompt result conversation =
-  case llmToolCalls result of
-    [] -> appendExchange prompt (llmResponseText result) conversation
-    calls ->
-      appendAssistantToolCalls
-        (fromMaybe "" (llmResponseText result))
-        calls
-        (appendUser prompt conversation)
+recordPromptResult prompt = recordResult (Just prompt)
 
 recordContinuationResult :: LlmResult -> Conversation -> Conversation
-recordContinuationResult result conversation =
+recordContinuationResult = recordResult Nothing
+
+-- | Record a model result, including any tool calls it requested. A prompt is
+-- present for the first request and absent for follow-up requests after tool
+-- results.
+recordResult :: Maybe String -> LlmResult -> Conversation -> Conversation
+recordResult prompt result conversation =
   case llmToolCalls result of
-    [] -> appendAssistant (fromMaybe "" (llmResponseText result)) conversation
+    [] ->
+      case prompt of
+        Just text -> appendExchange text (llmResponseText result) conversation
+        Nothing -> appendAssistant answer conversation
     calls ->
-      appendAssistantToolCalls
-        (fromMaybe "" (llmResponseText result))
-        calls
-        conversation
+      appendAssistantToolCalls answer calls withPrompt
+  where
+    answer = fromMaybe "" (llmResponseText result)
+    withPrompt = maybe conversation (`appendUser` conversation) prompt
 
 continueLlm :: LlmSettings -> InterruptFlag -> Conversation -> LlmResult -> Int -> IO Conversation
 continueLlm settings interruptFlag conversation result rounds
@@ -270,6 +275,6 @@ printHelp =
     , "Ctrl+C clears the current input."
     ]
 
-termHistoryFile, llmHistoryFile :: FilePath
-termHistoryFile = "/tmp/hutian-shell-history"
-llmHistoryFile = "/tmp/hutian-llm-history"
+termHistoryFile, llmHistoryFile :: HistoryFile
+termHistoryFile = HistoryFile "/tmp/hutian-shell-history"
+llmHistoryFile = HistoryFile "/tmp/hutian-llm-history"

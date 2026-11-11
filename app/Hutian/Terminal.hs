@@ -14,21 +14,18 @@ import Control.Exception (IOException, catch, finally, try)
 import Control.Monad (unless, when)
 import Data.List (isPrefixOf)
 import Hutian.Editor
-  ( Key (..)
-  , Prompt
+  ( Prompt
   , PromptBuffers
   , PromptAction (..)
   , PromptMode (..)
   , activePrompt
   , applyCompletionChoice
   , applyKey
-  , classifyChar
   , clearPrompt
   , clearSuggestions
   , commandCompletionTarget
   , completeCommand
   , completionTarget
-  , csiKey
   , currentLine
   , cursorPosition
   , cursorToEnd
@@ -40,7 +37,7 @@ import Hutian.Editor
   , storePrompt
   , toggleMode
   )
-import Hutian.Completion (chooseCompletion)
+import Hutian.Completion (CompletionKind (..), chooseCompletion)
 import Hutian.History
   ( HistoryState
   , historyDown
@@ -48,7 +45,8 @@ import Hutian.History
   , historyUp
   , initialHistoryState
   )
-import Hutian.Paths (formatCompletion, hasTrailingSlash, splitPathWord)
+import Hutian.Key (Key (..), classifyChar, csiKey)
+import Hutian.Paths (formatCompletion, splitPathWord)
 import Hutian.Render
   ( moveCursorText
   , prefixFor
@@ -269,7 +267,7 @@ completePath prompt = do
   entries <- listDirectory directory `catch` \(_ :: IOException) -> pure []
   completions <- mapM (completeEntry directoryPart) (filter (base `isPrefixOf`) entries)
   let afterCursor = drop (start + length word) (currentLine prompt)
-      completion = chooseCompletion (not . hasTrailingSlash) word afterCursor completions
+      completion = chooseCompletion PathCompletion word afterCursor completions
   pure (applyCompletionChoice start word completion prompt)
 
 completeEntry :: FilePath -> FilePath -> IO FilePath

@@ -85,6 +85,7 @@ in
         ghc -XDerivingStrategies -fno-code -iapp \
           -fplugin=LiquidHaskell \
           app/Hutian/Completion.hs \
+          app/Hutian/Key.hs \
           app/Hutian/Paths.hs \
           app/Hutian/Conversation.hs \
           app/Hutian/Editor.hs \

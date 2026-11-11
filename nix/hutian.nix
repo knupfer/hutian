@@ -9,11 +9,25 @@
   nix,
 }:
 
+assert pkgs.lib.assertMsg (builtins.isList packages) "hutian: packages must be a list";
+assert pkgs.lib.assertMsg (builtins.isString systemPrompt) "hutian: systemPrompt must be a string";
+assert pkgs.lib.assertMsg (builtins.isString model && model != "") "hutian: model must be a non-empty string";
+assert pkgs.lib.assertMsg (builtins.isString llamaUrl && llamaUrl != "") "hutian: llamaUrl must be a non-empty string";
+assert pkgs.lib.assertMsg (builtins.isBool readOnly) "hutian: readOnly must be a boolean";
+assert pkgs.lib.assertMsg (builtins.isBool nix) "hutian: nix must be a boolean";
+
 let
   inherit (pkgs) lib;
   inherit (builtins) dirOf storeDir;
 
-  allPackages = packages ++ lib.optional nix pkgs.nix;
+  inherit (lib)
+    escapeShellArg
+    makeBinPath
+    optional
+    optionalString
+    ;
+
+  allPackages = packages ++ optional nix pkgs.nix;
 
   hutianShell = pkgs.callPackage ./hutian-shell.nix { inherit src; };
 
@@ -22,11 +36,11 @@ let
   # The runtime closure is mounted at the same paths inside the sandbox. Nix
   # additionally needs a CA bundle for HTTPS fetches performed by the client.
   closure = pkgs.closureInfo {
-    rootPaths = allPackages ++ [ hutianShell ] ++ lib.optional nix pkgs.cacert;
+    rootPaths = allPackages ++ [ hutianShell ] ++ optional nix pkgs.cacert;
   };
 
-  binPath = lib.makeBinPath allPackages;
-  pathEnv = "/bin" + lib.optionalString (binPath != "") ":${binPath}";
+  binPath = makeBinPath allPackages;
+  pathEnv = "/bin" + optionalString (binPath != "") ":${binPath}";
 
   stateDir = "${dirOf storeDir}/var/nix";
 
@@ -47,7 +61,7 @@ let
       fi
     done < ${closure}/store-paths
 
-    ${lib.optionalString nix ''
+    ${optionalString nix ''
       # Mountpoint for the host Nix daemon socket.
       mkdir -p "$out${stateDir}/daemon-socket"
     ''}
@@ -72,7 +86,7 @@ let
       nixEnv=()
       nixVolumes=()
       nixRunscArgs=()
-      ${lib.optionalString nix ''
+      ${optionalString nix ''
         # The launcher exposes the host store in the rootfs. Mount the Nix
         # daemon socket when present. Builds are performed by the host daemon;
         # the sandbox only reads the resulting store paths.
@@ -94,9 +108,9 @@ let
 
       if [ "$#" -eq 0 ]; then
         set -- ${hutianShell}/bin/hutian-shell \
-          --llama-url ${lib.escapeShellArg llamaUrl} \
-          --model ${lib.escapeShellArg model} \
-          --system-prompt ${lib.escapeShellArg systemPrompt}
+          --llama-url ${escapeShellArg llamaUrl} \
+          --model ${escapeShellArg model} \
+          --system-prompt ${escapeShellArg systemPrompt}
       fi
 
       # runsc resolves -cwd on the host, so start in / and enter /source after

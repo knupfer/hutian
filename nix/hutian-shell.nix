@@ -1,14 +1,12 @@
-{
-  pkgs,
-  src,
-}:
+{ pkgs, src }:
 
 let
-  inherit (pkgs) lib;
-
+  inherit (pkgs) haskellPackages;
+  inherit (pkgs.haskell.lib) dontHaddock overrideCabal;
   lint = import ./lint.nix { inherit pkgs src; };
-  base = pkgs.haskell.lib.dontHaddock (pkgs.haskellPackages.callCabal2nix "hutian-shell" src { });
+  base = dontHaddock (haskellPackages.callCabal2nix "hutian-shell" src { });
 in
-pkgs.haskell.lib.overrideCabal base (old: {
-  testDepends = (old.testDepends or [ ]) ++ lib.attrValues lint;
+overrideCabal base (old: {
+  # Build the lint checks alongside the test suite.
+  testDepends = (old.testDepends or [ ]) ++ builtins.attrValues lint;
 })

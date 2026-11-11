@@ -1,9 +1,12 @@
 -- | Pure completion selection shared by command and path completion.
 module Hutian.Completion
   ( Completion (..)
+  , CompletionKind (..)
   , chooseCompletion
   , longestCommonPrefix
   ) where
+
+import Hutian.Paths (hasTrailingSlash)
 
 -- Explicit recursion lets LiquidHaskell prove the common-prefix length bound.
 {- HLINT ignore "Use foldl" -}
@@ -18,15 +21,21 @@ data Completion = Completion
   }
   deriving stock (Eq, Show)
 
+-- | How a unique match should be followed by a space.
+data CompletionKind
+  = CommandCompletion
+  | PathCompletion
+  deriving stock (Eq, Show)
+
 -- | Choose the replacement text for a completion attempt.
 --
--- The predicate decides whether a unique match should be followed by a space.
+-- The kind decides whether a unique match should be followed by a space.
 -- Callers pass the current word, the text after the cursor, and the matches.
-{-@ chooseCompletion :: appendSpace:(String -> Bool) -> word:String -> afterCursor:String -> matches:[String]
+{-@ chooseCompletion :: kind:CompletionKind -> word:String -> afterCursor:String -> matches:[String]
       -> {v:Completion | completionMatches v == matches
                        && (len matches == 0 => completionReplacement v == word)} @-}
-chooseCompletion :: (String -> Bool) -> String -> String -> [String] -> Completion
-chooseCompletion appendSpace word afterCursor matches =
+chooseCompletion :: CompletionKind -> String -> String -> [String] -> Completion
+chooseCompletion kind word afterCursor matches =
   case matches of
     [only] -> Completion matches (only ++ suffix only)
     _ -> Completion matches (extend word)
@@ -35,6 +44,10 @@ chooseCompletion appendSpace word afterCursor matches =
     suffix only
       | null afterCursor && appendSpace only = " "
       | otherwise = ""
+    appendSpace only =
+      case kind of
+        CommandCompletion -> True
+        PathCompletion -> not (hasTrailingSlash only)
     extend current
       | length common > length current = common
       | otherwise = current

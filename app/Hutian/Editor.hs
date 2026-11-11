@@ -45,12 +45,13 @@ module Hutian.Editor
   , atMay
   ) where
 
-import Data.Char (isControl, isSpace)
+import Data.Char (isSpace)
 import Data.List (intercalate, isPrefixOf)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, listToMaybe)
-import Hutian.Completion (Completion (..), chooseCompletion)
+import Hutian.Completion (Completion (..), CompletionKind (..), chooseCompletion)
+import Hutian.Key (Key (..), classifyChar, csiKey)
 
 {-@ type Pos = {v:Int | v > 0} @-}
 
@@ -117,24 +118,6 @@ storePrompt ToolMode prompt buffers = buffers { termBuffer = prompt }
 
 clearPrompt :: PromptMode -> PromptBuffers -> PromptBuffers
 clearPrompt mode = storePrompt mode initialPrompt
-
-data Key
-  = KeyChar Char
-  | KeyEnter
-  | KeyBackspace
-  | KeyDelete
-  | KeyLeft
-  | KeyRight
-  | KeyUp
-  | KeyDown
-  | KeyHome
-  | KeyEnd
-  | KeySubmit
-  | KeyCancel
-  | KeyToggleMode
-  | KeyComplete
-  | KeyIgnore
-  deriving stock (Eq, Show)
 
 -- | What the terminal loop should do in response to a key press.
 data PromptAction
@@ -532,7 +515,7 @@ completeCommand commands prompt =
     Just (start, word) ->
       let matches = filter (word `isPrefixOf`) commands
           afterCursor = drop (unColumn (promptColumn prompt)) (currentLine prompt)
-          completion = chooseCompletion (const True) word afterCursor matches
+          completion = chooseCompletion CommandCompletion word afterCursor matches
        in applyCompletionChoice start word completion prompt
     Nothing -> clearSuggestions prompt
 
@@ -552,45 +535,3 @@ clearSuggestions prompt = prompt { promptSuggestions = [] }
 
 maxSuggestions :: Int
 maxSuggestions = 20
-
-classifyChar :: Char -> Key
-classifyChar char
-  | char == ctrlC = KeyCancel
-  | char == ctrlD = KeySubmit
-  | char == ctrlX = KeyToggleMode
-  | char == newline = KeyEnter
-  | char == carriageReturn = KeyEnter
-  | char == rubout = KeyBackspace
-  | char == backspace = KeyBackspace
-  | char == tab = KeyComplete
-  | isControl char = KeyIgnore
-  | otherwise = KeyChar char
-
-csiKey :: String -> Char -> Key
-csiKey parameters final =
-  case final of
-    'A' -> KeyUp
-    'B' -> KeyDown
-    'C' -> KeyRight
-    'D' -> KeyLeft
-    'H' -> KeyHome
-    'F' -> KeyEnd
-    '~' ->
-      case takeWhile (/= ';') parameters of
-        "1" -> KeyHome
-        "3" -> KeyDelete
-        "4" -> KeyEnd
-        "7" -> KeyHome
-        "8" -> KeyEnd
-        _ -> KeyIgnore
-    _ -> KeyIgnore
-
-ctrlC, ctrlD, ctrlX, newline, carriageReturn, rubout, backspace, tab :: Char
-ctrlC = '\x03'
-ctrlD = '\x04'
-ctrlX = '\x18'
-newline = '\n'
-carriageReturn = '\r'
-rubout = '\DEL'
-backspace = '\b'
-tab = '\t'

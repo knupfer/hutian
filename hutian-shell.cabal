@@ -56,8 +56,11 @@ executable hutian-shell
       Hutian.Conversation
       Hutian.Editor
       Hutian.History
+      Hutian.History.Store
       Hutian.Interrupt
+      Hutian.Key
       Hutian.Llm
+      Hutian.Llm.Protocol
       Hutian.Markdown
       Hutian.Output
       Hutian.Paths
@@ -83,8 +86,11 @@ test-suite hutian-shell-test
       Hutian.Conversation
       Hutian.Editor
       Hutian.History
+      Hutian.History.Store
       Hutian.Interrupt
+      Hutian.Key
       Hutian.Llm
+      Hutian.Llm.Protocol
       Hutian.Markdown
       Hutian.Output
       Hutian.Paths
@@ -92,6 +98,7 @@ test-suite hutian-shell-test
       Hutian.Shell
       InterruptSpec
       LlmIntegrationSpec
+      LlmProtocolSpec
       LlmSpec
       MarkdownSpec
       PathsSpec

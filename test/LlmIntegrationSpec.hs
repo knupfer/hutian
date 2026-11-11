@@ -14,7 +14,15 @@ import Data.List (isInfixOf)
 import Data.Maybe (fromMaybe)
 import Hutian.Conversation (ConversationEntry (..), ToolCall (..))
 import Hutian.Interrupt (newInterruptFlag)
-import Hutian.Llm (LlmResult (..), LlmSettings (..), runLlm, runLlmWithTools)
+import Hutian.Llm
+  ( LlmResult (..)
+  , LlmSettings (..)
+  , LlmUrl (..)
+  , ModelName (..)
+  , SystemPrompt (..)
+  , runLlm
+  , runLlmWithTools
+  )
 import Hutian.Render (grayForeground)
 import Network.Socket
   ( Family (AF_INET)
@@ -91,9 +99,9 @@ tests =
 settingsFor :: Int -> LlmSettings
 settingsFor port =
   LlmSettings
-    { settingUrl = "http://127.0.0.1:" ++ show port ++ "/v1/chat/completions"
-    , settingModel = "test-model"
-    , settingSystemPrompt = "system prompt"
+    { settingUrl = LlmUrl ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
+    , settingModel = ModelName "test-model"
+    , settingSystemPrompt = SystemPrompt "system prompt"
     }
 
 emptyResult :: LlmResult

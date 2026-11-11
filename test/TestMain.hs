@@ -7,6 +7,7 @@ import qualified EditorSpec
 import qualified HistorySpec
 import qualified InterruptSpec
 import qualified LlmIntegrationSpec
+import qualified LlmProtocolSpec
 import qualified LlmSpec
 import qualified MarkdownSpec
 import qualified PathsSpec
@@ -26,6 +27,7 @@ main =
       , HistorySpec.tests
       , LlmSpec.tests
       , LlmIntegrationSpec.tests
+      , LlmProtocolSpec.tests
       , MarkdownSpec.tests
       , PathsSpec.tests
       , RenderSpec.tests

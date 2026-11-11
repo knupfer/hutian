@@ -1,11 +1,12 @@
 module ShellSpec (tests) where
 
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, nub)
 import Hutian.Interrupt (newInterruptFlag)
 import Hutian.Shell
   ( executableCommands
   , runShellCommand
   , runShellCommandOutput
+  , shellExitSuffix
   , withBuiltins
   )
 import System.Directory
@@ -15,9 +16,12 @@ import System.Directory
   , removeFile
   , setPermissions
   )
+import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
+import Test.QuickCheck (Property, (.&&.), (===), counterexample, property)
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Tasty.QuickCheck (testProperty)
 import TestSupport (temporaryFilePath, withEnv, withTemporaryDirectory)
 
 tests :: TestTree
@@ -60,7 +64,21 @@ tests =
     , testCase "withBuiltins removes duplicates and keeps builtins" $
         withBuiltins ["pwd", "ls", "ls"]
           @?= ["help", "pwd", "ls"]
+    , testCase "shellExitSuffix reports only failures" $ do
+        shellExitSuffix ExitSuccess @?= ""
+        shellExitSuffix (ExitFailure 3) @?= "\n[exit 3]\n"
+    , testProperty "withBuiltins is idempotent and keeps help first" prop_withBuiltins
     ]
+
+prop_withBuiltins :: [String] -> Property
+prop_withBuiltins names =
+  counterexample (show (once, twice)) $
+    once === twice
+      .&&. property (nub once === once)
+      .&&. property ("help" `elem` once)
+  where
+    once = withBuiltins names
+    twice = withBuiltins once
 
 shellQuote :: String -> String
 shellQuote value =

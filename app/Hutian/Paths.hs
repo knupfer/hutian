@@ -7,7 +7,7 @@ module Hutian.Paths
   , formatCompletion
   ) where
 
-import Data.List (stripPrefix)
+import Data.List (isSuffixOf, stripPrefix)
 import System.FilePath ((</>))
 
 {-@ displayPath :: home:{v:FilePath | len v > 0} -> cwd:{v:FilePath | len v > 0} -> {v:FilePath | len v > 0} @-}
@@ -32,13 +32,10 @@ splitPathWord word =
       (reverse directoryReversed ++ "/", reverse baseReversed)
 
 hasTrailingSlash :: FilePath -> Bool
-hasTrailingSlash value =
-  case reverse value of
-    '/' : _ -> True
-    _ -> False
+hasTrailingSlash = isSuffixOf "/"
 
 -- | Add a trailing slash to completed directory entries.
 {-@ formatCompletion :: candidate:FilePath -> Bool -> {v:FilePath | len v >= len candidate} @-}
 formatCompletion :: FilePath -> Bool -> FilePath
 formatCompletion candidate isDirectory =
-  if isDirectory then candidate ++ "/" else candidate
+  candidate ++ if isDirectory then "/" else ""

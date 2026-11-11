@@ -1,5 +1,3 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-
 -- | Pure command-history navigation, input routing, and history-file encoding.
 module Hutian.History
   ( HistoryState
@@ -13,15 +11,10 @@ module Hutian.History
   , decodeHistory
   , escapeHistory
   , unescapeHistory
-  , loadHistoryFile
-  , appendHistoryFile
   ) where
 
-import Control.Exception (IOException, catch)
 import Data.Char (isSpace)
 import Data.Maybe (fromMaybe)
-import qualified Data.Text as Text
-import qualified Data.Text.IO as TextIO
 import Hutian.Editor (Prompt, PromptMode (..), atMay, promptText, setPromptText)
 
 data HistoryState = HistoryState
@@ -111,13 +104,3 @@ unescapeHistory [] = []
 unescapeHistory ('\\' : '\\' : rest) = '\\' : unescapeHistory rest
 unescapeHistory ('\\' : 'n' : rest) = '\n' : unescapeHistory rest
 unescapeHistory (char : rest) = char : unescapeHistory rest
-
-loadHistoryFile :: FilePath -> IO [String]
-loadHistoryFile path = do
-  contents <- TextIO.readFile path `catch` \(_ :: IOException) -> pure Text.empty
-  pure (decodeHistory (Text.unpack contents))
-
-appendHistoryFile :: FilePath -> String -> IO ()
-appendHistoryFile path text =
-  TextIO.appendFile path (Text.pack (encodeHistory [text]))
-    `catch` \(_ :: IOException) -> pure ()

@@ -8,6 +8,10 @@
 # gVisor reserves file descriptors starting at 256 for stdio. A volume per store
 # path exhausts that range once a closure has more than about 250 paths, and the
 # sandbox then fails to start with an opaque EOF error.
+let
+  inherit (pkgs) util-linux;
+  mount = "${util-linux}/bin/mount";
+in
 pkgs.writeShellScript "hutian-sandbox" ''
   set -euo pipefail
 
@@ -20,10 +24,10 @@ pkgs.writeShellScript "hutian-sandbox" ''
 
   if [ "$nix_mode" = true ]; then
     # Nix mode exposes the whole host store, matching the daemon socket mount.
-    ${pkgs.util-linux}/bin/mount --rbind ${builtins.storeDir} "$rootfs${builtins.storeDir}"
+    ${mount} --rbind ${builtins.storeDir} "$rootfs${builtins.storeDir}"
   else
     while IFS= read -r path; do
-      ${pkgs.util-linux}/bin/mount --bind "$path" "$rootfs$path"
+      ${mount} --bind "$path" "$rootfs$path"
     done < "$closure/store-paths"
   fi
 
@@ -31,10 +35,10 @@ pkgs.writeShellScript "hutian-sandbox" ''
   # EINVAL when the directory is a mountpoint with locked child mounts, such as
   # /nix (which contains /nix/store), and gVisor reports that failure as an EOF
   # while starting the sandbox. Recursive binds also keep nested mounts visible.
-  ${pkgs.util-linux}/bin/mount --rbind "$sourcedir" "$rootfs/source"
+  ${mount} --rbind "$sourcedir" "$rootfs/source"
 
   if [ "$read_only" = true ]; then
-    ${pkgs.util-linux}/bin/mount -o remount,bind,ro "$rootfs/source"
+    ${mount} -o remount,bind,ro "$rootfs/source"
 
     # The remount above only covers the root of the bind. Apply it to every
     # nested mount too so readOnly still holds when the working directory
@@ -46,7 +50,7 @@ pkgs.writeShellScript "hutian-sandbox" ''
       case "$target" in
         "$rootfs/source") ;;
         "$rootfs/source"/*)
-          ${pkgs.util-linux}/bin/mount -o remount,bind,ro "$target"
+          ${mount} -o remount,bind,ro "$target"
           ;;
       esac
     done < /proc/self/mountinfo

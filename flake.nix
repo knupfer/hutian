@@ -8,16 +8,16 @@
     let
       inherit (nixpkgs) lib;
 
-      defaultSystems = [
+      systems = [
         "x86_64-linux"
         "aarch64-linux"
       ];
-      forAllSystems = lib.genAttrs defaultSystems;
+      forAllSystems = lib.genAttrs systems;
       pkgsFor = system: nixpkgs.legacyPackages.${system};
 
       # Keep every helper option mandatory while naming any that are missing
       # instead of relying on Nix's low-level argument error.
-      shellOptions = [
+      requiredOptions = [
         "packages"
         "systemPrompt"
         "model"
@@ -42,6 +42,54 @@
             See README.md for a complete example.
           '';
 
+      requireString =
+        name: value:
+        if builtins.isString value then
+          value
+        else
+          throw "hutian: option `${name}` must be a string";
+
+      requireNonEmptyString =
+        name: value:
+        if builtins.isString value && value != "" then
+          value
+        else
+          throw "hutian: option `${name}` must be a non-empty string";
+
+      requireBool =
+        name: value:
+        if builtins.isBool value then
+          value
+        else
+          throw "hutian: option `${name}` must be a boolean";
+
+      requireList =
+        name: value:
+        if builtins.isList value then
+          value
+        else
+          throw "hutian: option `${name}` must be a list of packages";
+
+      requirePackageSelector =
+        name: value:
+        if builtins.isFunction value then
+          value
+        else
+          throw "hutian: option `${name}` must be a function of pkgs";
+
+      checkedCommonOptions =
+        helper: extraOptions: args:
+        let
+          checked = requireOptions helper (extraOptions ++ requiredOptions) args;
+        in
+        {
+          systemPrompt = requireString "systemPrompt" checked.systemPrompt;
+          model = requireNonEmptyString "model" checked.model;
+          llamaUrl = requireNonEmptyString "llamaUrl" checked.llamaUrl;
+          readOnly = requireBool "readOnly" checked.readOnly;
+          nix = requireBool "nix" checked.nix;
+        };
+
       # Used only by this flake's own package. Consumers must pass every
       # option explicitly.
       defaults = {
@@ -60,64 +108,52 @@
       mkHutianShell =
         args:
         let
-          checked = requireOptions "mkHutianShell" ([ "pkgs" ] ++ shellOptions) args;
+          options = checkedCommonOptions "mkHutianShell" [ "pkgs" ] args;
+          packages = requireList "packages" args.packages;
         in
-        import ./nix/hutian.nix {
-          inherit (checked)
-            pkgs
-            packages
-            systemPrompt
-            model
-            llamaUrl
-            readOnly
-            nix
-            ;
-          src = self;
-        };
+        import ./nix/hutian.nix (
+          options
+          // {
+            inherit packages;
+            inherit (args) pkgs;
+            src = self;
+          }
+        );
 
-      mkApp = program: {
-        type = "app";
-        inherit program;
-        meta.description = "Run an unprivileged gVisor shell with a configured package closure";
-      };
+      mkApp =
+        program:
+        {
+          type = "app";
+          inherit program;
+          meta.description = "Run an unprivileged gVisor shell with a configured package closure";
+        };
 
       # Convenience helper for consumer flakes: derive packages and apps for
       # every supported system from a single package selector.
       mkHutianShellFlake =
-        nixpkgs: args:
+        nixpkgsInput: args:
         let
-          checked = requireOptions "mkHutianShellFlake" shellOptions args;
-          inherit (checked)
-            packages
-            systemPrompt
-            model
-            llamaUrl
-            readOnly
-            nix
-            ;
+          options = checkedCommonOptions "mkHutianShellFlake" [ ] args;
+          packages = requirePackageSelector "packages" args.packages;
           mkPackage =
             system:
             let
-              pkgs = nixpkgs.legacyPackages.${system};
+              pkgs = nixpkgsInput.legacyPackages.${system};
             in
-            mkHutianShell {
-              inherit
-                pkgs
-                systemPrompt
-                model
-                llamaUrl
-                readOnly
-                nix
-                ;
-              packages = packages pkgs;
-            };
+            mkHutianShell (
+              options
+              // {
+                inherit pkgs;
+                packages = packages pkgs;
+              }
+            );
         in
         {
-          packages = lib.genAttrs defaultSystems (system: {
+          packages = lib.genAttrs systems (system: {
             default = mkPackage system;
           });
 
-          apps = lib.genAttrs defaultSystems (system: {
+          apps = lib.genAttrs systems (system: {
             default = mkApp "${mkPackage system}/bin/hutian";
           });
         };
@@ -162,24 +198,13 @@
             inherit pkgs;
             src = self;
           };
-          probe = mkHutianShell {
-            inherit pkgs;
+          probeOptions = defaults // {
             packages = [ ];
             systemPrompt = "probe system prompt";
             model = "probe-model";
             llamaUrl = "http://probe.invalid/v1/chat/completions";
-            readOnly = false;
-            nix = false;
           };
-          readOnlyProbe = mkHutianShell {
-            inherit pkgs;
-            packages = [ ];
-            systemPrompt = "probe system prompt";
-            model = "probe-model";
-            llamaUrl = "http://probe.invalid/v1/chat/completions";
-            readOnly = true;
-            nix = false;
-          };
+          probe = extra: mkHutianShell ({ inherit pkgs; } // probeOptions // extra);
           expected = [
             "--llama-url"
             "--model"
@@ -196,32 +221,32 @@
           inherit (lint) liquid sandboxClosure sandboxSource;
           configuration = pkgs.runCommand "hutian-configuration-check" { } ''
             ${lib.concatMapStrings (pattern: ''
-              ${pkgs.gnugrep}/bin/grep -F -- ${lib.escapeShellArg pattern} ${probe}/bin/hutian
+              ${pkgs.gnugrep}/bin/grep -F -- ${lib.escapeShellArg pattern} ${probe { }}/bin/hutian
             '') expected}
-            if ${pkgs.gnugrep}/bin/grep -F -- 'HUTIAN_' ${probe}/bin/hutian; then
+            if ${pkgs.gnugrep}/bin/grep -F -- 'HUTIAN_' ${probe { }}/bin/hutian; then
               echo "the launcher must not set HUTIAN_ environment variables" >&2
               exit 1
             fi
             ${pkgs.coreutils}/bin/touch $out
           '';
           read-only-option = pkgs.runCommand "hutian-read-only-option-check" { } ''
-            ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${readOnlyProbe}/bin/hutian
-            if ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${probe}/bin/hutian; then
+            ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${probe { readOnly = true; }}/bin/hutian
+            if ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${probe { }}/bin/hutian; then
               echo "readOnly = false must not request a read-only working directory" >&2
               exit 1
             fi
             ${pkgs.coreutils}/bin/touch $out
           '';
           launcher-volumes = pkgs.runCommand "hutian-launcher-volume-check" { } ''
-            if ${pkgs.gnugrep}/bin/grep -F 'volumes+=(-volume' ${probe}/bin/hutian; then
+            if ${pkgs.gnugrep}/bin/grep -F 'volumes+=(-volume' ${probe { }}/bin/hutian; then
               echo "the launcher must not pass one gVisor volume per store path" >&2
               exit 1
             fi
-            if ${pkgs.gnugrep}/bin/grep -F -- '-volume "$sourcedir:/source"' ${probe}/bin/hutian; then
+            if ${pkgs.gnugrep}/bin/grep -F -- '-volume "$sourcedir:/source"' ${probe { }}/bin/hutian; then
               echo "the launcher must bind the working directory into the rootfs" >&2
               exit 1
             fi
-            ${pkgs.gnugrep}/bin/grep -F 'hutian-sandbox' ${probe}/bin/hutian
+            ${pkgs.gnugrep}/bin/grep -F 'hutian-sandbox' ${probe { }}/bin/hutian
             ${pkgs.coreutils}/bin/touch $out
           '';
         }

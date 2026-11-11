@@ -6,12 +6,13 @@ module Hutian.Shell
   , runShellCommandOutput
   , executableCommands
   , withBuiltins
+  , shellExitSuffix
   ) where
 
 import Control.Exception (IOException, catch)
 import Control.Monad (unless, void)
 import Data.List (nub)
-import Data.Maybe (catMaybes, fromMaybe)
+import Data.Maybe (catMaybes)
 import Hutian.Interrupt (InterruptFlag, withInterruptFlag)
 import Hutian.Output (grayOutputText)
 import System.Directory
@@ -21,9 +22,8 @@ import System.Directory
   , getPermissions
   , listDirectory
   )
-import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
-import System.FilePath (splitSearchPath, (</>))
+import System.FilePath (getSearchPath, (</>))
 import System.IO (hFlush, hIsTerminalDevice, hPutStr, hPutStrLn, stderr, stdout)
 import System.Process
   ( createProcess
@@ -61,20 +61,19 @@ runShellCommandOutput interruptFlag line =
         unless (null output || last output == '\n') (putStrLn "")
         hFlush stdout
         hFlush stderr
-        pure (output ++ errors ++ exitSuffix exitCode)
+        pure (output ++ errors ++ shellExitSuffix exitCode)
     )
       `catch` \(err :: IOException) -> do
         hPutStrLn stderr ("sh: " ++ show err)
         pure ("sh: " ++ show err)
-  where
-    exitSuffix ExitSuccess = ""
-    exitSuffix (ExitFailure code) = "\n[exit " ++ show code ++ "]\n"
+
+-- | The trailing text that reports a non-zero command exit status.
+shellExitSuffix :: ExitCode -> String
+shellExitSuffix ExitSuccess = ""
+shellExitSuffix (ExitFailure code) = "\n[exit " ++ show code ++ "]\n"
 
 executableCommands :: IO [String]
-executableCommands = do
-  searchPath <- fromMaybe "" <$> lookupEnv "PATH"
-  names <- concat <$> mapM commandsIn (splitSearchPath searchPath)
-  pure (withBuiltins names)
+executableCommands = withBuiltins . concat <$> (getSearchPath >>= mapM commandsIn)
   where
     commandsIn dir = do
       entries <- listDirectory dir `catch` \(_ :: IOException) -> pure []

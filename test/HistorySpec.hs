@@ -13,6 +13,7 @@ import Hutian.Editor
   )
 import Data.Maybe (fromMaybe)
 import Hutian.History
+import Hutian.History.Store (HistoryFile (..), appendHistoryFile, loadHistoryFile)
 import System.FilePath ((</>))
 import Test.QuickCheck
 import Test.Tasty
@@ -83,7 +84,7 @@ unitTests =
         unescapeHistory (escapeHistory "a\\n\nb") @?= "a\\n\nb"
     , testCase "history files round-trip through disk" $
         withTemporaryDirectory "hutian-history" $ \directory -> do
-          let path = directory </> "history"
+          let path = HistoryFile (directory </> "history")
           appendHistoryFile path "first command"
           appendHistoryFile path "multi\nline"
           loaded <- loadHistoryFile path
