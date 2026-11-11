@@ -2,7 +2,8 @@ module ShellSpec (tests) where
 
 import Data.List (isInfixOf, nub)
 import Hutian.Shell
-  ( commandResultText
+  ( CommandResult (..)
+  , commandResultText
   , executableCommands
   , runShellCommand
   , runShellCommandOutput
@@ -46,6 +47,10 @@ tests =
           Right output -> do
             assertBool "stderr should be captured" ("bad" `isInfixOf` commandResultText output)
             assertBool "exit status should be reported" ("[exit 3]" `isInfixOf` commandResultText output)
+    , testCase "commandResultText appends stderr and exit status in order" $ do
+        commandResultText (CommandResult ExitSuccess "out" "err") @?= "outerr"
+        commandResultText (CommandResult (ExitFailure 3) "out" "err")
+          @?= "outerr\n[exit 3]\n"
     , testCase "commands cannot change the parent working directory" $
         withTemporaryDirectory "hutian-shell-cd" $ \directory -> do
           original <- getCurrentDirectory

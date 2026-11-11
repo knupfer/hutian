@@ -53,12 +53,19 @@ data PromptOutcome
 
 -- | Everything the prompt carries between key presses. The cursor position is
 -- kept by the driver because it is derived from terminal width.
+{-@ data PromptState = PromptState
+      { promptMode :: PromptMode
+      , promptHistoryState :: HistoryState
+      , promptBuffers :: PromptBuffers
+      } @-}
 data PromptState = PromptState
   { promptMode :: PromptMode
   , promptHistoryState :: HistoryState
   , promptBuffers :: PromptBuffers
   }
 
+{-@ initialPromptState :: mode:PromptMode -> PromptBuffers ->
+      {v:PromptState | promptMode v == mode} @-}
 initialPromptState :: PromptMode -> PromptBuffers -> PromptState
 initialPromptState mode buffers =
   PromptState
@@ -129,6 +136,8 @@ stepPrompt history key state =
               }
 
 -- | Store a completed prompt and reset history navigation.
+{-@ acceptCompletion :: completed:Prompt -> state:PromptState ->
+      {v:PromptState | promptMode v == promptMode state} @-}
 acceptCompletion :: Prompt -> PromptState -> PromptState
 acceptCompletion completed state =
   state
