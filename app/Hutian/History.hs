@@ -1,12 +1,14 @@
 -- | Pure command-history navigation, input routing, and history-file encoding.
 module Hutian.History
-  ( HistoryState
+  ( History (..)
+  , historyForMode
+  , HistoryState
   , initialHistoryState
   , historyUp
   , historyDown
-  , historyForMode
-  , InputDestination (..)
+  , HistoryTarget (..)
   , inputDestination
+  , recordHistory
   , encodeHistory
   , decodeHistory
   , escapeHistory
@@ -17,6 +19,22 @@ import Data.Char (isSpace)
 import Data.Maybe (fromMaybe)
 import Hutian.Editor (Prompt, PromptMode (..), atMay, promptText, setPromptText)
 
+-- | Term and LLM history kept together, so callers cannot mix them up.
+{-@ data History = History
+      { termHistory :: [String]
+      , llmHistory :: [String]
+      } @-}
+data History = History
+  { termHistory :: [String]
+  , llmHistory :: [String]
+  }
+  deriving stock (Eq, Show)
+
+historyForMode :: PromptMode -> History -> [String]
+historyForMode LlmMode = llmHistory
+historyForMode TermMode = termHistory
+historyForMode ToolMode = termHistory
+
 data HistoryState = HistoryState
   { historyOffset :: Maybe Int
   , historyDraft :: String
@@ -26,26 +44,26 @@ data HistoryState = HistoryState
 initialHistoryState :: HistoryState
 initialHistoryState = HistoryState Nothing ""
 
-{-@ historyForMode :: m:PromptMode -> termHistory:[String] -> llmHistory:[String] ->
-      {v:[String] | len v == len termHistory || len v == len llmHistory} @-}
-historyForMode :: PromptMode -> [String] -> [String] -> [String]
-historyForMode LlmMode _ llmHistory = llmHistory
-historyForMode TermMode termHistory _ = termHistory
-historyForMode ToolMode termHistory _ = termHistory
-
 -- | Where submitted input should be remembered. Blank input is not stored.
-data InputDestination
-  = DiscardInput
-  | TermHistoryEntry
-  | LlmHistoryEntry
+data HistoryTarget
+  = TermHistory
+  | LlmHistory
   deriving stock (Eq, Show)
 
-inputDestination :: PromptMode -> String -> InputDestination
+inputDestination :: PromptMode -> String -> Maybe HistoryTarget
 inputDestination _ text
-  | all isSpace text = DiscardInput
-inputDestination TermMode _ = TermHistoryEntry
-inputDestination ToolMode _ = TermHistoryEntry
-inputDestination LlmMode _ = LlmHistoryEntry
+  | all isSpace text = Nothing
+inputDestination LlmMode _ = Just LlmHistory
+inputDestination TermMode _ = Just TermHistory
+inputDestination ToolMode _ = Just TermHistory
+
+{-@ recordHistory :: target:HistoryTarget -> entry:String -> history:History ->
+      {v:History | len (termHistory v) + len (llmHistory v) == len (termHistory history) + len (llmHistory history) + 1} @-}
+recordHistory :: HistoryTarget -> String -> History -> History
+recordHistory TermHistory entry history =
+  history { termHistory = termHistory history ++ [entry] }
+recordHistory LlmHistory entry history =
+  history { llmHistory = llmHistory history ++ [entry] }
 
 -- | Encode history entries into the on-disk line format.
 encodeHistory :: [String] -> String

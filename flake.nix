@@ -205,6 +205,8 @@
             llamaUrl = "http://probe.invalid/v1/chat/completions";
           };
           probe = extra: mkHutianShell ({ inherit pkgs; } // probeOptions // extra);
+          probeLauncher = "${probe { }}/bin/hutian";
+          readOnlyLauncher = "${probe { readOnly = true; }}/bin/hutian";
           expected = [
             "--llama-url"
             "--model"
@@ -221,32 +223,32 @@
           inherit (lint) liquid sandboxClosure sandboxSource;
           configuration = pkgs.runCommand "hutian-configuration-check" { } ''
             ${lib.concatMapStrings (pattern: ''
-              ${pkgs.gnugrep}/bin/grep -F -- ${lib.escapeShellArg pattern} ${probe { }}/bin/hutian
+              ${pkgs.gnugrep}/bin/grep -F -- ${lib.escapeShellArg pattern} ${probeLauncher}
             '') expected}
-            if ${pkgs.gnugrep}/bin/grep -F -- 'HUTIAN_' ${probe { }}/bin/hutian; then
+            if ${pkgs.gnugrep}/bin/grep -F -- 'HUTIAN_' ${probeLauncher}; then
               echo "the launcher must not set HUTIAN_ environment variables" >&2
               exit 1
             fi
             ${pkgs.coreutils}/bin/touch $out
           '';
           read-only-option = pkgs.runCommand "hutian-read-only-option-check" { } ''
-            ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${probe { readOnly = true; }}/bin/hutian
-            if ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${probe { }}/bin/hutian; then
+            ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${readOnlyLauncher}
+            if ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${probeLauncher}; then
               echo "readOnly = false must not request a read-only working directory" >&2
               exit 1
             fi
             ${pkgs.coreutils}/bin/touch $out
           '';
           launcher-volumes = pkgs.runCommand "hutian-launcher-volume-check" { } ''
-            if ${pkgs.gnugrep}/bin/grep -F 'volumes+=(-volume' ${probe { }}/bin/hutian; then
+            if ${pkgs.gnugrep}/bin/grep -F 'volumes+=(-volume' ${probeLauncher}; then
               echo "the launcher must not pass one gVisor volume per store path" >&2
               exit 1
             fi
-            if ${pkgs.gnugrep}/bin/grep -F -- '-volume "$sourcedir:/source"' ${probe { }}/bin/hutian; then
+            if ${pkgs.gnugrep}/bin/grep -F -- '-volume "$sourcedir:/source"' ${probeLauncher}; then
               echo "the launcher must bind the working directory into the rootfs" >&2
               exit 1
             fi
-            ${pkgs.gnugrep}/bin/grep -F 'hutian-sandbox' ${probe { }}/bin/hutian
+            ${pkgs.gnugrep}/bin/grep -F 'hutian-sandbox' ${probeLauncher}
             ${pkgs.coreutils}/bin/touch $out
           '';
         }

@@ -5,7 +5,6 @@ module Main (main) where
 
 import Control.Exception (finally)
 import Control.Monad (foldM)
-import Data.Maybe (fromMaybe)
 import GHC.IO.Encoding (setLocaleEncoding)
 import Hutian.Command
   ( Command (..)
@@ -16,17 +15,21 @@ import Hutian.Command
 import Hutian.Conversation
   ( Conversation
   , ToolCall (..)
-  , appendAssistant
-  , appendAssistantToolCalls
-  , appendExchange
+  , appendResult
   , appendTerminal
   , appendToolResult
-  , appendUser
   , emptyConversation
   )
+import Hutian.Editor
+  ( PromptBuffers
+  , PromptMode (..)
+  , initialPromptBuffers
+  )
 import Hutian.History
-  ( InputDestination (..)
+  ( History (..)
+  , HistoryTarget (..)
   , inputDestination
+  , recordHistory
   )
 import Hutian.History.Store
   ( HistoryFile (..)
@@ -49,10 +52,7 @@ import Hutian.Shell
   , runShellCommandOutput
   )
 import Hutian.Terminal
-  ( PromptBuffers
-  , PromptMode (..)
-  , initialPromptBuffers
-  , promptForInput
+  ( promptForInput
   , renderToolCommand
   , resetTerminal
   )
@@ -64,8 +64,7 @@ import System.IO
 data ShellState = ShellState
   { shellSettings :: LlmSettings
   , shellCommands :: [String]
-  , shellTermHistory :: [String]
-  , shellLlmHistory :: [String]
+  , shellHistory :: History
   , shellInterrupt :: InterruptFlag
   , shellMode :: PromptMode
   , shellBuffers :: PromptBuffers
@@ -92,8 +91,7 @@ main = do
             ShellState
               { shellSettings = settings
               , shellCommands = commands
-              , shellTermHistory = termHistory
-              , shellLlmHistory = llmHistory
+              , shellHistory = History termHistory llmHistory
               , shellInterrupt = interruptFlag
               , shellMode = LlmMode
               , shellBuffers = initialPromptBuffers
@@ -114,8 +112,7 @@ shellLoop state = do
       (shellCommands state)
       termPrompt
       (shellMode state)
-      (shellTermHistory state)
-      (shellLlmHistory state)
+      (shellHistory state)
       (shellBuffers state)
   let prompted =
         state
@@ -125,12 +122,7 @@ shellLoop state = do
   case input of
     Nothing -> pure ()
     Just text -> do
-      (termHistory', llmHistory') <-
-        rememberInput
-          nextMode
-          text
-          (shellTermHistory state)
-          (shellLlmHistory state)
+      history' <- rememberInput nextMode text (shellHistory state)
       clearInterrupt (shellInterrupt state)
       conversation <-
         runInput
@@ -141,21 +133,21 @@ shellLoop state = do
           (shellConversation state)
       shellLoop
         prompted
-          { shellTermHistory = termHistory'
-          , shellLlmHistory = llmHistory'
+          { shellHistory = history'
           , shellConversation = conversation
           }
 
-rememberInput :: PromptMode -> String -> [String] -> [String] -> IO ([String], [String])
-rememberInput mode text termHistory llmHistory =
+rememberInput :: PromptMode -> String -> History -> IO History
+rememberInput mode text history =
   case inputDestination mode text of
-    DiscardInput -> pure (termHistory, llmHistory)
-    TermHistoryEntry -> do
-      appendHistoryFile termHistoryFile text
-      pure (termHistory ++ [text], llmHistory)
-    LlmHistoryEntry -> do
-      appendHistoryFile llmHistoryFile text
-      pure (termHistory, llmHistory ++ [text])
+    Nothing -> pure history
+    Just target -> do
+      appendHistoryFile (historyFileFor target) text
+      pure (recordHistory target text history)
+
+historyFileFor :: HistoryTarget -> HistoryFile
+historyFileFor TermHistory = termHistoryFile
+historyFileFor LlmHistory = llmHistoryFile
 
 runInput :: LlmSettings -> InterruptFlag -> PromptMode -> String -> Conversation -> IO Conversation
 runInput settings interruptFlag LlmMode text conversation =
@@ -173,31 +165,9 @@ runLlmInput settings interruptFlag conversation prompt = do
   continueLlm
     settings
     interruptFlag
-    (recordPromptResult prompt result conversation)
+    (appendResult (Just prompt) (llmResponseText result) (llmToolCalls result) conversation)
     result
     0
-
-recordPromptResult :: String -> LlmResult -> Conversation -> Conversation
-recordPromptResult prompt = recordResult (Just prompt)
-
-recordContinuationResult :: LlmResult -> Conversation -> Conversation
-recordContinuationResult = recordResult Nothing
-
--- | Record a model result, including any tool calls it requested. A prompt is
--- present for the first request and absent for follow-up requests after tool
--- results.
-recordResult :: Maybe String -> LlmResult -> Conversation -> Conversation
-recordResult prompt result conversation =
-  case llmToolCalls result of
-    [] ->
-      case prompt of
-        Just text -> appendExchange text (llmResponseText result) conversation
-        Nothing -> appendAssistant answer conversation
-    calls ->
-      appendAssistantToolCalls answer calls withPrompt
-  where
-    answer = fromMaybe "" (llmResponseText result)
-    withPrompt = maybe conversation (`appendUser` conversation) prompt
 
 continueLlm :: LlmSettings -> InterruptFlag -> Conversation -> LlmResult -> Int -> IO Conversation
 continueLlm settings interruptFlag conversation result rounds
@@ -208,7 +178,7 @@ continueLlm settings interruptFlag conversation result rounds
       continueLlm
         settings
         interruptFlag
-        (recordContinuationResult next conversation')
+        (appendResult Nothing (llmResponseText next) (llmToolCalls next) conversation')
         next
         (rounds + 1)
 

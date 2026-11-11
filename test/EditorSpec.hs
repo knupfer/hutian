@@ -3,6 +3,7 @@ module EditorSpec (tests) where
 import Data.Char (isControl, isSpace)
 import qualified Data.List.NonEmpty as NonEmpty
 import Hutian.Editor
+import Hutian.Key (Key (..), classifyChar, csiKey)
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.HUnit

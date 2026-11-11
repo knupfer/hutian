@@ -27,39 +27,41 @@ unitTests =
               , TerminalEntry "git status"
               ]
             messages = requestMessages "system rules" conversation "second question"
-        map chatRole messages @?= [SystemRole, UserRole, AssistantRole, UserRole, UserRole]
-        map chatContent messages @?=
-          [ "system rules"
-          , "first question"
-          , "first answer"
-          , "The user ran this terminal command:\ngit status"
-          , "second question"
-          ]
-    , testCase "empty system prompts are omitted" $ do
-        map chatRole (requestMessages "" emptyConversation "hello") @?= [UserRole]
+        messages
+          @?= [ SystemMessage "system rules"
+              , UserMessage "first question"
+              , AssistantMessage "first answer"
+              , UserMessage "The user ran this terminal command:\ngit status"
+              , UserMessage "second question"
+              ]
+    , testCase "empty system prompts are omitted" $
+        requestMessages "" emptyConversation "hello" @?= [UserMessage "hello"]
     , testCase "appendExchange records successful answers only" $ do
         appendExchange "question" (Just "answer") emptyConversation
           @?= [UserEntry "question", AssistantEntry "answer"]
         appendExchange "question" (Just "   ") emptyConversation @?= []
         appendExchange "question" Nothing emptyConversation @?= []
-    , testCase "appendTerminal records terminal commands" $ do
+    , testCase "appendTerminal records terminal commands" $
         appendTerminal "ls -la" emptyConversation @?= [TerminalEntry "ls -la"]
+    , testCase "appendResult records a prompt, answer, and optional tool calls" $ do
+        let call = ToolCall "call-1" "shell" "{\"command\":\"ls\"}"
+        appendResult (Just "question") (Just "answer") [] emptyConversation
+          @?= [UserEntry "question", AssistantEntry "answer"]
+        appendResult Nothing (Just "answer") [] emptyConversation
+          @?= [AssistantEntry "answer"]
+        appendResult (Just "question") Nothing [call] emptyConversation
+          @?= [UserEntry "question", AssistantToolCallEntry "" [call]]
+        appendResult Nothing (Just "checking") [call] emptyConversation
+          @?= [AssistantToolCallEntry "checking" [call]]
     , testCase "assistant tool calls and results use tool messages" $ do
         let call = ToolCall "call-1" "shell" "{\"command\":\"ls\"}"
             conversation =
               appendToolResult "call-1" "file.txt"
                 (appendAssistantToolCalls "checking" [call] emptyConversation)
-            messages = continuationMessages "" conversation
-        map chatRole messages @?= [AssistantRole, ToolRole]
-        case messages of
-          [assistant, result] -> do
-            chatContent assistant @?= "checking"
-            chatToolCalls assistant @?= [call]
-            chatToolCallId assistant @?= Nothing
-            chatContent result @?= "file.txt"
-            chatToolCalls result @?= []
-            chatToolCallId result @?= Just "call-1"
-          other -> assertFailure ("unexpected messages: " ++ show other)
+        continuationMessages "" conversation
+          @?= [ AssistantToolCallMessage "checking" [call]
+              , ToolResultMessage "call-1" "file.txt"
+              ]
     , testCase "completion prompts flatten the entire conversation" $ do
         let prompt =
               completionPrompt
@@ -82,6 +84,7 @@ propertyTests =
     , testProperty "message count matches the conversation" prop_messageCount
     , testProperty "all conversation text is retained" prop_historyRetained
     , testProperty "successful exchanges append both messages" prop_exchangeAppended
+    , testProperty "appendResult grows the conversation by at most two entries" prop_appendResultBound
     ]
 
 newtype Conv = Conv [ConversationEntry]
@@ -100,10 +103,10 @@ instance Arbitrary Conv where
 prop_promptLast :: String -> Conv -> String -> Property
 prop_promptLast systemPrompt (Conv conversation) prompt =
   case reverse (requestMessages systemPrompt conversation prompt) of
-    ChatMessage role content _ _ : _ ->
-      counterexample (show (role, content)) $
-        property (role == UserRole && content == prompt)
+    UserMessage content : _ ->
+      counterexample (show content) (property (content == prompt))
     [] -> counterexample "empty message list" False
+    other -> counterexample (show other) False
 
 prop_messageCount :: String -> Conv -> String -> Property
 prop_messageCount systemPrompt (Conv conversation) prompt =
@@ -132,6 +135,15 @@ prop_exchangeAppended prompt answer =
    in if all isSpace answer
         then conversation === []
         else conversation === [UserEntry prompt, AssistantEntry answer]
+
+prop_appendResultBound :: Maybe String -> Maybe String -> [(String, String, String)] -> Conv -> Property
+prop_appendResultBound prompt answer rawCalls (Conv conversation) =
+  counterexample (show updated) $
+    property (length updated >= length conversation)
+      .&&. property (length updated <= length conversation + 2)
+  where
+    calls = [ToolCall callId name arguments | (callId, name, arguments) <- rawCalls]
+    updated = appendResult prompt answer calls conversation
 
 entryTexts :: ConversationEntry -> [String]
 entryTexts entry =

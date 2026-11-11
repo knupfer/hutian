@@ -55,6 +55,13 @@ unitTests =
           ]
           @?= Right
             (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt ""))
+    , testCase "parseLlmSettings rejects empty URLs and model names" $ do
+        case parseLlmSettings ["--llama-url", "", "--model", "m", "--system-prompt", ""] of
+          Left message -> assertBool "empty url should be named" ("--llama-url" `isInfixOf` message)
+          Right _ -> assertFailure "an empty url should fail"
+        case parseLlmSettings ["--llama-url", "http://example.test", "--model", "", "--system-prompt", ""] of
+          Left message -> assertBool "empty model should be named" ("--model" `isInfixOf` message)
+          Right _ -> assertFailure "an empty model should fail"
     , testCase "parseLlmSettings reports missing options, missing values, and unknown arguments" $ do
         case parseLlmSettings [] of
           Left message -> do
@@ -233,6 +240,7 @@ propertyTests =
     , testProperty "extractContent finds direct content" prop_extractContent
     , testProperty "extractError finds nested messages" prop_extractError
     , testProperty "request bodies always name the model and stream" prop_requestBody
+    , testProperty "settings round-trip through the command line" prop_parseSettings
     ]
 
 -- * Properties
@@ -264,6 +272,26 @@ prop_apiFor url =
     expected
       | "/v1/chat/completions" `isInfixOf` url = ChatApi
       | otherwise = CompletionApi
+
+prop_parseSettings :: NonEmptyList Char -> NonEmptyList Char -> String -> Property
+prop_parseSettings url model systemPrompt =
+  parseLlmSettings
+    [ "--llama-url"
+    , urlText
+    , "--model"
+    , modelText
+    , "--system-prompt"
+    , systemPrompt
+    ]
+    === Right
+      ( LlmSettings
+          (LlmUrl urlText)
+          (ModelName modelText)
+          (SystemPrompt systemPrompt)
+      )
+  where
+    urlText = getNonEmpty url
+    modelText = getNonEmpty model
 
 prop_extractContent :: String -> Property
 prop_extractContent text =

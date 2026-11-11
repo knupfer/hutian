@@ -58,7 +58,6 @@ import Hutian.Conversation
   , completionPrompt
   , continuationMessages
   , requestMessages
-  , roleName
   )
 import Hutian.Markdown
   ( MarkdownState
@@ -102,22 +101,11 @@ emptyLlmResult = LlmResult Nothing []
 parseLlmSettings :: [String] -> Either String LlmSettings
 parseLlmSettings = go Nothing Nothing Nothing
   where
-    go (Just url) (Just model) (Just systemPrompt) [] =
-      Right (LlmSettings url model systemPrompt)
     go url model systemPrompt [] =
-      Left
-        ( "missing required argument"
-            ++ plural
-            ++ ": "
-            ++ unwords (missingArguments url model systemPrompt)
-            ++ "\n"
-            ++ llmUsage
-        )
-      where
-        plural =
-          if length (missingArguments url model systemPrompt) > 1
-            then "s"
-            else ""
+      case (url, model, systemPrompt) of
+        (Just parsedUrl, Just parsedModel, Just parsedSystemPrompt) ->
+          settingsFrom parsedUrl parsedModel parsedSystemPrompt
+        _ -> Left (missingMessage (missingArguments url model systemPrompt))
     go _ _ _ ["--llama-url"] = missingValue "--llama-url"
     go _ _ _ ["--model"] = missingValue "--model"
     go _ _ _ ["--system-prompt"] = missingValue "--system-prompt"
@@ -131,6 +119,24 @@ parseLlmSettings = go Nothing Nothing Nothing
       Left ("unknown argument: " ++ argument ++ "\n" ++ llmUsage)
 
     missingValue flag = Left ("missing value for " ++ flag ++ "\n" ++ llmUsage)
+
+-- | Reject empty URLs and model names; an empty system prompt is allowed.
+settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Either String LlmSettings
+settingsFrom url model systemPrompt
+  | null (unLlmUrl url) = Left ("empty value for --llama-url\n" ++ llmUsage)
+  | null (unModelName model) = Left ("empty value for --model\n" ++ llmUsage)
+  | otherwise = Right (LlmSettings url model systemPrompt)
+
+missingMessage :: [String] -> String
+missingMessage missing =
+  "missing required argument"
+    ++ plural
+    ++ ": "
+    ++ unwords missing
+    ++ "\n"
+    ++ llmUsage
+  where
+    plural = if length missing > 1 then "s" else ""
 
 missingArguments
   :: Maybe LlmUrl
@@ -193,16 +199,23 @@ chatBody model messages =
 messageValue :: ChatMessage -> Aeson.Value
 messageValue message =
   object $
-    [ "role" .= roleName (chatRole message)
-    , "content" .= chatContent message
-    ]
-      ++ [ "tool_calls" .= map toolCallValue calls
-         | calls <- [chatToolCalls message]
-         , not (null calls)
-         ]
-      ++ [ "tool_call_id" .= callId
-         | callId <- maybeToList (chatToolCallId message)
-         ]
+    case message of
+      SystemMessage text -> roleMessage "system" text
+      UserMessage text -> roleMessage "user" text
+      AssistantMessage text -> roleMessage "assistant" text
+      AssistantToolCallMessage text calls ->
+        roleMessage "assistant" text
+          ++ [ "tool_calls" .= map toolCallValue calls
+             | not (null calls)
+             ]
+      ToolResultMessage callId output ->
+        roleMessage "tool" output
+          ++ ["tool_call_id" .= callId]
+  where
+    roleMessage role text =
+      [ "role" .= (role :: String)
+      , "content" .= text
+      ]
 
 toolCallValue :: ToolCall -> Aeson.Value
 toolCallValue call =
@@ -265,10 +278,6 @@ toolCommand call
             Just (String command) -> Right (Text.unpack command)
             _ -> Left "missing string argument: command"
         _ -> Left "tool arguments are not a JSON object"
-
-maybeToList :: Maybe a -> [a]
-maybeToList Nothing = []
-maybeToList (Just value) = [value]
 
 -- | One streaming fragment of a tool call. The first fragment usually carries
 -- the id and function name; later fragments append to the arguments.

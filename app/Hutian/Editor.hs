@@ -18,7 +18,6 @@ module Hutian.Editor
   , activePrompt
   , storePrompt
   , clearPrompt
-  , Key (..)
   , PromptAction (..)
   , promptAction
   , applyKey
@@ -29,8 +28,6 @@ module Hutian.Editor
   , wrapLine
   , cursorPosition
   , physicalRows
-  , classifyChar
-  , csiKey
   , completionTarget
   , commandCompletionTarget
   , applyCompletion
@@ -51,7 +48,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, listToMaybe)
 import Hutian.Completion (Completion (..), CompletionKind (..), chooseCompletion)
-import Hutian.Key (Key (..), classifyChar, csiKey)
+import Hutian.Key (Key (..))
 
 {-@ type Pos = {v:Int | v > 0} @-}
 

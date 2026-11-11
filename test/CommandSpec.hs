@@ -1,8 +1,11 @@
 module CommandSpec (tests) where
 
+import Data.Char (isSpace)
 import Hutian.Command
+import Test.QuickCheck (Property, property)
 import Test.Tasty
 import Test.Tasty.HUnit
+import Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests =
@@ -30,4 +33,12 @@ tests =
         classifyTerminalInput "echo hi\n" @?= SingleLineInput "echo hi"
         classifyTerminalInput "echo hi\npwd" @?= MultiLineInput "echo hi\npwd"
         classifyTerminalInput "\n" @?= SingleLineInput ""
+    , testProperty "parseCommandLine preserves shell input and classifies builtins" prop_parseCommandLine
     ]
+
+prop_parseCommandLine :: String -> Property
+prop_parseCommandLine text =
+  case parseCommandLine text of
+    CommandShell line -> property (line == text)
+    CommandEmpty -> property (all isSpace text)
+    CommandHelp -> property (words text == ["help"])

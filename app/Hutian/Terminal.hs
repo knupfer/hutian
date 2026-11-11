@@ -2,10 +2,7 @@
 
 -- | Raw terminal input handling for the interactive prompt.
 module Hutian.Terminal
-  ( PromptMode (..)
-  , PromptBuffers
-  , initialPromptBuffers
-  , promptForInput
+  ( promptForInput
   , renderToolCommand
   , resetTerminal
   ) where
@@ -29,7 +26,6 @@ import Hutian.Editor
   , currentLine
   , cursorPosition
   , cursorToEnd
-  , initialPromptBuffers
   , promptAction
   , promptLines
   , promptSuggestions
@@ -39,7 +35,8 @@ import Hutian.Editor
   )
 import Hutian.Completion (CompletionKind (..), chooseCompletion)
 import Hutian.History
-  ( HistoryState
+  ( History
+  , HistoryState
   , historyDown
   , historyForMode
   , historyUp
@@ -79,8 +76,8 @@ import System.Posix.Terminal
 -- 'TermMode'. In term mode, Enter executes the command, Up/Down browse
 -- history, and a trailing backslash continues the command on the next line.
 -- Ctrl+C clears the current input.
-promptForInput :: [String] -> String -> PromptMode -> [String] -> [String] -> PromptBuffers -> IO (PromptMode, Maybe String, PromptBuffers)
-promptForInput commands termPrompt mode termHistory llmHistory buffers = do
+promptForInput :: [String] -> String -> PromptMode -> History -> PromptBuffers -> IO (PromptMode, Maybe String, PromptBuffers)
+promptForInput commands termPrompt mode history buffers = do
   interactive <- hIsTerminalDevice stdout
   let context =
         PromptContext
@@ -88,8 +85,7 @@ promptForInput commands termPrompt mode termHistory llmHistory buffers = do
           , contextCommands = commands
           , contextTermPrompt = termPrompt
           , contextMode = mode
-          , contextTermHistory = termHistory
-          , contextLlmHistory = llmHistory
+          , contextHistory = history
           }
   withRawTerminal $ do
     when interactive (startPromptLine mode)
@@ -100,8 +96,7 @@ data PromptContext = PromptContext
   , contextCommands :: [String]
   , contextTermPrompt :: String
   , contextMode :: PromptMode
-  , contextTermHistory :: [String]
-  , contextLlmHistory :: [String]
+  , contextHistory :: History
   }
 
 data ReadState = ReadState
@@ -158,7 +153,7 @@ readPrompt context state = do
     interactive = contextInteractive context
     termPrompt = contextTermPrompt context
     commands = contextCommands context
-    entries = historyForMode mode (contextTermHistory context) (contextLlmHistory context)
+    entries = historyForMode mode (contextHistory context)
 
     loop position currentState = do
       let current = activePrompt mode (readBuffers currentState)

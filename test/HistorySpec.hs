@@ -57,16 +57,22 @@ unitTests =
         promptText prompt3 @?= "second\n"
         promptText prompt4 @?= "draft\n"
     , testCase "history selection is mode specific" $ do
-        historyForMode LlmMode ["term"] ["llm"] @?= ["llm"]
-        historyForMode TermMode ["term"] ["llm"] @?= ["term"]
-        historyForMode ToolMode ["term"] ["llm"] @?= ["term"]
-    , testCase "input destinations follow mode and blank input" $ do
-        inputDestination TermMode "" @?= DiscardInput
-        inputDestination TermMode "   " @?= DiscardInput
-        inputDestination TermMode "ls" @?= TermHistoryEntry
-        inputDestination ToolMode "ls" @?= TermHistoryEntry
-        inputDestination LlmMode "" @?= DiscardInput
-        inputDestination LlmMode "hello" @?= LlmHistoryEntry
+        let history = History ["term"] ["llm"]
+        historyForMode LlmMode history @?= ["llm"]
+        historyForMode TermMode history @?= ["term"]
+        historyForMode ToolMode history @?= ["term"]
+    , testCase "input destinations follow mode and ignore blank input" $ do
+        inputDestination TermMode "" @?= Nothing
+        inputDestination TermMode "   " @?= Nothing
+        inputDestination TermMode "ls" @?= Just TermHistory
+        inputDestination ToolMode "ls" @?= Just TermHistory
+        inputDestination LlmMode "" @?= Nothing
+        inputDestination LlmMode "hello" @?= Just LlmHistory
+    , testCase "recordHistory appends to the selected history" $ do
+        recordHistory TermHistory "ls" (History ["old"] ["llm"])
+          @?= History ["old", "ls"] ["llm"]
+        recordHistory LlmHistory "hello" (History ["term"] [])
+          @?= History ["term"] ["hello"]
     , testCase "history encoding round-trips entries" $ do
         encodeHistory [] @?= ""
         encodeHistory ["a"] @?= "a\n"
@@ -99,6 +105,7 @@ propertyTests =
     , testProperty "history codec round-trips lists" prop_historyCodec
     , testProperty "encoded history has no newlines" prop_escapeNoNewlines
     , testProperty "recalling every entry and returning restores the draft" prop_historyRoundTrip
+    , testProperty "recording history grows it by exactly one entry" prop_recordHistoryGrows
     ]
 
 recallUp :: [String] -> HistoryState -> Prompt -> (HistoryState, Prompt)
@@ -112,6 +119,17 @@ recallDown history state prompt =
 prop_escapeRoundTrip :: String -> Property
 prop_escapeRoundTrip text =
   unescapeHistory (escapeHistory text) === text
+
+prop_recordHistoryGrows :: Bool -> String -> [String] -> [String] -> Property
+prop_recordHistoryGrows useLlm entry term llm =
+  counterexample (show updated) $
+    historySize updated === historySize (History term llm) + 1
+  where
+    target = if useLlm then LlmHistory else TermHistory
+    updated = recordHistory target entry (History term llm)
+
+historySize :: History -> Int
+historySize (History term llm) = length term + length llm
 
 prop_historyCodec :: [String] -> Property
 prop_historyCodec entries =
