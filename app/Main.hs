@@ -55,6 +55,7 @@ import Hutian.Terminal
   ( promptForInput
   , renderToolCommand
   , resetTerminal
+  , withoutEcho
   )
 import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
@@ -160,14 +161,15 @@ runInput _ interruptFlag ToolMode text conversation =
 -- | Run a prompt through the model, executing any shell tools it requests and
 -- feeding the results back until it produces a final answer.
 runLlmInput :: LlmSettings -> InterruptFlag -> Conversation -> String -> IO Conversation
-runLlmInput settings interruptFlag conversation prompt = do
-  result <- withRespondingCursor (runLlmWithTools interruptFlag settings conversation prompt)
-  continueLlm
-    settings
-    interruptFlag
-    (appendResult (Just prompt) (llmResponseText result) (llmToolCalls result) conversation)
-    result
-    0
+runLlmInput settings interruptFlag conversation prompt =
+  withoutEcho $ do
+    result <- withRespondingCursor (runLlmWithTools interruptFlag settings conversation prompt)
+    continueLlm
+      settings
+      interruptFlag
+      (appendResult (Just prompt) (llmResponseText result) (llmToolCalls result) conversation)
+      result
+      0
 
 continueLlm :: LlmSettings -> InterruptFlag -> Conversation -> LlmResult -> Int -> IO Conversation
 continueLlm settings interruptFlag conversation result rounds

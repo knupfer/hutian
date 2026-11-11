@@ -5,6 +5,7 @@ module Hutian.Terminal
   ( promptForInput
   , renderToolCommand
   , resetTerminal
+  , withoutEcho
   ) where
 
 import Control.Exception (IOException, catch, finally, try)
@@ -121,6 +122,18 @@ withRawTerminal action = do
     else do
       originalAttributes <- getTerminalAttributes stdInput
       setTerminalAttributes stdInput (rawAttributes originalAttributes) Immediately
+      action `finally` setTerminalAttributes stdInput originalAttributes Immediately
+
+-- | Keep typed-ahead characters out of streamed output. Characters typed while
+-- this action runs stay buffered and are rendered by the next prompt instead.
+withoutEcho :: IO a -> IO a
+withoutEcho action = do
+  isTerminal <- hIsTerminalDevice stdin
+  if not isTerminal
+    then action
+    else do
+      originalAttributes <- getTerminalAttributes stdInput
+      setTerminalAttributes stdInput (withoutMode originalAttributes EnableEcho) Immediately
       action `finally` setTerminalAttributes stdInput originalAttributes Immediately
 
 rawAttributes :: TerminalAttributes -> TerminalAttributes

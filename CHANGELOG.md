@@ -18,6 +18,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
+- Text typed while the model is responding is no longer echoed into the
+  streamed output; it appears in the next prompt instead.
 - Term-mode and tool commands now always run in a fresh `/bin/sh` in the
   sandbox working directory. Shell state such as `cd` and exported variables
   no longer persists between commands.
