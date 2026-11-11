@@ -13,7 +13,6 @@ import Control.Exception (IOException, catch)
 import Control.Monad (unless, void)
 import Data.List (nub)
 import Data.Maybe (catMaybes)
-import Hutian.Interrupt (InterruptFlag, withInterruptFlag)
 import Hutian.Output (grayOutputText)
 import System.Directory
   ( doesDirectoryExist
@@ -33,39 +32,37 @@ import System.Process
   , waitForProcess
   )
 
-runShellCommand :: InterruptFlag -> String -> IO ()
-runShellCommand interruptFlag line =
-  withInterruptFlag interruptFlag $
-    ( do
-        (_, _, _, processHandle) <-
-          createProcess
-            (proc "/bin/sh" ["-c", line])
-              { delegate_ctlc = False
-              }
-        void (waitForProcess processHandle)
-    )
-      `catch` \(err :: IOException) -> hPutStrLn stderr ("sh: " ++ show err)
+runShellCommand :: String -> IO ()
+runShellCommand line =
+  ( do
+      (_, _, _, processHandle) <-
+        createProcess
+          (proc "/bin/sh" ["-c", line])
+            { delegate_ctlc = False
+            }
+      void (waitForProcess processHandle)
+  )
+    `catch` \(err :: IOException) -> hPutStrLn stderr ("sh: " ++ show err)
 
 -- | Run a command and return its combined output, so the result can be sent
 -- back to the model. The output is also written to the terminal.
-runShellCommandOutput :: InterruptFlag -> String -> IO String
-runShellCommandOutput interruptFlag line =
-  withInterruptFlag interruptFlag $
-    ( do
-        (exitCode, output, errors) <-
-          readCreateProcessWithExitCode (proc "/bin/sh" ["-c", line]) ""
-        outputIsTerminal <- hIsTerminalDevice stdout
-        errorsAreTerminal <- hIsTerminalDevice stderr
-        putStr (grayOutputText outputIsTerminal output)
-        hPutStr stderr (grayOutputText errorsAreTerminal errors)
-        unless (null output || last output == '\n') (putStrLn "")
-        hFlush stdout
-        hFlush stderr
-        pure (output ++ errors ++ shellExitSuffix exitCode)
-    )
-      `catch` \(err :: IOException) -> do
-        hPutStrLn stderr ("sh: " ++ show err)
-        pure ("sh: " ++ show err)
+runShellCommandOutput :: String -> IO String
+runShellCommandOutput line =
+  ( do
+      (exitCode, output, errors) <-
+        readCreateProcessWithExitCode (proc "/bin/sh" ["-c", line]) ""
+      outputIsTerminal <- hIsTerminalDevice stdout
+      errorsAreTerminal <- hIsTerminalDevice stderr
+      putStr (grayOutputText outputIsTerminal output)
+      hPutStr stderr (grayOutputText errorsAreTerminal errors)
+      unless (null output || last output == '\n') (putStrLn "")
+      hFlush stdout
+      hFlush stderr
+      pure (output ++ errors ++ shellExitSuffix exitCode)
+  )
+    `catch` \(err :: IOException) -> do
+      hPutStrLn stderr ("sh: " ++ show err)
+      pure ("sh: " ++ show err)
 
 -- | The trailing text that reports a non-zero command exit status.
 shellExitSuffix :: ExitCode -> String

@@ -19,7 +19,7 @@ import qualified Data.ByteString as BS
 import Data.Char (isSpace)
 import qualified Data.Text as Text
 import Hutian.Conversation (Conversation)
-import Hutian.Interrupt (InterruptFlag, isInterrupted, withInterruptFlag)
+import Hutian.Interrupt (InterruptFlag, isInterrupted)
 import Hutian.Llm.Protocol
 import Network.HTTP.Client
 import Network.HTTP.Types.Status (statusCode)
@@ -55,9 +55,7 @@ runRequest :: InterruptFlag -> LlmSettings -> Value -> IO LlmResult
 runRequest interruptFlag settings body = do
   result <-
     try
-      ( withInterruptFlag interruptFlag $
-          streamCompletion interruptFlag (settingUrl settings) body
-      )
+      (streamCompletion interruptFlag (settingUrl settings) body)
       :: IO (Either SomeException LlmResult)
   case result of
     Left exception -> do

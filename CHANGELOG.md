@@ -71,6 +71,9 @@ All notable changes to Hutian are documented here. The format follows
   EINVAL and surfaced as the same EOF error.
 - LLM-mode input redraws as a single frame, so highlighted input no longer
   flickers while typing.
+- `Ctrl+C` now interrupts the running term-mode or tool command without
+  terminating hutian. The interrupt handler is installed once for the process
+  instead of being torn down while the child shell is still winding down.
 
 ## [0.3.0.0] - 2026-11-10
 

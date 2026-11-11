@@ -6,10 +6,10 @@ module Hutian.Interrupt
   , newInterruptFlag
   , clearInterrupt
   , isInterrupted
-  , withInterruptFlag
+  , installInterruptHandler
   ) where
 
-import Control.Exception (finally)
+import Control.Monad (void)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import System.Posix.Signals (Handler (Catch), installHandler, sigINT)
 
@@ -25,10 +25,9 @@ clearInterrupt (InterruptFlag flag) = writeIORef flag False
 isInterrupted :: InterruptFlag -> IO Bool
 isInterrupted (InterruptFlag flag) = readIORef flag
 
--- | Install a @SIGINT@ handler for the duration of an action. The handler
--- records the interrupt instead of terminating the process, so the action can
--- stop cooperatively.
-withInterruptFlag :: InterruptFlag -> IO a -> IO a
-withInterruptFlag (InterruptFlag flag) action = do
-  previousHandler <- installHandler sigINT (Catch (writeIORef flag True)) Nothing
-  action `finally` installHandler sigINT previousHandler Nothing
+-- | Install a process-wide @SIGINT@ handler. The handler records the
+-- interrupt instead of terminating the process, so running commands can stop
+-- while hutian keeps running.
+installInterruptHandler :: InterruptFlag -> IO ()
+installInterruptHandler (InterruptFlag flag) =
+  void (installHandler sigINT (Catch (writeIORef flag True)) Nothing)

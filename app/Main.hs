@@ -36,7 +36,12 @@ import Hutian.History.Store
   , appendHistoryFile
   , loadHistoryFile
   )
-import Hutian.Interrupt (InterruptFlag, clearInterrupt, newInterruptFlag)
+import Hutian.Interrupt
+  ( InterruptFlag
+  , clearInterrupt
+  , installInterruptHandler
+  , newInterruptFlag
+  )
 import Hutian.Llm
   ( LlmResult (..)
   , LlmSettings
@@ -88,6 +93,7 @@ main = do
       termHistory <- loadHistoryFile termHistoryFile
       llmHistory <- loadHistoryFile llmHistoryFile
       interruptFlag <- newInterruptFlag
+      installInterruptHandler interruptFlag
       let state =
             ShellState
               { shellSettings = settings
@@ -153,10 +159,10 @@ historyFileFor LlmHistory = llmHistoryFile
 runInput :: LlmSettings -> InterruptFlag -> PromptMode -> String -> Conversation -> IO Conversation
 runInput settings interruptFlag LlmMode text conversation =
   runLlmInput settings interruptFlag conversation text
-runInput _ interruptFlag TermMode text conversation =
-  runTerminalInput interruptFlag conversation text
-runInput _ interruptFlag ToolMode text conversation =
-  runTerminalInput interruptFlag conversation text
+runInput _ _ TermMode text conversation =
+  runTerminalInput conversation text
+runInput _ _ ToolMode text conversation =
+  runTerminalInput conversation text
 
 -- | Run a prompt through the model, executing any shell tools it requests and
 -- feeding the results back until it produces a final answer.
@@ -175,7 +181,7 @@ continueLlm :: LlmSettings -> InterruptFlag -> Conversation -> LlmResult -> Int 
 continueLlm settings interruptFlag conversation result rounds
   | null (llmToolCalls result) = pure conversation
   | otherwise = do
-      conversation' <- runToolCalls interruptFlag conversation (llmToolCalls result)
+      conversation' <- runToolCalls conversation (llmToolCalls result)
       next <- withRespondingCursor (runLlmContinuation interruptFlag settings conversation')
       continueLlm
         settings
@@ -184,32 +190,32 @@ continueLlm settings interruptFlag conversation result rounds
         next
         (rounds + 1)
 
-runToolCalls :: InterruptFlag -> Conversation -> [ToolCall] -> IO Conversation
-runToolCalls interruptFlag = foldM (runToolCall interruptFlag)
+runToolCalls :: Conversation -> [ToolCall] -> IO Conversation
+runToolCalls = foldM runToolCall
 
-runToolCall :: InterruptFlag -> Conversation -> ToolCall -> IO Conversation
-runToolCall interruptFlag conversation call =
+runToolCall :: Conversation -> ToolCall -> IO Conversation
+runToolCall conversation call =
   case toolCommand call of
     Left message ->
       pure (appendToolResult (toolCallId call) ("tool error: " ++ message) conversation)
     Right command -> do
       renderToolCommand (toolCallName call) command
       printOutputLabel ToolMode
-      output <- runShellCommandOutput interruptFlag command
+      output <- runShellCommandOutput command
       pure (appendToolResult (toolCallId call) output conversation)
 
-runTerminalInput :: InterruptFlag -> Conversation -> String -> IO Conversation
-runTerminalInput interruptFlag conversation text =
+runTerminalInput :: Conversation -> String -> IO Conversation
+runTerminalInput conversation text =
   case classifyTerminalInput text of
     NoTerminalInput -> pure conversation
-    SingleLineInput line -> runTerminalLine interruptFlag conversation line
+    SingleLineInput line -> runTerminalLine conversation line
     MultiLineInput script -> do
       printOutputLabel TermMode
-      withGrayOutput (runShellCommand interruptFlag script)
+      withGrayOutput (runShellCommand script)
       pure (appendTerminal script conversation)
 
-runTerminalLine :: InterruptFlag -> Conversation -> String -> IO Conversation
-runTerminalLine interruptFlag conversation line =
+runTerminalLine :: Conversation -> String -> IO Conversation
+runTerminalLine conversation line =
   case parseCommandLine line of
     CommandEmpty -> pure conversation
     CommandHelp ->
@@ -217,7 +223,7 @@ runTerminalLine interruptFlag conversation line =
         >> pure (appendTerminal line conversation)
     CommandShell commandLine -> do
       printOutputLabel TermMode
-      withGrayOutput (runShellCommand interruptFlag commandLine)
+      withGrayOutput (runShellCommand commandLine)
       pure (appendTerminal line conversation)
 
 printHelp :: IO ()

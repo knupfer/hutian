@@ -1,7 +1,6 @@
 module ShellSpec (tests) where
 
 import Data.List (isInfixOf, nub)
-import Hutian.Interrupt (newInterruptFlag)
 import Hutian.Shell
   ( executableCommands
   , runShellCommand
@@ -29,25 +28,22 @@ tests =
   testGroup
     "shell"
     [ testCase "runShellCommand executes through /bin/sh" $ do
-        flag <- newInterruptFlag
         path <- temporaryFilePath "hutian-shell-output"
-        runShellCommand flag ("printf hello > " ++ shellQuote path)
+        runShellCommand ("printf hello > " ++ shellQuote path)
         contents <- readFile path
         contents @?= "hello"
         removeFile path
     , testCase "runShellCommandOutput captures output and exit status" $ do
-        flag <- newInterruptFlag
-        output <- runShellCommandOutput flag "printf hello"
+        output <- runShellCommandOutput "printf hello"
         output @?= "hello"
-        failed <- runShellCommandOutput flag "printf bad >&2; exit 3"
+        failed <- runShellCommandOutput "printf bad >&2; exit 3"
         assertBool "stderr should be captured" ("bad" `isInfixOf` failed)
         assertBool "exit status should be reported" ("[exit 3]" `isInfixOf` failed)
     , testCase "commands cannot change the parent working directory" $
         withTemporaryDirectory "hutian-shell-cd" $ \directory -> do
           original <- getCurrentDirectory
-          flag <- newInterruptFlag
-          runShellCommand flag ("cd " ++ directory)
-          output <- runShellCommandOutput flag ("cd " ++ directory)
+          runShellCommand ("cd " ++ directory)
+          output <- runShellCommandOutput ("cd " ++ directory)
           changed <- getCurrentDirectory
           output @?= ""
           changed @?= original
