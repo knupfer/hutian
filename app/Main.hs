@@ -197,9 +197,6 @@ recordContinuationResult result conversation =
 continueLlm :: LlmSettings -> InterruptFlag -> Conversation -> LlmResult -> Int -> IO Conversation
 continueLlm settings interruptFlag conversation result rounds
   | null (llmToolCalls result) = pure conversation
-  | rounds >= maxToolRounds = do
-      putStrLn "llm: stopped after the maximum number of tool calls"
-      pure (rejectToolCalls conversation (llmToolCalls result))
   | otherwise = do
       conversation' <- runToolCalls interruptFlag conversation (llmToolCalls result)
       next <- runLlmContinuation interruptFlag settings conversation'
@@ -209,19 +206,6 @@ continueLlm settings interruptFlag conversation result rounds
         (recordContinuationResult next conversation')
         next
         (rounds + 1)
-
-maxToolRounds :: Int
-maxToolRounds = 8
-
-rejectToolCalls :: Conversation -> [ToolCall] -> Conversation
-rejectToolCalls =
-  foldl'
-    (\conversation call ->
-       appendToolResult
-         (toolCallId call)
-         "tool error: maximum number of tool calls reached"
-         conversation
-    )
 
 runToolCalls :: InterruptFlag -> Conversation -> [ToolCall] -> IO Conversation
 runToolCalls interruptFlag = foldM (runToolCall interruptFlag)
