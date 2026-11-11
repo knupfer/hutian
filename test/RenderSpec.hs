@@ -140,6 +140,15 @@ tests =
         grayOutputText False "hello" @?= "hello"
     , testCase "grayOutputText leaves empty output unchanged" $
         grayOutputText True "" @?= ""
+    , testCase "user cursor is pink and steady" $
+        cursorStyleText UserCursor @?= "\ESC]12;#FF1493\a\ESC[2 q"
+    , testCase "responding cursor is teal and steady" $
+        cursorStyleText RespondingCursor @?= "\ESC]12;#00FFC8\a\ESC[2 q"
+    , testCase "cursor blink uses visibility sequences" $ do
+        hideCursorText @?= "\ESC[?25l"
+        showCursorText @?= "\ESC[?25h"
+    , testCase "resetCursorText restores the default cursor" $
+        resetCursorText @?= "\ESC[?25h\ESC]112\a\ESC[0 q"
     ]
 
 termLine :: String

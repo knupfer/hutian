@@ -45,9 +45,12 @@ import Hutian.History
 import Hutian.Key (Key (..), classifyChar, csiKey)
 import Hutian.Paths (formatCompletion, splitPathWord)
 import Hutian.Render
-  ( moveCursorText
+  ( CursorStyle (..)
+  , cursorStyleText
+  , moveCursorText
   , prefixFor
   , promptRenderText
+  , resetCursorText
   , startPromptText
   , toolPromptText
   )
@@ -108,7 +111,7 @@ data ReadState = ReadState
 resetTerminal :: IO ()
 resetTerminal = do
   isTerminal <- hIsTerminalDevice stdout
-  when isTerminal (putStr "\ESC[0m" >> hFlush stdout)
+  when isTerminal (putStr (resetCursorText ++ "\ESC[0m") >> hFlush stdout)
 
 withRawTerminal :: IO a -> IO a
 withRawTerminal action = do
@@ -336,7 +339,7 @@ terminalWidth = do
 
 startPromptLine :: PromptMode -> IO ()
 startPromptLine mode = do
-  putStr (startPromptText mode)
+  putStr (startPromptText mode ++ cursorStyleText UserCursor)
   hFlush stdout
 
 -- | Show a command requested by the model with the tool-call prefix.

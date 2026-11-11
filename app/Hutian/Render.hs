@@ -9,6 +9,11 @@ module Hutian.Render
   , grayForeground
   , boldVibrantPink
   , boldTeal
+  , CursorStyle (..)
+  , cursorStyleText
+  , hideCursorText
+  , showCursorText
+  , resetCursorText
   , reset
   ) where
 
@@ -115,6 +120,25 @@ prefixForegroundFor TermMode = boldVibrantPink
 prefixForegroundFor ToolMode = boldTeal
 prefixForegroundFor LlmMode = boldVibrantPink
 
+-- | How the terminal cursor should look for a given activity.
+data CursorStyle
+  = UserCursor
+  | RespondingCursor
+  deriving stock (Eq, Show)
+
+-- | User input gets a pink steady cursor; a responding model gets a teal
+-- steady cursor. The cursor is blinked by toggling 'hideCursorText' and
+-- 'showCursorText', because streaming output resets the terminal's own blink
+-- timer and would otherwise keep the cursor solid.
+cursorStyleText :: CursorStyle -> String
+cursorStyleText UserCursor = pinkCursorColor ++ steadyBlockCursor
+cursorStyleText RespondingCursor = tealCursorColor ++ steadyBlockCursor
+
+-- | Restore the terminal's default cursor colour and shape, and make sure the
+-- cursor is visible.
+resetCursorText :: String
+resetCursorText = showCursorText ++ resetCursorColor ++ defaultCursorShape
+
 -- | Foreground for the 'output:' label printed before command output. It is a
 -- light version of the colour used by the command's prompt.
 outputForeground :: PromptMode -> String
@@ -127,6 +151,13 @@ boldVibrantPink,
   lightPinkForeground,
   lightTealForeground,
   grayForeground,
+  pinkCursorColor,
+  tealCursorColor,
+  resetCursorColor,
+  hideCursorText,
+  showCursorText,
+  steadyBlockCursor,
+  defaultCursorShape,
   clearToEnd,
   clearLine,
   reset :: String
@@ -136,6 +167,13 @@ boldTeal = "\ESC[1;38;2;0;255;200m"
 lightPinkForeground = "\ESC[38;2;255;150;200m"
 lightTealForeground = "\ESC[38;2;150;255;200m"
 grayForeground = "\ESC[38;2;130;130;130m"
+pinkCursorColor = "\ESC]12;#FF1493\a"
+tealCursorColor = "\ESC]12;#00FFC8\a"
+resetCursorColor = "\ESC]112\a"
+hideCursorText = "\ESC[?25l"
+showCursorText = "\ESC[?25h"
+steadyBlockCursor = "\ESC[2 q"
+defaultCursorShape = "\ESC[0 q"
 clearToEnd = "\ESC[0J"
 clearLine = "\ESC[K"
 reset = "\ESC[0m"

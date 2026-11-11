@@ -1,15 +1,25 @@
--- | Gray terminal output.
+-- | Gray terminal output and cursor styling.
 module Hutian.Output
   ( grayOutputText
   , withGrayOutput
   , outputLabelText
   , printOutputLabel
+  , withRespondingCursor
   ) where
 
+import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Exception (finally)
 import Control.Monad (when)
 import Hutian.Editor (PromptMode (..))
-import Hutian.Render (grayForeground, outputForeground, reset)
+import Hutian.Render
+  ( CursorStyle (..)
+  , cursorStyleText
+  , grayForeground
+  , hideCursorText
+  , outputForeground
+  , reset
+  , showCursorText
+  )
 import System.IO (hFlush, hIsTerminalDevice, hPutStr, stderr, stdout)
 
 -- | Wrap captured output in gray when it is going to a terminal.
@@ -50,3 +60,34 @@ withGrayOutput action = do
   when stdoutIsTerminal (putStr grayForeground >> hFlush stdout)
   when stderrIsTerminal (hPutStr stderr grayForeground >> hFlush stderr)
   action `finally` restore
+
+-- | Show a blinking teal cursor while the model streams an answer, then return
+-- to the pink user cursor. The blink is driven here because every streamed
+-- write resets the terminal's own cursor blink timer. Non-terminal output is
+-- left alone.
+withRespondingCursor :: IO a -> IO a
+withRespondingCursor action = do
+  interactive <- hIsTerminalDevice stdout
+  if not interactive
+    then action
+    else do
+      putStr (showCursorText ++ cursorStyleText RespondingCursor)
+      hFlush stdout
+      blinkThread <- forkIO blinkCursor
+      action `finally` do
+        killThread blinkThread
+        putStr (showCursorText ++ cursorStyleText UserCursor)
+        hFlush stdout
+
+-- | Toggle the cursor independently of streamed output, starting visible.
+blinkCursor :: IO ()
+blinkCursor = loop True
+  where
+    loop visible = do
+      putStr (if visible then showCursorText else hideCursorText)
+      hFlush stdout
+      threadDelay blinkInterval
+      loop (not visible)
+
+blinkInterval :: Int
+blinkInterval = 500000

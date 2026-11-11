@@ -45,7 +45,7 @@ import Hutian.Llm
   , runLlmWithTools
   , toolCommand
   )
-import Hutian.Output (printOutputLabel, withGrayOutput)
+import Hutian.Output (printOutputLabel, withGrayOutput, withRespondingCursor)
 import Hutian.Shell
   ( executableCommands
   , runShellCommand
@@ -161,7 +161,7 @@ runInput _ interruptFlag ToolMode text conversation =
 -- feeding the results back until it produces a final answer.
 runLlmInput :: LlmSettings -> InterruptFlag -> Conversation -> String -> IO Conversation
 runLlmInput settings interruptFlag conversation prompt = do
-  result <- runLlmWithTools interruptFlag settings conversation prompt
+  result <- withRespondingCursor (runLlmWithTools interruptFlag settings conversation prompt)
   continueLlm
     settings
     interruptFlag
@@ -174,7 +174,7 @@ continueLlm settings interruptFlag conversation result rounds
   | null (llmToolCalls result) = pure conversation
   | otherwise = do
       conversation' <- runToolCalls interruptFlag conversation (llmToolCalls result)
-      next <- runLlmContinuation interruptFlag settings conversation'
+      next <- withRespondingCursor (runLlmContinuation interruptFlag settings conversation')
       continueLlm
         settings
         interruptFlag
