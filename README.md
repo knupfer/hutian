@@ -22,8 +22,8 @@ work as expected.
 
 In LLM mode the model can also call the `shell` tool. Commands requested by the
 model run through the same `/bin/sh -c` execution path as term mode, and are
-shown with a bold teal `tool shell:` line. Shell output is preceded by a light
-`output:` line and tool output by a light `tool output:` line.
+shown with a bold teal `tool shell:` line. Shell output is preceded by a
+dimmed pink `output:` line and tool output by a dimmed teal `tool output:` line.
 
 ## Quick start
 
@@ -78,7 +78,7 @@ LLM mode is the initial mode. Input is preceded by a bold pink `ask:` line and
 is syntax-highlighted as Markdown while you type, including headings, emphasis,
 links, lists, and fenced code blocks. Replies use the same highlighting.
 Fenced blocks tagged with a language use that language's syntax highlighter.
-Reasoning/thinking tokens are shown in grey under a bold teal `think:` line,
+Reasoning/thinking tokens are shown in grey under a dimmed teal `think:` line,
 with dimmed Markdown and code highlighting, and the reply is shown under a bold
 teal `answer:` line.
 
@@ -88,7 +88,7 @@ calls with their results.
 
 The model can request shell commands through the `shell` tool. Hutian runs each
 command with `/bin/sh -c` in the sandbox working directory, streams its output
-to the terminal in gray under a light teal `tool output:` line, and sends the
+to the terminal in gray under a dimmed teal `tool output:` line, and sends the
 output back to the model. Every call runs in a fresh shell, so `cd`, exported
 variables, and other shell state do not persist between calls. The requested
 command is shown under a bold teal `tool shell:` line, distinguishing it from
@@ -102,7 +102,7 @@ Explain what a syscall is.
 ### Term mode
 
 Term mode shows a bold pink `shell:` line above the input and prints command
-output in gray under a light pink `output:` line. `help` shows the builtin
+output in gray under a dimmed pink `output:` line. `help` shows the builtin
 help; every other line is executed with `/bin/sh -c` in the sandbox working
 directory.
 

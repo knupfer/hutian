@@ -2,6 +2,7 @@ module RenderSpec (tests) where
 
 import Data.List (isInfixOf, isSuffixOf)
 import Hutian.Editor (PromptMode (..), cursorPosition, initialPrompt, setPromptText)
+import Hutian.Markdown (darkenColour)
 import Hutian.Output (grayOutputText, outputLabelText)
 import Hutian.Render
 import Test.Tasty
@@ -120,7 +121,9 @@ tests =
         assertBool
           "nothing after the final newline may change colors"
           (not ("\ESC" `isInfixOf` afterNewline))
-    , testCase "output labels are light versions of the role colours" $ do
+    , testCase "output labels are dimmed versions of the mode colours" $ do
+        outputForeground TermMode @?= darkenColour 0.6 boldVibrantPink
+        outputForeground ToolMode @?= darkenColour 0.6 boldTeal
         outputLabelText TermMode True
           @?= outputForeground TermMode ++ "output:" ++ reset
         outputLabelText ToolMode True

@@ -23,7 +23,7 @@ import Hutian.Llm
   , runLlm
   , runLlmWithTools
   )
-import Hutian.Render (grayForeground)
+import Hutian.Render (dimTealForeground, grayForeground)
 import Network.Socket
   ( Family (AF_INET)
   , SockAddr (SockAddrInet)
@@ -71,7 +71,7 @@ tests =
         (result, output) <-
           maybe (assertFailure "runLlm timed out" >> pure (Nothing, "")) pure captured
         result @?= Just "# Answer\n**bold**\n"
-        assertBool "thinking should be labelled" ("\ESC[1;38;2;0;255;200mthink:" `isInfixOf` output)
+        assertBool "thinking should be labelled" ((dimTealForeground ++ "think:") `isInfixOf` output)
         assertBool "answer should be labelled" ("\ESC[1;38;2;0;255;200manswer:" `isInfixOf` output)
         assertBool "thinking should be grey" (grayForeground `isInfixOf` output)
         assertBool "heading should be highlighted" ("\ESC[1;38;2;137;180;250m" `isInfixOf` output)

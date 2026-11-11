@@ -9,6 +9,8 @@ module Hutian.Render
   , grayForeground
   , boldVibrantPink
   , boldTeal
+  , dimPinkForeground
+  , dimTealForeground
   , CursorStyle (..)
   , cursorStyleText
   , hideCursorText
@@ -27,7 +29,7 @@ import Hutian.Editor
   , setPromptText
   , suggestionRowCount
   )
-import Hutian.Markdown (renderMarkdownRows)
+import Hutian.Markdown (darkenColour, renderMarkdownRows)
 
 -- | Render a prompt and return the text to write plus the cursor position.
 promptRenderText :: String -> PromptMode -> Int -> Int -> Prompt -> (String, (Int, Int))
@@ -139,17 +141,17 @@ cursorStyleText RespondingCursor = tealCursorColor ++ steadyBlockCursor
 resetCursorText :: String
 resetCursorText = showCursorText ++ resetCursorColor ++ defaultCursorShape
 
--- | Foreground for the 'output:' label printed before command output. It is a
--- light version of the colour used by the command's prompt.
+-- | Foreground for the 'output:' label printed before command output. The
+-- colour is the command's mode colour, dimmed like a thinking block.
 outputForeground :: PromptMode -> String
-outputForeground TermMode = lightPinkForeground
-outputForeground ToolMode = lightTealForeground
+outputForeground TermMode = dimPinkForeground
+outputForeground ToolMode = dimTealForeground
 outputForeground LlmMode = grayForeground
 
 boldVibrantPink,
   boldTeal,
-  lightPinkForeground,
-  lightTealForeground,
+  dimPinkForeground,
+  dimTealForeground,
   grayForeground,
   pinkCursorColor,
   tealCursorColor,
@@ -164,8 +166,8 @@ boldVibrantPink,
 
 boldVibrantPink = "\ESC[1;38;2;255;20;147m"
 boldTeal = "\ESC[1;38;2;0;255;200m"
-lightPinkForeground = "\ESC[38;2;255;150;200m"
-lightTealForeground = "\ESC[38;2;150;255;200m"
+dimPinkForeground = darkenColour 0.6 boldVibrantPink
+dimTealForeground = darkenColour 0.6 boldTeal
 grayForeground = "\ESC[38;2;130;130;130m"
 pinkCursorColor = "\ESC]12;#FF1493\a"
 tealCursorColor = "\ESC]12;#00FFC8\a"

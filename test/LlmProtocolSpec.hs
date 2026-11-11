@@ -7,7 +7,7 @@ import Data.List (isInfixOf)
 import qualified Data.Text as Text
 import Hutian.Conversation (ToolCall (..))
 import Hutian.Llm.Protocol
-import Hutian.Render (boldTeal, grayForeground, reset)
+import Hutian.Render (boldTeal, dimTealForeground, grayForeground, reset)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -17,7 +17,7 @@ tests =
     "llm-protocol"
     [ testCase "reasoning is labelled and uses the thinking colour" $ do
         let (state, output) = applyStreamEvent (reasoningEvent "thinking\n") initialStreamState
-        assertBool "think label" ((boldTeal ++ "think:" ++ reset) `isInfixOf` outputText output)
+        assertBool "think label" ((dimTealForeground ++ "think:" ++ reset) `isInfixOf` outputText output)
         assertBool "thinking colour" (grayForeground `isInfixOf` outputText output)
         assertBool "stream saw data" (streamSawData state)
         resultFromState state @?= LlmResult (Just "") []

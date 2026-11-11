@@ -67,7 +67,7 @@ import Hutian.Markdown
   , renderMarkdown
   , renderMarkdownWith
   )
-import Hutian.Render (boldTeal, grayForeground, reset)
+import Hutian.Render (boldTeal, dimTealForeground, grayForeground, reset)
 
 -- | Connection settings supplied by the launcher.
 data LlmSettings = LlmSettings
@@ -366,7 +366,7 @@ appendReasoning (Just text) state
   where
     header
       | streamReasoningStarted state = ""
-      | otherwise = boldTeal ++ "think:" ++ reset ++ "\n"
+      | otherwise = dimTealForeground ++ "think:" ++ reset ++ "\n"
     (markdown', output) =
       renderMarkdownWith thinkingGrey (streamReasoning state) text
     state' =

@@ -7,6 +7,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
+- Secondary labels such as `output:`, `tool output:`, and `think:` are dimmed
+  to 60 percent, matching the dimmed highlighting in thinking blocks.
 - Terminal IO now goes through a single `Hutian.Console` boundary. Prompt
   policy is a pure reducer in `Hutian.Prompt`, and `Hutian.Shell` returns
   captured command output as data instead of printing it.

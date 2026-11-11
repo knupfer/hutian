@@ -7,6 +7,7 @@ module Hutian.Markdown
   , renderMarkdownRows
   , finishMarkdown
   , finishMarkdownWith
+  , darkenColour
   ) where
 
 import Data.Char (isControl, isDigit, isSpace)
