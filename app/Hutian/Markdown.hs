@@ -167,10 +167,10 @@ renderNormal context line
 headingLevel :: String -> Maybe Int
 headingLevel line =
   case dropWhile (== ' ') line of
-    '#' : _ ->
-      let (hashes, rest) = span (== '#') (dropWhile (== ' ') line)
+    hashes@('#' : _) ->
+      let (headingHashes, rest) = span (== '#') hashes
        in if spaceFollows rest
-            then Just (min 6 (length hashes))
+            then Just (min 6 (length headingHashes))
             else Nothing
     _ -> Nothing
 

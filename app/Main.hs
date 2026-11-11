@@ -175,10 +175,9 @@ runLlmInput settings interruptFlag conversation prompt =
       interruptFlag
       (appendResult (Just prompt) (llmResponseText result) (llmToolCalls result) conversation)
       result
-      0
 
-continueLlm :: LlmSettings -> InterruptFlag -> Conversation -> LlmResult -> Int -> IO Conversation
-continueLlm settings interruptFlag conversation result rounds
+continueLlm :: LlmSettings -> InterruptFlag -> Conversation -> LlmResult -> IO Conversation
+continueLlm settings interruptFlag conversation result
   | null (llmToolCalls result) = pure conversation
   | otherwise = do
       conversation' <- runToolCalls conversation (llmToolCalls result)
@@ -188,7 +187,6 @@ continueLlm settings interruptFlag conversation result rounds
         interruptFlag
         (appendResult Nothing (llmResponseText next) (llmToolCalls next) conversation')
         next
-        (rounds + 1)
 
 runToolCalls :: Conversation -> [ToolCall] -> IO Conversation
 runToolCalls = foldM runToolCall

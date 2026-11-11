@@ -92,7 +92,7 @@ promptForInput commands termPrompt mode history buffers = do
           , contextHistory = history
           }
   withRawTerminal $ do
-    when interactive (startPromptLine mode)
+    when interactive startPromptLine
     readPrompt context (ReadState initialHistoryState 0 buffers)
 
 data PromptContext = PromptContext
@@ -115,25 +115,23 @@ resetTerminal = do
   when isTerminal (putStr (resetCursorText ++ "\ESC[0m") >> hFlush stdout)
 
 withRawTerminal :: IO a -> IO a
-withRawTerminal action = do
-  isTerminal <- hIsTerminalDevice stdin
-  if not isTerminal
-    then action
-    else do
-      originalAttributes <- getTerminalAttributes stdInput
-      setTerminalAttributes stdInput (rawAttributes originalAttributes) Immediately
-      action `finally` setTerminalAttributes stdInput originalAttributes Immediately
+withRawTerminal = withTerminalAttributes rawAttributes
 
 -- | Keep typed-ahead characters out of streamed output. Characters typed while
 -- this action runs stay buffered and are rendered by the next prompt instead.
 withoutEcho :: IO a -> IO a
-withoutEcho action = do
+withoutEcho = withTerminalAttributes (`withoutMode` EnableEcho)
+
+-- | Run an action with adjusted terminal attributes, restoring the originals
+-- afterwards. Non-terminal input is left untouched.
+withTerminalAttributes :: (TerminalAttributes -> TerminalAttributes) -> IO a -> IO a
+withTerminalAttributes adjust action = do
   isTerminal <- hIsTerminalDevice stdin
   if not isTerminal
     then action
     else do
       originalAttributes <- getTerminalAttributes stdInput
-      setTerminalAttributes stdInput (withoutMode originalAttributes EnableEcho) Immediately
+      setTerminalAttributes stdInput (adjust originalAttributes) Immediately
       action `finally` setTerminalAttributes stdInput originalAttributes Immediately
 
 rawAttributes :: TerminalAttributes -> TerminalAttributes
@@ -350,9 +348,9 @@ terminalWidth = do
       Just (Window _ width) | width > 0 -> width
       _ -> 80
 
-startPromptLine :: PromptMode -> IO ()
-startPromptLine mode = do
-  putStr (startPromptText mode ++ cursorStyleText UserCursor)
+startPromptLine :: IO ()
+startPromptLine = do
+  putStr (startPromptText ++ cursorStyleText UserCursor)
   hFlush stdout
 
 -- | Show a command requested by the model with the tool-call prefix.

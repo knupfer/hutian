@@ -85,10 +85,8 @@ tests =
         moveCursorText (1, 0) (3, 2) @?= "\ESC[2B\r\ESC[2C"
         moveCursorText (2, 0) (2, 0) @?= "\r"
         moveCursorText (2, 0) (2, 1) @?= "\r\ESC[1C"
-    , testCase "startPromptText clears the line" $ do
-        startPromptText TermMode @?= "\ESC[K"
-        startPromptText LlmMode @?= "\ESC[K"
-        startPromptText ToolMode @?= "\ESC[K"
+    , testCase "startPromptText clears the line" $
+        startPromptText @?= "\ESC[K"
     , testCase "tool prompts use the answer teal on its own line" $ do
         let prompt = setPromptText "ls" initialPrompt
             (output, position) = promptRenderText toolLine ToolMode 0 80 prompt

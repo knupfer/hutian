@@ -78,7 +78,7 @@ promptRenderText termPrompt mode previousRow width prompt =
        in prefixOutput ++ rest ++ styleReset ++ clearLine ++ newline
 
 -- | Render a command requested by the model as a prompt line, followed by a
--- newline. Tool calls use a bright red prompt so they stand out from
+-- newline. Tool calls use a bright teal prompt so they stand out from
 -- user-entered commands.
 toolPromptText :: String -> Int -> String -> String
 toolPromptText toolName width command =
@@ -107,8 +107,8 @@ moveCursorText (oldRow, _) (newRow, newColumn) =
       | otherwise = ""
 
 -- | Clear the line before the first prompt frame is drawn.
-startPromptText :: PromptMode -> String
-startPromptText _ = clearLine
+startPromptText :: String
+startPromptText = clearLine
 
 prefixFor :: String -> PromptMode -> String
 prefixFor termPrompt TermMode = termPrompt

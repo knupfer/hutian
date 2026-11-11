@@ -30,10 +30,23 @@ data History = History
   }
   deriving stock (Eq, Show)
 
+-- | Where submitted input should be remembered. Blank input is not stored.
+data HistoryTarget
+  = TermHistory
+  | LlmHistory
+  deriving stock (Eq, Show)
+
+-- | The history list that a prompt mode reads and writes.
+historyTargetFor :: PromptMode -> HistoryTarget
+historyTargetFor LlmMode = LlmHistory
+historyTargetFor TermMode = TermHistory
+historyTargetFor ToolMode = TermHistory
+
 historyForMode :: PromptMode -> History -> [String]
-historyForMode LlmMode = llmHistory
-historyForMode TermMode = termHistory
-historyForMode ToolMode = termHistory
+historyForMode mode (History term llm) =
+  case historyTargetFor mode of
+    TermHistory -> term
+    LlmHistory -> llm
 
 data HistoryState = HistoryState
   { historyOffset :: Maybe Int
@@ -44,18 +57,10 @@ data HistoryState = HistoryState
 initialHistoryState :: HistoryState
 initialHistoryState = HistoryState Nothing ""
 
--- | Where submitted input should be remembered. Blank input is not stored.
-data HistoryTarget
-  = TermHistory
-  | LlmHistory
-  deriving stock (Eq, Show)
-
 inputDestination :: PromptMode -> String -> Maybe HistoryTarget
-inputDestination _ text
+inputDestination mode text
   | all isSpace text = Nothing
-inputDestination LlmMode _ = Just LlmHistory
-inputDestination TermMode _ = Just TermHistory
-inputDestination ToolMode _ = Just TermHistory
+  | otherwise = Just (historyTargetFor mode)
 
 {-@ recordHistory :: target:HistoryTarget -> entry:String -> history:History ->
       {v:History | len (termHistory v) + len (llmHistory v) == len (termHistory history) + len (llmHistory history) + 1} @-}
