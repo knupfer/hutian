@@ -168,8 +168,8 @@ runInput _ _ ToolMode text conversation =
 -- feeding the results back until it produces a final answer.
 runLlmInput :: LlmSettings -> InterruptFlag -> Conversation -> String -> IO Conversation
 runLlmInput settings interruptFlag conversation prompt =
-  withoutEcho $ do
-    result <- withRespondingCursor (runLlmWithTools interruptFlag settings conversation prompt)
+  withoutEcho $ withRespondingCursor $ do
+    result <- runLlmWithTools interruptFlag settings conversation prompt
     continueLlm
       settings
       interruptFlag
@@ -182,7 +182,7 @@ continueLlm settings interruptFlag conversation result rounds
   | null (llmToolCalls result) = pure conversation
   | otherwise = do
       conversation' <- runToolCalls conversation (llmToolCalls result)
-      next <- withRespondingCursor (runLlmContinuation interruptFlag settings conversation')
+      next <- runLlmContinuation interruptFlag settings conversation'
       continueLlm
         settings
         interruptFlag

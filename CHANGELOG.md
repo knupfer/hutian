@@ -5,6 +5,11 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The cursor stays blinking teal for the whole model turn, including shell tool
+  calls, instead of switching back to pink while a tool command runs.
+
 ## [0.4.0.0] - 2026-11-11
 
 ### Added
