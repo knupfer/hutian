@@ -5,6 +5,12 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- HTTPS support for OpenAI-compatible model endpoints. The HTTP client now uses
+  TLS, and the sandbox ships the nixpkgs CA bundle together with
+  `SYSTEM_CERTIFICATE_PATH` so `https://` values for `llamaUrl` are verified.
+
 ### Changed
 
 - Terminal colours, styles, and cursor movement are now generated with

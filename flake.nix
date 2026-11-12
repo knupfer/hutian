@@ -214,6 +214,8 @@
             "probe system prompt"
             "probe-model"
             "http://probe.invalid/v1/chat/completions"
+            "SYSTEM_CERTIFICATE_PATH"
+            "ca-bundle.crt"
           ];
         in
         {

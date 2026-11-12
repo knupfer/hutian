@@ -33,10 +33,11 @@ let
 
   sandboxLauncher = import ./sandbox.nix { inherit pkgs; };
 
-  # The runtime closure is mounted at the same paths inside the sandbox. Nix
-  # additionally needs a CA bundle for HTTPS fetches performed by the client.
+  # The runtime closure is mounted at the same paths inside the sandbox. The CA
+  # bundle lets the HTTP client verify HTTPS model endpoints; Nix additionally
+  # uses it for HTTPS fetches performed by the client.
   closure = pkgs.closureInfo {
-    rootPaths = allPackages ++ [ hutianShell ] ++ optional nix pkgs.cacert;
+    rootPaths = allPackages ++ [ hutianShell pkgs.cacert ];
   };
 
   binPath = makeBinPath allPackages;
@@ -125,6 +126,7 @@ let
         TERM=xterm-256color
         LANG=C.UTF-8
         TMPDIR=/tmp
+        SYSTEM_CERTIFICATE_PATH=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
         "''${nixEnv[@]}"
         "$(command -v runsc)"
           --rootless

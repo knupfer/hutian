@@ -23,6 +23,7 @@ import Hutian.Conversation (Conversation)
 import Hutian.Interrupt (InterruptFlag, isInterrupted)
 import Hutian.Llm.Protocol
 import Network.HTTP.Client
+import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (statusCode)
 
 runLlm :: InterruptFlag -> LlmSettings -> Conversation -> String -> IO (Maybe String)
@@ -65,7 +66,7 @@ runRequest interruptFlag settings body = do
 
 streamCompletion :: InterruptFlag -> LlmUrl -> Value -> IO LlmResult
 streamCompletion interruptFlag url body = do
-  manager <- newManager defaultManagerSettings
+  manager <- newManager tlsManagerSettings
   initialRequest <- parseRequest (unLlmUrl url)
   let request =
         initialRequest

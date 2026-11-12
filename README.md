@@ -116,15 +116,19 @@ history in `/tmp/hutian-llm-history`.
 
 The flake requires explicit `packages`, `systemPrompt`, `model`, `llamaUrl`,
 `readOnly`, and `nix` options. Hutian expects an OpenAI-compatible llama.cpp
-chat endpoint; a native `/completion` URL is also supported.
+chat endpoint; a native `/completion` URL is also supported. Both `http://` and
+`https://` URLs work, and HTTPS endpoints are verified against the CA bundle
+from nixpkgs:
 
 ```text
-http://127.0.0.1:8080/v1/chat/completions
+https://llama.example.test/v1/chat/completions
 ```
 
 The launcher passes `llamaUrl`, `model`, and `systemPrompt` to the shell as
 `--llama-url`, `--model`, and `--system-prompt` arguments. The shell reads no
-Hutian-specific environment variables.
+Hutian-specific environment variables. The sandbox receives the CA bundle path
+as `SYSTEM_CERTIFICATE_PATH` so the Haskell HTTP client can verify TLS
+certificates.
 
 The sandbox uses gVisor's `sandbox` network mode by default, which can reach a
 server bound to the host's loopback interface.
