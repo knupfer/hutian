@@ -20,7 +20,7 @@ import Skylighting
   , Style (..)
   , TokenStyle (..)
   , TokenizerConfig (..)
-  , breezeDark
+  , zenburn
   , defaultFormatOpts
   , defaultSyntaxMap
   , lookupSyntax
@@ -318,8 +318,8 @@ darkenSkylightingColour factor (RGB red green blue) =
 
 codeStyle :: Style
 codeStyle =
-  breezeDark
-    { defaultColor = Nothing
+  zenburn
+    { defaultColor = Just (RGB 255 255 255)
     , backgroundColor = Nothing
     }
 

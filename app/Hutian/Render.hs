@@ -172,7 +172,7 @@ pinkStyle = Ansi.bold <> Ansi.foreground (Ansi.rgb 255 20 147)
 tealStyle = Ansi.bold <> Ansi.foreground (Ansi.rgb 0 255 200)
 dimPinkStyle = Ansi.darkenStyle 0.6 pinkStyle
 dimTealStyle = Ansi.darkenStyle 0.6 tealStyle
-grayStyle = Ansi.foreground (Ansi.rgb 130 130 130)
+grayStyle = Ansi.darkenStyle 0.6 $ Ansi.foreground (Ansi.rgb 255 255 255)
 
 boldVibrantPink = Ansi.styleCode pinkStyle
 boldTeal = Ansi.styleCode tealStyle
