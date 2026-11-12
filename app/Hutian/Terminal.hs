@@ -13,6 +13,7 @@ import Data.List (isPrefixOf)
 import Hutian.Completion (CompletionKind (..), chooseCompletion)
 import Hutian.Console
   ( consoleFlush
+  , consoleInputReady
   , consoleIsInteractive
   , consoleWidth
   , consoleWrite
@@ -86,29 +87,44 @@ readPrompt interactive context state = do
   where
     loop position currentState = do
       key <- readKey
+      consume position position False currentState key
+
+    -- Apply queued keys before drawing. A paste then costs one frame per
+    -- available burst instead of one frame per character.
+    consume displayedPosition logicalPosition redraw currentState key =
       case stepPrompt (contextHistory context) key currentState of
-        StepContinue next -> loop position next
-        StepRedraw next -> do
-          nextPosition <- renderPrompt interactive context (fst position) next
-          loop nextPosition next
+        StepContinue next ->
+          readNext displayedPosition logicalPosition redraw next
+        StepRedraw next ->
+          readNext displayedPosition logicalPosition True next
         StepMoveCursor prompt next -> do
           nextPosition <- promptPosition (contextTermPrompt context) (promptMode next) prompt
-          writeCursorMove position nextPosition
-          loop nextPosition next
+          readNext displayedPosition nextPosition redraw next
         StepComplete next -> do
           let current = activePrompt (promptMode next) (promptBuffers next)
           completed <- completeInput (contextCommands context) current
-          let next' = acceptCompletion completed next
-          nextPosition <- renderPrompt interactive context (fst position) next'
-          loop nextPosition next'
+          readNext displayedPosition logicalPosition True (acceptCompletion completed next)
         StepFinish outcome prompt next -> do
-          finishPrompt interactive context (promptMode next) (fst position) prompt
+          finishPrompt interactive context (promptMode next) (fst displayedPosition) prompt
           case outcome of
             PromptSubmitted ->
               pure (promptMode next, Just (promptText prompt), promptBuffers next)
             PromptExited -> do
               when interactive (consoleWriteLine "" >> consoleFlush)
               pure (promptMode next, Nothing, promptBuffers next)
+
+    readNext displayedPosition logicalPosition redraw currentState = do
+      ready <- consoleInputReady
+      if ready
+        then readKey >>= consume displayedPosition logicalPosition redraw currentState
+        else
+          if redraw
+            then do
+              nextPosition <- renderPrompt interactive context (fst displayedPosition) currentState
+              loop nextPosition currentState
+            else do
+              when (logicalPosition /= displayedPosition) (writeCursorMove displayedPosition logicalPosition)
+              loop logicalPosition currentState
 
 promptPosition :: String -> PromptMode -> Prompt -> IO (Int, Int)
 promptPosition termPrompt mode prompt = do

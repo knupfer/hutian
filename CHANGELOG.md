@@ -18,6 +18,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Fixed
 
+- Pasting large blocks of text no longer redraws the prompt once per character;
+  a queued burst of input is rendered as a single frame.
 - The cursor stays blinking teal for the whole model turn, including shell tool
   calls, instead of switching back to pink while a tool command runs.
 

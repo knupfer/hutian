@@ -5,6 +5,7 @@
 module Hutian.Console
   ( configureConsole
   , consoleFlush
+  , consoleInputReady
   , consoleIsErrorInteractive
   , consoleIsInteractive
   , consoleWidth
@@ -23,7 +24,7 @@ module Hutian.Console
   ) where
 
 import Control.Concurrent (forkIO, killThread, threadDelay)
-import Control.Exception (finally)
+import Control.Exception (catch, finally)
 import Control.Monad (when)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Hutian.Editor (PromptMode)
@@ -46,12 +47,14 @@ import System.IO
   , hIsTerminalDevice
   , hPutStr
   , hPutStrLn
+  , hReady
   , hSetBuffering
   , hSetEncoding
   , stderr
   , stdin
   , stdout
   )
+import System.IO.Error (isEOFError)
 import System.Posix.IO (stdInput)
 import System.Posix.Terminal
   ( TerminalAttributes
@@ -93,6 +96,16 @@ consoleFlushError = hFlush stderr
 
 consoleIsInteractive :: IO Bool
 consoleIsInteractive = hIsTerminalDevice stdout
+
+-- | Whether input is already buffered, without blocking. Used to coalesce a
+-- pasted burst into one redraw. End of input reports @False@ so the key reader
+-- can surface it as a normal submit.
+consoleInputReady :: IO Bool
+consoleInputReady = hReady stdin `catch` ignoreEOF
+  where
+    ignoreEOF err
+      | isEOFError err = pure False
+      | otherwise = ioError err
 
 consoleIsErrorInteractive :: IO Bool
 consoleIsErrorInteractive = hIsTerminalDevice stderr
