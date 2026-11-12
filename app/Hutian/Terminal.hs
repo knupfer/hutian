@@ -48,7 +48,7 @@ import Hutian.Prompt
   , promptMode
   , stepPrompt
   )
-import Hutian.Render (moveCursorText, prefixFor, promptRenderText)
+import Hutian.Render (moveCursorText, prefixFor, promptRenderText, reset)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.IO.Error (isEOFError)
 
@@ -204,7 +204,7 @@ finishPrompt interactive context mode previousRow prompt
   | otherwise = do
       let finished = cursorToEnd (clearSuggestions prompt)
       _ <- renderFrame True (contextTermPrompt context) mode previousRow finished
-      consoleWrite "\ESC[0m"
+      consoleWrite reset
       unless (null (currentLine finished)) (consoleWrite "\n")
       consoleFlush
 

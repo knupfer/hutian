@@ -7,24 +7,26 @@ module Hutian.Markdown
   , renderMarkdownRows
   , finishMarkdown
   , finishMarkdownWith
-  , darkenColour
   ) where
 
 import Data.Char (isControl, isDigit, isSpace)
 import Data.List (intercalate, isPrefixOf, mapAccumL)
 import qualified Data.Text as Text
+import qualified Hutian.Ansi as Ansi
 import Skylighting
   ( ANSIColorLevel (..)
+  , Color (..)
   , FormatOptions (..)
   , Style (..)
+  , TokenStyle (..)
   , TokenizerConfig (..)
   , breezeDark
   , defaultFormatOpts
   , defaultSyntaxMap
-  , formatANSI
   , lookupSyntax
   , tokenize
   )
+import Skylighting.Format.ANSI (formatANSI)
 
 data MarkdownState = MarkdownState
   { markdownFence :: Maybe Fence
@@ -158,8 +160,10 @@ renderNormal :: MarkdownContext -> String -> String
 renderNormal _ "" = ""
 renderNormal context line
   | isHorizontalRule line = styled (coloursRule colours) line
-  | Just level <- headingLevel line = coloursHeading colours level ++ sanitize line
-  | isBlockQuote line = coloursQuote colours ++ sanitize line
+  | Just level <- headingLevel line =
+      Ansi.styleCode (coloursHeading colours level) ++ sanitize line
+  | isBlockQuote line =
+      Ansi.styleCode (coloursQuote colours) ++ sanitize line
   | Just rendered <- renderList context line = rendered
   | otherwise = highlightInline context line
   where
@@ -198,13 +202,14 @@ renderList context line =
   let (indent, rest) = span (== ' ') line
       restore = restoreForeground (contextBase context)
       colours = contextColours context
+      markerColour = Ansi.styleCode (coloursMarker colours)
    in case rest of
         marker : after
           | marker `elem` ("-*+" :: String)
           , spaceFollows after ->
               Just
                 ( indent
-                    ++ coloursMarker colours
+                    ++ markerColour
                     ++ [marker]
                     ++ restore
                     ++ highlightInline context after
@@ -218,7 +223,7 @@ renderList context line =
                   , spaceFollows after ->
                       Just
                         ( indent
-                            ++ coloursMarker colours
+                            ++ markerColour
                             ++ digits
                             ++ [delimiter]
                             ++ restore
@@ -268,14 +273,48 @@ highlightCode colours language codeLines =
         of
           Left _ -> fallback
           Right sourceLines ->
-            case lines (Text.unpack (formatANSI codeFormatOptions codeStyle sourceLines)) of
-              [] -> fallback
-              rendered -> map (darkenColour (coloursScale colours)) rendered
+            let rendered =
+                  lines
+                    ( Text.unpack
+                        ( formatANSI
+                            codeFormatOptions
+                            (darkenCodeStyle (coloursScale colours) codeStyle)
+                            sourceLines
+                        )
+                    )
+             in if null rendered then fallback else rendered
   where
     fallback = map (styled (coloursCode colours)) codeLines
 
 codeFormatOptions :: FormatOptions
-codeFormatOptions = defaultFormatOpts { ansiColorLevel = ANSITrueColor }
+codeFormatOptions = defaultFormatOpts {ansiColorLevel = ANSITrueColor}
+
+-- | Darken a Skylighting style before handing it to 'formatANSI'. This keeps
+-- Skylighting in charge of token rendering while still applying the dimming
+-- factor used for thinking output.
+darkenCodeStyle :: Double -> Style -> Style
+darkenCodeStyle factor style =
+  style
+    { tokenStyles = fmap darkenTokenStyle (tokenStyles style)
+    , defaultColor = fmap darken (defaultColor style)
+    , backgroundColor = fmap darken (backgroundColor style)
+    , lineNumberColor = fmap darken (lineNumberColor style)
+    , lineNumberBackgroundColor = fmap darken (lineNumberBackgroundColor style)
+    }
+  where
+    darken = darkenSkylightingColour factor
+    darkenTokenStyle tokenStyle =
+      tokenStyle
+        { tokenColor = fmap darken (tokenColor tokenStyle)
+        , tokenBackground = fmap darken (tokenBackground tokenStyle)
+        }
+
+darkenSkylightingColour :: Double -> Color -> Color
+darkenSkylightingColour factor (RGB red green blue) =
+  let (red', green', blue') =
+        Ansi.colourChannels
+          (Ansi.darkenColour factor (Ansi.rgb red green blue))
+   in RGB red' green' blue'
 
 codeStyle :: Style
 codeStyle =
@@ -290,12 +329,16 @@ highlightInline context = go
     base = contextBase context
     colours = contextColours context
     restore = restoreForeground base
+    codeColour = Ansi.styleCode (coloursCode colours)
+    boldColour = Ansi.styleCode (coloursBold colours)
+    italicColour = Ansi.styleCode (coloursItalic colours)
+    linkColour = Ansi.styleCode (coloursLink colours)
 
     go [] = ""
     go ('`' : rest) =
       case break (== '`') rest of
         (code, '`' : after) ->
-          coloursCode colours
+          codeColour
             ++ "`"
             ++ sanitize code
             ++ "`"
@@ -305,7 +348,7 @@ highlightInline context = go
     go ('*' : '*' : rest) =
       case breakOn "**" rest of
         Just (body, after) ->
-          coloursBold colours
+          boldColour
             ++ "**"
             ++ sanitize body
             ++ "**"
@@ -315,7 +358,7 @@ highlightInline context = go
     go ('_' : '_' : rest) =
       case breakOn "__" rest of
         Just (body, after) ->
-          coloursBold colours
+          boldColour
             ++ "__"
             ++ sanitize body
             ++ "__"
@@ -335,7 +378,7 @@ highlightInline context = go
     go ('*' : rest) =
       case break (== '*') rest of
         (body, '*' : after) ->
-          coloursItalic colours
+          italicColour
             ++ "*"
             ++ sanitize body
             ++ "*"
@@ -345,7 +388,7 @@ highlightInline context = go
     go ('_' : rest) =
       case break (== '_') rest of
         (body, '_' : after) ->
-          coloursItalic colours
+          italicColour
             ++ "_"
             ++ sanitize body
             ++ "_"
@@ -357,7 +400,7 @@ highlightInline context = go
         (text, ']' : '(' : after) ->
           case break (== ')') after of
             (url, ')' : more) ->
-              coloursLink colours
+              linkColour
                 ++ "["
                 ++ sanitize text
                 ++ "]("
@@ -389,12 +432,12 @@ sanitizeChar character
   | isControl character && character /= '\t' = ' '
   | otherwise = character
 
-styled :: String -> String -> String
-styled colour value = colour ++ sanitize value
+styled :: Ansi.Style -> String -> String
+styled colour value = Ansi.styleCode colour ++ sanitize value
 
 restoreForeground :: String -> String
 restoreForeground base
-  | null base = "\ESC[39m"
+  | null base = Ansi.styleCode Ansi.defaultForeground
   | otherwise = base
 
 -- | Rendering context: the base colour for subordinate text and the palette to
@@ -409,20 +452,20 @@ contextFor :: String -> MarkdownContext
 contextFor base = MarkdownContext base (if null base then normalColours else dimColours)
 
 data MarkdownColours = MarkdownColours
-  { coloursBold :: String
-  , coloursItalic :: String
-  , coloursCode :: String
-  , coloursFence :: String
-  , coloursRule :: String
-  , coloursQuote :: String
-  , coloursMarker :: String
-  , coloursLink :: String
-  , coloursHeading :: Int -> String
+  { coloursBold :: Ansi.Style
+  , coloursItalic :: Ansi.Style
+  , coloursCode :: Ansi.Style
+  , coloursFence :: Ansi.Style
+  , coloursRule :: Ansi.Style
+  , coloursQuote :: Ansi.Style
+  , coloursMarker :: Ansi.Style
+  , coloursLink :: Ansi.Style
+  , coloursHeading :: Int -> Ansi.Style
   , coloursScale :: Double
   }
 
 reset :: String
-reset = "\ESC[0m"
+reset = Ansi.styleCode Ansi.reset
 
 -- | The Markdown palette is grouped by role so related elements share a hue:
 -- headings climb a blue-to-rose ramp, emphasis is warm yellow, code and fence
@@ -431,14 +474,14 @@ reset = "\ESC[0m"
 normalColours :: MarkdownColours
 normalColours =
   MarkdownColours
-    { coloursBold = "\ESC[1;38;2;249;226;175m"
-    , coloursItalic = "\ESC[3;38;2;249;226;175m"
-    , coloursCode = "\ESC[38;2;166;227;161m"
-    , coloursFence = "\ESC[38;2;166;227;161m"
-    , coloursRule = "\ESC[2;38;2;127;132;156m"
-    , coloursQuote = "\ESC[38;2;147;153;178m"
-    , coloursMarker = "\ESC[1;38;2;250;179;135m"
-    , coloursLink = "\ESC[4;38;2;148;226;213m"
+    { coloursBold = Ansi.bold <> Ansi.foreground (Ansi.rgb 249 226 175)
+    , coloursItalic = Ansi.italic <> Ansi.foreground (Ansi.rgb 249 226 175)
+    , coloursCode = Ansi.foreground (Ansi.rgb 166 227 161)
+    , coloursFence = Ansi.foreground (Ansi.rgb 166 227 161)
+    , coloursRule = Ansi.faint <> Ansi.foreground (Ansi.rgb 127 132 156)
+    , coloursQuote = Ansi.foreground (Ansi.rgb 147 153 178)
+    , coloursMarker = Ansi.bold <> Ansi.foreground (Ansi.rgb 250 179 135)
+    , coloursLink = Ansi.underline <> Ansi.foreground (Ansi.rgb 148 226 213)
     , coloursHeading = headingColour
     , coloursScale = 1
     }
@@ -451,74 +494,40 @@ dimColours = darkenColours 0.6 normalColours
 darkenColours :: Double -> MarkdownColours -> MarkdownColours
 darkenColours factor colours =
   MarkdownColours
-    { coloursBold = darkenColour factor (coloursBold colours)
-    , coloursItalic = darkenColour factor (coloursItalic colours)
-    , coloursCode = darkenColour factor (coloursCode colours)
-    , coloursFence = darkenColour factor (coloursFence colours)
-    , coloursRule = darkenColour factor (coloursRule colours)
-    , coloursQuote = darkenColour factor (coloursQuote colours)
-    , coloursMarker = darkenColour factor (coloursMarker colours)
-    , coloursLink = darkenColour factor (coloursLink colours)
-    , coloursHeading = darkenColour factor . coloursHeading colours
+    { coloursBold = Ansi.darkenStyle factor (coloursBold colours)
+    , coloursItalic = Ansi.darkenStyle factor (coloursItalic colours)
+    , coloursCode = Ansi.darkenStyle factor (coloursCode colours)
+    , coloursFence = Ansi.darkenStyle factor (coloursFence colours)
+    , coloursRule = Ansi.darkenStyle factor (coloursRule colours)
+    , coloursQuote = Ansi.darkenStyle factor (coloursQuote colours)
+    , coloursMarker = Ansi.darkenStyle factor (coloursMarker colours)
+    , coloursLink = Ansi.darkenStyle factor (coloursLink colours)
+    , coloursHeading = Ansi.darkenStyle factor . coloursHeading colours
     , coloursScale = factor
     }
 
--- | Scale every true-colour SGR foreground or background by a factor, leaving
--- attributes and resets alone.
-darkenColour :: Double -> String -> String
-darkenColour factor
-  | factor >= 1 = id
-  | otherwise = go
-  where
-    go [] = []
-    go ('\ESC' : '[' : rest) =
-      case span (/= 'm') rest of
-        (parameters, 'm' : after) ->
-          "\ESC[" ++ intercalate ";" (scaleTokens (splitSemicolons parameters)) ++ "m" ++ go after
-        _ -> '\ESC' : '[' : go rest
-    go (character : rest) = character : go rest
-
-    scaleTokens ("38" : "2" : red : green : blue : rest) =
-      "38" : "2" : scaleChannel red : scaleChannel green : scaleChannel blue : scaleTokens rest
-    scaleTokens ("48" : "2" : red : green : blue : rest) =
-      "48" : "2" : scaleChannel red : scaleChannel green : scaleChannel blue : scaleTokens rest
-    scaleTokens (token : rest) = token : scaleTokens rest
-    scaleTokens [] = []
-
-    scaleChannel value =
-      case reads value of
-        [(channel, "")] ->
-          show
-            ( max 0
-                (min 255 (round (fromIntegral (channel :: Int) * factor) :: Int))
-            )
-        _ -> value
-
-splitSemicolons :: String -> [String]
-splitSemicolons input =
-  case break (== ';') input of
-    (field, []) -> [field]
-    (field, _ : rest) -> field : splitSemicolons rest
-
 boldOff :: String -> String
-boldOff base = "\ESC[22m" ++ restoreForeground base
+boldOff base = Ansi.styleCode Ansi.normalIntensity ++ restoreForeground base
 
 italicOff :: String -> String
-italicOff base = "\ESC[23m" ++ restoreForeground base
+italicOff base = Ansi.styleCode Ansi.noItalic ++ restoreForeground base
 
 strikeColour, strikeOff :: String
 strikeColour = "\ESC[9m"
 strikeOff = "\ESC[29m"
 
 linkOff :: String -> String
-linkOff base = "\ESC[24m" ++ restoreForeground base
+linkOff base = Ansi.styleCode Ansi.noUnderline ++ restoreForeground base
 
-headingColour :: Int -> String
+headingColour :: Int -> Ansi.Style
 headingColour level =
-  case level of
-    1 -> "\ESC[1;38;2;137;180;250m"
-    2 -> "\ESC[1;38;2;180;190;254m"
-    3 -> "\ESC[1;38;2;203;166;247m"
-    4 -> "\ESC[1;38;2;245;194;231m"
-    5 -> "\ESC[1;38;2;235;160;172m"
-    _ -> "\ESC[1;38;2;166;173;200m"
+  Ansi.bold
+    <> Ansi.foreground
+      ( case level of
+          1 -> Ansi.rgb 137 180 250
+          2 -> Ansi.rgb 180 190 254
+          3 -> Ansi.rgb 203 166 247
+          4 -> Ansi.rgb 245 194 231
+          5 -> Ansi.rgb 235 160 172
+          _ -> Ansi.rgb 166 173 200
+      )

@@ -19,6 +19,7 @@ module Hutian.Render
   , reset
   ) where
 
+import qualified Hutian.Ansi as Ansi
 import Hutian.Editor
   ( Prompt
   , PromptMode (..)
@@ -29,7 +30,15 @@ import Hutian.Editor
   , setPromptText
   , suggestionRowCount
   )
-import Hutian.Markdown (darkenColour, renderMarkdownRows)
+import Hutian.Markdown (renderMarkdownRows)
+import System.Console.ANSI
+  ( clearFromCursorToScreenEndCode
+  , cursorDownCode
+  , cursorForwardCode
+  , cursorUpCode
+  , hideCursorCode
+  , showCursorCode
+  )
 
 -- | Render a prompt and return the text to write plus the cursor position.
 promptRenderText :: String -> PromptMode -> Int -> Int -> Prompt -> (String, (Int, Int))
@@ -57,15 +66,11 @@ promptRenderText termPrompt mode previousRow width prompt =
             ++ drop inputRowCount plainRows
       | otherwise = plainRows
     prefixCounts = prefixCharacterCounts width prefix plainRows
-    moveUp
-      | previousRow > 0 = "\ESC[" ++ show previousRow ++ "A"
-      | otherwise = ""
+    moveUp = cursorUpCode previousRow
     moveDown
-      | cursorRow < total - 1 = "\ESC[" ++ show (total - 1 - cursorRow) ++ "A"
+      | cursorRow < total - 1 = cursorUpCode (total - 1 - cursorRow)
       | otherwise = ""
-    moveRight
-      | cursorColumn > 0 = "\ESC[" ++ show cursorColumn ++ "C"
-      | otherwise = ""
+    moveRight = cursorForwardCode cursorColumn
     renderRow (index, row, prefixCount) =
       let (prefixPart, rest) = splitAt prefixCount row
           prefixOutput
@@ -99,14 +104,12 @@ moveCursorText (oldRow, _) (newRow, newColumn) =
   up ++ down ++ "\r" ++ right
   where
     up
-      | newRow < oldRow = "\ESC[" ++ show (oldRow - newRow) ++ "A"
+      | newRow < oldRow = cursorUpCode (oldRow - newRow)
       | otherwise = ""
     down
-      | newRow > oldRow = "\ESC[" ++ show (newRow - oldRow) ++ "B"
+      | newRow > oldRow = cursorDownCode (newRow - oldRow)
       | otherwise = ""
-    right
-      | newColumn > 0 = "\ESC[" ++ show newColumn ++ "C"
-      | otherwise = ""
+    right = cursorForwardCode newColumn
 
 -- | Clear the line before the first prompt frame is drawn.
 startPromptText :: String
@@ -164,18 +167,27 @@ boldVibrantPink,
   clearLine,
   reset :: String
 
-boldVibrantPink = "\ESC[1;38;2;255;20;147m"
-boldTeal = "\ESC[1;38;2;0;255;200m"
-dimPinkForeground = darkenColour 0.6 boldVibrantPink
-dimTealForeground = darkenColour 0.6 boldTeal
-grayForeground = "\ESC[38;2;130;130;130m"
+pinkStyle, tealStyle, dimPinkStyle, dimTealStyle, grayStyle :: Ansi.Style
+pinkStyle = Ansi.bold <> Ansi.foreground (Ansi.rgb 255 20 147)
+tealStyle = Ansi.bold <> Ansi.foreground (Ansi.rgb 0 255 200)
+dimPinkStyle = Ansi.darkenStyle 0.6 pinkStyle
+dimTealStyle = Ansi.darkenStyle 0.6 tealStyle
+grayStyle = Ansi.foreground (Ansi.rgb 130 130 130)
+
+boldVibrantPink = Ansi.styleCode pinkStyle
+boldTeal = Ansi.styleCode tealStyle
+dimPinkForeground = Ansi.styleCode dimPinkStyle
+dimTealForeground = Ansi.styleCode dimTealStyle
+grayForeground = Ansi.styleCode grayStyle
 pinkCursorColor = "\ESC]12;#FF1493\a"
 tealCursorColor = "\ESC]12;#00FFC8\a"
 resetCursorColor = "\ESC]112\a"
-hideCursorText = "\ESC[?25l"
-showCursorText = "\ESC[?25h"
+hideCursorText = hideCursorCode
+showCursorText = showCursorCode
 steadyBlockCursor = "\ESC[2 q"
 defaultCursorShape = "\ESC[0 q"
-clearToEnd = "\ESC[0J"
+clearToEnd = clearFromCursorToScreenEndCode
+-- ansi-terminal's 'clearLineCode' clears the whole line; keep the prompt prefix
+-- by clearing only from the cursor to the end.
 clearLine = "\ESC[K"
-reset = "\ESC[0m"
+reset = Ansi.styleCode Ansi.reset

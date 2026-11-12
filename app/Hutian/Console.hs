@@ -170,7 +170,7 @@ blinkInterval = 500000
 resetTerminal :: IO ()
 resetTerminal = do
   interactive <- consoleIsInteractive
-  when interactive (consoleWrite (resetCursorText ++ "\ESC[0m") >> consoleFlush)
+  when interactive (consoleWrite (resetCursorText ++ reset) >> consoleFlush)
 
 -- | Clear the line before the first prompt frame is drawn.
 startPromptLine :: IO ()

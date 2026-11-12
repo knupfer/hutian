@@ -7,6 +7,9 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
+- Terminal colours, styles, and cursor movement are now generated with
+  `ansi-terminal` from typed RGB values instead of hand-written escape codes,
+  so palettes can be darkened before they are encoded.
 - Secondary labels such as `output:`, `tool output:`, and `think:` are dimmed
   to 60 percent, matching the dimmed highlighting in thinking blocks.
 - Terminal IO now goes through a single `Hutian.Console` boundary. Prompt

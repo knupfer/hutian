@@ -1,8 +1,9 @@
 module RenderSpec (tests) where
 
 import Data.List (isInfixOf, isSuffixOf)
+import Hutian.Ansi (darkenColour, rgb)
+import qualified Hutian.Ansi as Ansi
 import Hutian.Editor (PromptMode (..), cursorPosition, initialPrompt, setPromptText)
-import Hutian.Markdown (darkenColour)
 import Hutian.Output (grayOutputText, outputLabelText)
 import Hutian.Render
 import Test.Tasty
@@ -122,8 +123,8 @@ tests =
           "nothing after the final newline may change colors"
           (not ("\ESC" `isInfixOf` afterNewline))
     , testCase "output labels are dimmed versions of the mode colours" $ do
-        outputForeground TermMode @?= darkenColour 0.6 boldVibrantPink
-        outputForeground ToolMode @?= darkenColour 0.6 boldTeal
+        outputForeground TermMode @?= "\ESC[1;38;2;153;12;88m"
+        outputForeground ToolMode @?= "\ESC[1;38;2;0;153;120m"
         outputLabelText TermMode True
           @?= outputForeground TermMode ++ "output:" ++ reset
         outputLabelText ToolMode True
@@ -141,6 +142,14 @@ tests =
         grayOutputText False "hello" @?= "hello"
     , testCase "grayOutputText leaves empty output unchanged" $
         grayOutputText True "" @?= ""
+    , testCase "darkenColour scales RGB channels" $ do
+        darkenColour 0.6 (rgb 255 20 147) @?= rgb 153 12 88
+        darkenColour 1 (rgb 1 2 3) @?= rgb 1 2 3
+    , testCase "darkenStyle scales colours but keeps attributes" $
+        Ansi.styleCode
+          (Ansi.darkenStyle 0.6 (Ansi.bold <> Ansi.foreground (rgb 255 20 147)))
+          @?= Ansi.styleCode
+            (Ansi.bold <> Ansi.foreground (rgb 153 12 88))
     , testCase "user cursor is pink and steady" $
         cursorStyleText UserCursor @?= "\ESC]12;#FF1493\a\ESC[2 q"
     , testCase "responding cursor is teal and steady" $

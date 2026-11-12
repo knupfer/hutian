@@ -246,6 +246,8 @@ The code keeps pure logic separate from IO:
 - `Hutian.Prompt` is the pure prompt reducer: it turns a key and the current
   state into a step such as redraw, move cursor, complete, or finish.
 - `Hutian.Completion` selects command and path completions.
+- `Hutian.Ansi` represents RGB colours and text styles as data and encodes them
+  with `ansi-terminal`.
 - `Hutian.Render` turns a prompt into ANSI output and cursor movement, including
   the tool-call prefix style.
 - `Hutian.History`, `Hutian.Conversation`, and `Hutian.Paths` are pure models;
@@ -274,6 +276,7 @@ nix/hutian.nix            Sandbox rootfs, launcher, and wrapper
 nix/hutian-shell.nix      Haskell package definition
 nix/lint.nix              Shared lint and LiquidHaskell checks
 app/                      Haskell shell source
+app/Hutian/Ansi.hs        Typed terminal colours and styles
 app/Hutian/Command.hs     Typed term-mode command parsing
 app/Hutian/Completion.hs  Pure completion selection
 app/Hutian/Console.hs     Single terminal IO boundary

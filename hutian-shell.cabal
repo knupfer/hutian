@@ -35,8 +35,10 @@ common defaults
 common dependencies
   build-depends:
       aeson
+    , ansi-terminal
     , base >=4.14 && <5
     , bytestring
+    , colour
     , directory
     , filepath
     , http-client
@@ -51,6 +53,7 @@ executable hutian-shell
   import:           defaults, dependencies
   main-is:          Main.hs
   other-modules:
+      Hutian.Ansi
       Hutian.Command
       Hutian.Completion
       Hutian.Console
@@ -83,6 +86,7 @@ test-suite hutian-shell-test
       ConversationSpec
       EditorSpec
       HistorySpec
+      Hutian.Ansi
       Hutian.Command
       Hutian.Completion
       Hutian.Console
