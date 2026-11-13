@@ -1,11 +1,11 @@
--- | Small, shared socket framing helpers. Both the relay and the sandbox-side
--- client need to read one HTTP head and a fixed-length body, so the loops live
--- here instead of being repeated in each module.
+-- | Small shared socket helpers. They cover the byte-oriented framing used by
+-- the relay, the sandbox-side relay client, and the HTTP test servers.
 module Hutian.Http.Wire
   ( WireError (..)
   , recvUntil
   , recvExactly
   , recvAll
+  , recvAllLimited
   ) where
 
 import Data.ByteString (ByteString)
@@ -57,6 +57,21 @@ recvAll connection = go []
       if BS.null chunk
         then pure (BS.concat (reverse chunks))
         else go (chunk : chunks)
+
+-- | Read until the peer closes the connection, failing instead of buffering
+-- more than the given limit.
+recvAllLimited :: Socket -> Int -> IO (Either WireError ByteString)
+recvAllLimited connection limit = go [] 0
+  where
+    go chunks total = do
+      chunk <- recv connection 32768
+      if BS.null chunk
+        then pure (Right (BS.concat (reverse chunks)))
+        else
+          let total' = total + BS.length chunk
+           in if total' > limit
+                then pure (Left WireTooLarge)
+                else go (chunk : chunks) total'
 
 splitAtMarker :: ByteString -> ByteString -> Maybe (ByteString, ByteString)
 splitAtMarker marker bytes =

@@ -12,10 +12,10 @@ All notable changes to Hutian are documented here. The format follows
   per-session Unix socket. The sandbox only receives `--llama-socket
   /run/hutian/llm.sock`, so the key never appears in argv, environment
   variables, `/source`, `/tmp`, or the Nix store.
-- `--llama-socket` support in `hutian-shell`, with a minimal HTTP/1.1 client
-  for Unix domain sockets and streaming SSE responses.
-- Relay tests covering request validation, key injection, header stripping,
-  fixed-upstream forwarding, redaction, error forwarding, and the full
+- `--llama-socket` support in `hutian-shell`, with a minimal body/status
+  client for Unix domain sockets and streaming SSE responses.
+- Relay tests covering key injection, fixed-upstream forwarding, fixed
+  headers, body limits, redaction, error forwarding, and the full
   shell-to-relay-to-upstream path.
 - HTTPS support for OpenAI-compatible model endpoints. The HTTP client now uses
   TLS, and the sandbox ships the nixpkgs CA bundle together with
@@ -26,6 +26,11 @@ All notable changes to Hutian are documented here. The format follows
 - The relay always reads the API key from standard input. The launcher pipes
   either `apiKeyFile` or `apiKeyCommand` into it, so the key never appears in
   the relay's argument list or environment.
+- The relay now uses a private body/status protocol instead of HTTP/1.1. The
+  sandbox sends only a request body; the host relay builds the single fixed
+  upstream request, so there is no client-supplied request line or header block
+  to parse, validate, strip, or redirect. The response is a four-byte status
+  code followed by the upstream body.
 - With an API key configured, the sandbox network defaults to `none` and the
   shell receives a sanitized `http://hutian-relay/...` URL. Set
   `GVISOR_NETWORK` explicitly to restore networking for other tools.

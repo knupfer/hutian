@@ -99,10 +99,8 @@ streamCompletionUnix
   -> FilePath
   -> BS.ByteString
   -> IO LlmResult
-streamCompletionUnix interruptFlag settings socket body = do
-  initialRequest <- parseRequest (unLlmUrl (settingUrl settings))
-  let target = path initialRequest <> queryString initialRequest
-  postUnixStream socket target body $ \code reader ->
+streamCompletionUnix interruptFlag _settings socket body =
+  postUnixStream socket body $ \code reader ->
     handleStreamResponse interruptFlag code reader
 
 handleStreamResponse

@@ -72,6 +72,7 @@ executable hutian-shell
       Hutian.Output
       Hutian.Paths
       Hutian.Prompt
+      Hutian.Relay.Protocol
       Hutian.Render
       Hutian.Shell
       Hutian.Terminal
@@ -86,7 +87,7 @@ executable hutian-llm-relay
   other-modules:
       Hutian.Http.Wire
       Hutian.Relay
-      Hutian.Relay.Http
+      Hutian.Relay.Protocol
   hs-source-dirs:   app
   build-depends:
       base
@@ -128,7 +129,7 @@ test-suite hutian-shell-test
       Hutian.Paths
       Hutian.Prompt
       Hutian.Relay
-      Hutian.Relay.Http
+      Hutian.Relay.Protocol
       Hutian.Render
       Hutian.Shell
       InterruptSpec

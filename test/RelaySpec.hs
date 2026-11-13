@@ -10,9 +10,11 @@ import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import Data.Char (toLower)
 import Data.Either (fromRight)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (isInfixOf)
+import Data.Maybe (listToMaybe)
 import Data.Word (Word8)
 import Hutian.Conversation (ConversationEntry (..))
 import Hutian.Http.Wire (recvAll, recvExactly, recvUntil)
@@ -26,15 +28,11 @@ import Hutian.Relay
   , loadRelayKey
   , newRelayRuntime
   , parseRelaySettings
-  , runRelay
-  )
-import Hutian.Relay.Http
-  ( RequestHead (..)
-  , headerValue
-  , parseRequestHead
   , redactKey
+  , runRelay
   , trimKey
   )
+import Hutian.Relay.Protocol (decodeStatus, statusFrameLength)
 import Network.Socket
   ( Family (AF_INET, AF_UNIX)
   , SockAddr (SockAddrInet)
@@ -90,7 +88,7 @@ tests =
     , endToEndTests
     ]
 
--- * Settings, key loading, and pure wire helpers
+-- * Settings, key loading, and pure helpers
 
 settingsTests :: TestTree
 settingsTests =
@@ -166,21 +164,6 @@ settingsTests =
         assertBool "redacted message still contains the key" (not ("s3cret-key" `isInfixOf` redactKey "s3cret-key" message))
         assertBool "redacted message should mark the secret" ("<redacted>" `isInfixOf` redactKey "s3cret-key" message)
         redactKey "" message @?= message
-    , testCase "parseRequestHead keeps method, target, and lowercased headers" $
-        case parseRequestHead "POST /v1/chat/completions HTTP/1.1\r\nHost: local\r\nX-Test: value\r\n\r\n" of
-          Left message -> assertFailure message
-          Right request -> do
-            headMethod request @?= "POST"
-            headTarget request @?= "/v1/chat/completions"
-            headVersion request @?= "HTTP/1.1"
-            headerValue "host" request @?= Just "local"
-            headerValue "X-TEST" request @?= Just "value"
-            headerValue "missing" request @?= Nothing
-    , testCase "parseRequestHead rejects malformed input" $ do
-        assertLeftNames "incomplete" (parseRequestHead "POST / HTTP/1.1")
-        assertLeftNames "request line" (parseRequestHead "NOPE\r\n\r\n")
-        assertLeftNames "header" (parseRequestHead "POST / HTTP/1.1\r\nbroken\r\n\r\n")
-        assertLeftNames "header" (parseRequestHead "POST / HTTP/1.1\r\n\nX-Test: value\r\n\r\n")
     ]
 
 properties :: TestTree
@@ -220,109 +203,48 @@ wireTests :: TestTree
 wireTests =
   testGroup
     "wire"
-    [ testCase "relay injects the key, strips the client key, and streams the body" $
+    [ testCase "relay forwards the body, injects the key, and streams the response" $
         withUpstream streamingResponse $ \port requests -> do
           runtime <- runtimeFor port defaultRelayMaxBody
           let body = "{\"model\":\"m\",\"stream\":true}"
-              request =
-                postRequest
-                  "/v1/chat/completions"
-                  body
-                  ["Authorization: Bearer client-key\r\n"]
-          response <- withRelaySession runtime (requestOn request)
-          assertBool "relay did not return 200" ("HTTP/1.1 200" `BS.isPrefixOf` response)
+          (status, response) <- withRelaySession runtime (sendBody body)
+          status @?= 200
           assertInfix "answer" response
           assertInfix "data: [DONE]" response
           assertNotInfix "s3cret-key" response
           upstream <- awaitMVar "upstream did not receive a request" requests
           assertInfix "POST /v1/chat/completions HTTP/1.1" upstream
           assertInfix "Authorization: Bearer s3cret-key" upstream
-          assertNotInfix "client-key" upstream
           assertInfix body upstream
-    , testCase "relay rejects a target other than the configured upstream" $
+    , testCase "relay sends only its own fixed headers upstream" $
         withUpstream streamingResponse $ \port requests -> do
           runtime <- runtimeFor port defaultRelayMaxBody
-          response <-
-            withRelaySession runtime $
-              requestOn (postRequest "/v1/other" "{}" [])
-          assertBool "unexpected target should be forbidden" ("HTTP/1.1 403" `BS.isPrefixOf` response)
-          assertNothingWithin "upstream must not be contacted" requests
-    , testCase "relay rejects methods and HTTP versions other than POST/1.1" $
-        withUpstream streamingResponse $ \port requests -> do
-          runtime <- runtimeFor port defaultRelayMaxBody
-          getResponse <-
-            withRelaySession runtime $
-              requestOn
-                "GET /v1/chat/completions HTTP/1.1\r\nHost: local\r\nContent-Length: 0\r\n\r\n"
-          assertBool "unexpected method should be rejected" ("HTTP/1.1 405" `BS.isPrefixOf` getResponse)
-          versionResponse <-
-            withRelaySession runtime $
-              requestOn
-                "POST /v1/chat/completions HTTP/1.0\r\nHost: local\r\nContent-Length: 0\r\n\r\n"
-          assertBool "unexpected version should be rejected" ("HTTP/1.1 505" `BS.isPrefixOf` versionResponse)
-          assertNothingWithin "upstream must not be contacted" requests
-    , testCase "relay requires exactly one valid Content-Length" $
-        withUpstream streamingResponse $ \port requests -> do
-          runtime <- runtimeFor port defaultRelayMaxBody
-          missingLength <-
-            withRelaySession runtime $
-              requestOn "POST /v1/chat/completions HTTP/1.1\r\nHost: local\r\n\r\n"
-          assertBool "missing length should fail" ("HTTP/1.1 400" `BS.isPrefixOf` missingLength)
-          invalidLength <-
-            withRelaySession runtime $
-              requestOn "POST /v1/chat/completions HTTP/1.1\r\nHost: local\r\nContent-Length: nope\r\n\r\n"
-          assertBool "invalid length should fail" ("HTTP/1.1 400" `BS.isPrefixOf` invalidLength)
-          duplicateLength <-
-            withRelaySession runtime $
-              requestOn
-                "POST /v1/chat/completions HTTP/1.1\r\nHost: local\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n"
-          assertBool "duplicate length should fail" ("HTTP/1.1 400" `BS.isPrefixOf` duplicateLength)
-          assertNothingWithin "upstream must not be contacted" requests
-    , testCase "relay rejects chunked, oversized, and truncated bodies" $
+          _ <- withRelaySession runtime (sendBody "{\"model\":\"m\"}")
+          upstream <- awaitMVar "upstream did not receive a request" requests
+          let (headPart, _) = BS.breakSubstring "\r\n\r\n" upstream
+          assertInfix "Content-Type: application/json" headPart
+          assertInfix "Accept: text/event-stream" headPart
+          assertInfix "Authorization: Bearer s3cret-key" headPart
+          assertNotInfix "Cookie:" headPart
+          assertNotInfix "X-Evil" headPart
+          assertNotInfix "client-key" upstream
+    , testCase "relay rejects a body larger than the limit" $
         withUpstream streamingResponse $ \port requests -> do
           runtime <- runtimeFor port 8
-          chunked <-
-            withRelaySession runtime $
-              requestOn
-                "POST /v1/chat/completions HTTP/1.1\r\nHost: local\r\nTransfer-Encoding: chunked\r\n\r\n"
-          assertBool "chunked should fail" ("HTTP/1.1 400" `BS.isPrefixOf` chunked)
-          oversized <-
-            withRelaySession runtime $
-              requestOn (postRequest "/v1/chat/completions" "123456789" [])
-          assertBool "oversized body should fail" ("HTTP/1.1 413" `BS.isPrefixOf` oversized)
-          truncated <-
-            withRelaySession runtime $
-              requestAndClose
-                "POST /v1/chat/completions HTTP/1.1\r\nHost: local\r\nContent-Length: 5\r\n\r\nabc"
-          assertBool
-            ("truncated body should fail, got: " ++ show truncated)
-            ("HTTP/1.1 400" `BS.isPrefixOf` truncated)
-          assertNothingWithin "upstream must not be contacted" requests
-    , testCase "relay rejects an oversized request head" $
-        withUpstream streamingResponse $ \port requests -> do
-          runtime <- runtimeFor port defaultRelayMaxBody
-          let request =
-                BS.concat
-                  [ "POST /v1/chat/completions HTTP/1.1\r\nX-Pad: "
-                  , BS.replicate 33000 97
-                  , "\r\n\r\n"
-                  ]
-          response <- withRelaySession runtime (requestOn request)
-          assertBool "an oversized head should fail" ("HTTP/1.1 400" `BS.isPrefixOf` response)
+          (status, _) <- withRelaySession runtime (sendBody "123456789")
+          status @?= 413
           assertNothingWithin "upstream must not be contacted" requests
     , testCase "relay forwards upstream errors without leaking the key" $
         withUpstream unauthorizedResponse $ \port _ -> do
           runtime <- runtimeFor port defaultRelayMaxBody
-          response <-
-            withRelaySession runtime $
-              requestOn (postRequest "/v1/chat/completions" "{}" [])
-          assertBool "upstream error should be forwarded" ("HTTP/1.1 401" `BS.isPrefixOf` response)
+          (status, response) <- withRelaySession runtime (sendBody "{}")
+          status @?= 401
           assertInfix "bad key" response
           assertNotInfix "s3cret-key" response
     , testCase "relay sends 502 when the upstream cannot be reached" $ do
         runtime <- runtimeFor 1 defaultRelayMaxBody
-        response <- withRelaySession runtime (requestOn (postRequest "/v1/chat/completions" "{}" []))
-        assertBool "unreachable upstream should be a gateway error" ("HTTP/1.1 502" `BS.isPrefixOf` response)
+        (status, response) <- withRelaySession runtime (sendBody "{}")
+        status @?= 502
         assertNotInfix "s3cret-key" response
     , testCase "relay treats a client disconnect as normal" $
         withUpstream largeStreamingResponse $ \port _requests -> do
@@ -342,10 +264,11 @@ wireTests =
             forkFinally
               (handleRelayConnection runtime server)
               (\_ -> close server >> putMVar done ())
-          sendAll client (postRequest "/v1/chat/completions" "{}" [])
-          headResult <- recvUntil client "\r\n\r\n" maxUpstreamHead
+          sendAll client "{}"
+          shutdown client ShutdownSend
+          headResult <- recvExactly client statusFrameLength BS.empty
           case headResult of
-            Left _ -> assertFailure "relay did not send a response head"
+            Left _ -> assertFailure "relay did not send a status frame"
             Right _ -> pure ()
           close client
           awaitMVar "relay did not stop after the client disconnected" done
@@ -372,46 +295,22 @@ upstreamTests =
                   defaultRelayMaxBody
               )
               "s3cret-key"
-          _ <-
-            withRelaySession runtime $
-              requestOn (postRequest "/v1/chat/completions?stream=true" "{}" [])
+          _ <- withRelaySession runtime (sendBody "{}")
           upstream <- awaitMVar "upstream did not receive a request" requests
           assertInfix "POST /v1/chat/completions?stream=true HTTP/1.1" upstream
-    , testCase "relay only sends its own headers upstream" $
-        withUpstream streamingResponse $ \port requests -> do
-          runtime <- runtimeFor port defaultRelayMaxBody
-          _ <-
-            withRelaySession runtime $
-              requestOn
-                ( postRequest
-                    "/v1/chat/completions"
-                    "{}"
-                    [ "Cookie: session=abc\r\n"
-                    , "X-Evil: yes\r\n"
-                    , "Authorization: Bearer client-key\r\n"
-                    ]
-                )
-          upstream <- awaitMVar "upstream did not receive a request" requests
-          assertInfix "Content-Type: application/json" upstream
-          assertNotInfix "Cookie:" upstream
-          assertNotInfix "X-Evil" upstream
-          assertNotInfix "client-key" upstream
     , testCase "relay does not forward response headers such as Set-Cookie" $
         withUpstream cookieResponse $ \port _ -> do
           runtime <- runtimeFor port defaultRelayMaxBody
-          response <-
-            withRelaySession runtime $
-              requestOn (postRequest "/v1/chat/completions" "{}" [])
+          (status, response) <- withRelaySession runtime (sendBody "{}")
+          status @?= 200
           assertNotInfix "Set-Cookie" response
           assertInfix "data: ok" response
     , testCase "relay does not follow upstream redirects" $
         withUpstream streamingResponse $ \otherPort otherRequests ->
           withUpstream (redirectResponse otherPort) $ \port _ -> do
             runtime <- runtimeFor port defaultRelayMaxBody
-            response <-
-              withRelaySession runtime $
-                requestOn (postRequest "/v1/chat/completions" "{}" [])
-            assertBool "the redirect status should be returned" ("HTTP/1.1 302" `BS.isPrefixOf` response)
+            (status, response) <- withRelaySession runtime (sendBody "{}")
+            status @?= 302
             assertInfix "redirected" response
             assertNothingWithin "the relay must not follow redirects" otherRequests
     ]
@@ -541,40 +440,29 @@ runtimeFor port maxBody =
 silentLogger :: String -> IO ()
 silentLogger _ = pure ()
 
-postRequest :: ByteString -> ByteString -> [ByteString] -> ByteString
-postRequest target body extraHeaders =
-  BS.concat $
-    [ "POST " <> target <> " HTTP/1.1\r\n"
-    , "Host: localhost\r\n"
-    , "Content-Type: application/json\r\n"
-    ]
-      ++ extraHeaders
-      ++ [ "Content-Length: " <> BS8.pack (show (BS.length body)) <> "\r\n"
-         , "Connection: close\r\n\r\n"
-         , body
-         ]
+sendBody :: ByteString -> Socket -> IO (Int, ByteString)
+sendBody body client = do
+  sendAll client body
+  shutdown client ShutdownSend
+  receiveResponse client
+
+receiveResponse :: Socket -> IO (Int, ByteString)
+receiveResponse client = do
+  result <- timeout 3000000 (readResponse client)
+  maybe (assertFailure "relay response timed out" >> pure (0, "")) pure result
+
+readResponse :: Socket -> IO (Int, ByteString)
+readResponse client = do
+  frame <- recvExactly client statusFrameLength BS.empty >>= either (fail . show) pure
+  status <- either fail pure (decodeStatus frame)
+  body <- recvAll client
+  pure (status, body)
 
 withRelaySession :: RelayRuntime -> (Socket -> IO a) -> IO a
 withRelaySession runtime action = do
   (client, server) <- socketPair AF_UNIX Stream defaultProtocol
   _ <- forkFinally (handleRelayConnection runtime server) (\_ -> close server)
   action client `finally` close client
-
-requestOn :: ByteString -> Socket -> IO ByteString
-requestOn request client = do
-  sendAll client request
-  receiveResponse client
-
-requestAndClose :: ByteString -> Socket -> IO ByteString
-requestAndClose request client = do
-  sendAll client request
-  shutdown client ShutdownSend
-  receiveResponse client
-
-receiveResponse :: Socket -> IO ByteString
-receiveResponse client = do
-  result <- timeout 3000000 (recvAll client)
-  maybe (assertFailure "relay response timed out") pure result
 
 withRelay :: RelayRuntime -> FilePath -> IO a -> IO a
 withRelay runtime socketPath action =
@@ -617,14 +505,22 @@ readHttpRequest connection = do
   case headResult of
     Left _ -> pure BS.empty
     Right (rawHead, leftover) ->
-      case parseRequestHead rawHead of
-        Left _ -> pure rawHead
-        Right request ->
-          case headerValue "content-length" request >>= readMaybe . BS8.unpack of
-            Nothing -> pure rawHead
-            Just bodyLength -> do
-              bodyResult <- recvExactly connection bodyLength leftover
-              pure (rawHead <> fromRight BS.empty bodyResult)
+      case contentLengthOf rawHead of
+        Nothing -> pure rawHead
+        Just bodyLength -> do
+          bodyResult <- recvExactly connection bodyLength leftover
+          pure (rawHead <> fromRight BS.empty bodyResult)
+
+contentLengthOf :: ByteString -> Maybe Int
+contentLengthOf rawHead =
+  listToMaybe
+    [ parsed
+    | line <- BS8.lines rawHead
+    , let (name, rest) = BS8.break (== ':') line
+    , BS8.map toLower name == "content-length"
+    , let value = BS8.dropWhile (== ' ') (BS8.drop 1 rest)
+    , Just parsed <- [readMaybe (BS8.unpack value)]
+    ]
 
 maxUpstreamHead :: Int
 maxUpstreamHead = 64 * 1024

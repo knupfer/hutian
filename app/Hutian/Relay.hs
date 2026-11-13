@@ -2,9 +2,21 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Host-side LLM relay. The relay owns the API key and listens on a private
--- Unix socket that is mounted into the sandbox. It forwards only one fixed
--- request target to one fixed upstream, so the sandbox can spend tokens but can
--- never read or redirect the credential.
+-- Unix socket that is mounted into the sandbox.
+--
+-- The security property is deliberately small enough to check by reading this
+-- module:
+--
+-- * the relay reads one request body and never interprets it as text;
+-- * it sends that body to exactly one upstream 'Request', built once from the
+--   configured URL;
+-- * the only headers it sends are the three fixed ones in 'relayRequest',
+--   including the Bearer key;
+-- * it never follows a redirect, and it returns only a status code plus the
+--   upstream body.
+--
+-- A sandboxed client can therefore spend tokens, but it cannot choose the
+-- host, path, headers, or credentials of the upstream request.
 module Hutian.Relay
   ( RelaySettings (..)
   , parseRelaySettings
@@ -14,6 +26,8 @@ module Hutian.Relay
   , RelayRuntime
   , newRelayRuntime
   , loadRelayKey
+  , trimKey
+  , redactKey
   , runRelay
   , handleRelayConnection
   ) where
@@ -25,14 +39,15 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BL
 import Data.IORef (newIORef, readIORef, writeIORef)
-import Data.Text.Read (decimal)
 import qualified Data.Text as Text
-import Data.Word (Word8)
-import Hutian.Http.Wire (WireError (..), recvExactly, recvUntil)
-import Hutian.Relay.Http
+import qualified Data.Text.Encoding as TextEncoding
+import qualified Data.Text.Encoding.Error as TextEncodingError
+import Data.Text.Read (decimal)
+import Hutian.Http.Wire (WireError (..), recvAllLimited)
+import Hutian.Relay.Protocol (encodeStatus)
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
-import Network.HTTP.Types.Status (Status, mkStatus, statusCode, statusMessage)
+import Network.HTTP.Types.Status (statusCode)
 import Network.Socket
   ( Family (AF_UNIX)
   , SockAddr (SockAddrUnix)
@@ -59,20 +74,10 @@ data RelaySettings = RelaySettings
   }
   deriving stock (Eq, Show)
 
--- | One HTTP error the relay can return without involving the upstream.
-data RelayError = RelayError Status String
-  deriving stock (Eq, Show)
-
-badRequest :: String -> RelayError
-badRequest = RelayError (mkStatus 400 "Bad Request")
-
 -- | 64 MiB is far more than a chat completion request needs while still
 -- bounding what one sandboxed client can make the host buffer.
 defaultRelayMaxBody :: Int
 defaultRelayMaxBody = 64 * 1024 * 1024
-
-maxRequestHead :: Int
-maxRequestHead = 32 * 1024
 
 -- | Parse the relay command line. The key is never an argument.
 parseRelaySettings :: [String] -> Either String RelaySettings
@@ -131,6 +136,23 @@ validateKey raw
     key = trimKey raw
     isControl byte = byte < 0x20 || byte == 0x7f
 
+-- | Remove surrounding ASCII whitespace from a key read from a file or stdin.
+trimKey :: BS.ByteString -> BS.ByteString
+trimKey = BS.dropWhile isKeySpace . BS.dropWhileEnd isKeySpace
+  where
+    isKeySpace byte = byte == 32 || (byte >= 9 && byte <= 13)
+
+-- | Remove a secret from a log line so relay errors never echo the key.
+redactKey :: BS.ByteString -> String -> String
+redactKey key message
+  | BS.null key = message
+  | otherwise =
+      Text.unpack $
+        Text.replace
+          (TextEncoding.decodeUtf8With TextEncodingError.lenientDecode key)
+          "<redacted>"
+          (Text.pack message)
+
 -- | A prepared relay: the key, a shared HTTP manager, and the single allowed
 -- upstream request. Deliberately has no 'Show' instance.
 data RelayRuntime = RelayRuntime
@@ -139,7 +161,6 @@ data RelayRuntime = RelayRuntime
   , runtimeKey :: BS.ByteString
   , runtimeManager :: Manager
   , runtimeUpstream :: Request
-  , runtimeTarget :: BS.ByteString
   , runtimeLogger :: RelayLogger
   }
 
@@ -160,7 +181,6 @@ newRelayRuntime logger settings key = do
       , runtimeKey = key
       , runtimeManager = manager
       , runtimeUpstream = upstream
-      , runtimeTarget = path upstream <> queryString upstream
       , runtimeLogger = logger
       }
 
@@ -213,147 +233,48 @@ handleRelayConnection runtime connection = do
 
 serve :: RelayRuntime -> Socket -> IO ()
 serve runtime connection = do
-  headResult <- readRequestHead connection
-  case headResult of
-    Left relayError -> sendError connection relayError
-    Right (rawHead, leftover) ->
-      case parseRequestHead rawHead of
-        Left message -> sendError connection (badRequest message)
-        Right request ->
-          case validateRequest runtime request of
-            Left relayError -> sendError connection relayError
-            Right bodyLength -> do
-              bodyResult <- readExactly connection bodyLength leftover
-              case bodyResult of
-                Left relayError -> sendError connection relayError
-                Right body -> forward runtime connection body
+  bodyResult <- recvAllLimited connection (runtimeMaxBody runtime)
+  case bodyResult of
+    Left WireTooLarge ->
+      sendError connection 413 "request body is too large"
+    Left WireClosed -> pure ()
+    Right body -> forward runtime connection body
 
--- | Enforce the narrow relay contract before touching the upstream.
-validateRequest
-  :: RelayRuntime
-  -> RequestHead
-  -> Either RelayError Int
-validateRequest runtime request
-  | headMethod request /= "POST" =
-      Left (RelayError (mkStatus 405 "Method Not Allowed") "only POST is allowed")
-  | headVersion request /= "HTTP/1.1" =
-      Left
-        ( RelayError
-            (mkStatus 505 "HTTP Version Not Supported")
-            "only HTTP/1.1 is allowed"
-        )
-  | headTarget request /= runtimeTarget runtime =
-      Left (RelayError (mkStatus 403 "Forbidden") "unexpected request target")
-  | hasTransferEncoding =
-      Left (badRequest "Transfer-Encoding is not supported")
-  | otherwise =
-      case contentLengths of
-        [] -> Left (badRequest "Content-Length is required")
-        [contentLength] ->
-          case parseContentLength contentLength of
-            Nothing -> Left (badRequest "invalid Content-Length")
-            Just bodyLength
-              | bodyLength > runtimeMaxBody runtime ->
-                  Left
-                    ( RelayError
-                        (mkStatus 413 "Payload Too Large")
-                        "request body is too large"
-                    )
-              | otherwise -> Right bodyLength
-        _ -> Left (badRequest "duplicate Content-Length")
-  where
-    hasTransferEncoding =
-      any
-        (\(name, value) -> name == "transfer-encoding" && not (BS.null (trimKey value)))
-        (headHeaders request)
-    contentLengths =
-      [ value
-      | (name, value) <- headHeaders request
-      , name == "content-length"
-      ]
-    parseContentLength value
-      | BS.null value = Nothing
-      | BS.all isAsciiDigit value =
-          case BS8.readInteger value of
-            Just (number, rest)
-              | BS.null rest && number >= 0 && number <= fromIntegral (maxBound :: Int) ->
-                  Just (fromIntegral number)
-            _ -> Nothing
-      | otherwise = Nothing
-
-isAsciiDigit :: Word8 -> Bool
-isAsciiDigit byte = byte >= 48 && byte <= 57
+-- | Build the one request the relay is allowed to send. The sandboxed client
+-- contributes only the body; every other field is fixed here or in the
+-- configured upstream URL.
+relayRequest :: RelayRuntime -> BS.ByteString -> Request
+relayRequest runtime body =
+  (runtimeUpstream runtime)
+    { method = "POST"
+    , requestHeaders =
+        [ ("Content-Type", "application/json")
+        , ("Accept", "text/event-stream")
+        , ("Authorization", "Bearer " <> runtimeKey runtime)
+        ]
+    , requestBody = RequestBodyLBS (BL.fromStrict body)
+    , responseTimeout = responseTimeoutNone
+    , redirectCount = 0
+    , checkResponse = \_ _ -> pure ()
+    }
 
 forward :: RelayRuntime -> Socket -> BS.ByteString -> IO ()
 forward runtime connection body = do
   sent <- newIORef False
-  let request =
-        (runtimeUpstream runtime)
-          { method = "POST"
-          , requestHeaders =
-              [ ("Content-Type", "application/json")
-              , ("Accept", "text/event-stream")
-              , ("Authorization", "Bearer " <> runtimeKey runtime)
-              ]
-          , requestBody = RequestBodyLBS (BL.fromStrict body)
-          , responseTimeout = responseTimeoutNone
-          , redirectCount = 0
-          , checkResponse = \_ _ -> pure ()
-          }
   result <-
     try
-      ( withResponse request (runtimeManager runtime) $ \response -> do
-          let status = responseStatus response
-          if statusCode status >= 200 && statusCode status < 300
-            then do
-              writeIORef sent True
-              connected <- sendToClient connection (streamingResponseHead status)
-              when connected (streamBody connection (brRead (responseBody response)))
-            else do
-              errorBody <-
-                readBodyLimited
-                  (brRead (responseBody response))
-                  (runtimeMaxBody runtime)
-              writeIORef sent True
-              void $ sendToClient connection (fullResponse status "application/json" errorBody)
+      ( withResponse (relayRequest runtime body) (runtimeManager runtime) $ \response -> do
+          writeIORef sent True
+          connected <- sendToClient connection (encodeStatus (statusCode (responseStatus response)))
+          when connected (streamBody connection (brRead (responseBody response)))
       )
   case result of
     Left (exception :: SomeException) -> do
       alreadySent <- readIORef sent
       unless alreadySent $
-        sendError
-          connection
-          (RelayError (mkStatus 502 "Bad Gateway") "upstream request failed")
+        sendError connection 502 "upstream request failed"
       logRelay runtime ("upstream request failed: " ++ displayException exception)
     Right () -> pure ()
-
--- * Wire IO
-
-readRequestHead :: Socket -> IO (Either RelayError (BS.ByteString, BS.ByteString))
-readRequestHead connection =
-  either (Left . wireError) Right
-    <$> recvUntil connection "\r\n\r\n" maxRequestHead
-  where
-    wireError WireTooLarge = badRequest "request head is too large"
-    wireError WireClosed = badRequest "incomplete request"
-
-readExactly :: Socket -> Int -> BS.ByteString -> IO (Either RelayError BS.ByteString)
-readExactly connection expected leftover =
-  either (const (Left (badRequest "request body ended early"))) Right
-    <$> recvExactly connection expected leftover
-
-readBodyLimited :: IO BS.ByteString -> Int -> IO BS.ByteString
-readBodyLimited readChunk limit = go BS.empty 0
-  where
-    go accumulated total = do
-      chunk <- readChunk
-      if BS.null chunk
-        then pure accumulated
-        else do
-          let remaining = limit - total
-          if BS.length chunk >= remaining
-            then pure (accumulated <> BS.take remaining chunk)
-            else go (accumulated <> chunk) (total + BS.length chunk)
 
 streamBody :: Socket -> IO BS.ByteString -> IO ()
 streamBody connection readChunk = do
@@ -370,45 +291,9 @@ sendToClient connection bytes =
   (sendAll connection bytes >> pure True)
     `catch` \(_ :: IOException) -> pure False
 
-sendError :: Socket -> RelayError -> IO ()
-sendError connection (RelayError status message) =
-  void $
-    sendToClient
-      connection
-      ( fullResponse
-          status
-          "text/plain; charset=utf-8"
-          (BS8.pack message)
-      )
-
-fullResponse :: Status -> BS.ByteString -> BS.ByteString -> BS.ByteString
-fullResponse status contentType body =
-  BS.concat
-    [ statusLine status
-    , "Content-Type: "
-    , contentType
-    , "\r\nContent-Length: "
-    , BS8.pack (show (BS.length body))
-    , "\r\nConnection: close\r\n\r\n"
-    , body
-    ]
-
-streamingResponseHead :: Status -> BS.ByteString
-streamingResponseHead status =
-  BS.concat
-    [ statusLine status
-    , "Content-Type: text/event-stream\r\n"
-    , "Cache-Control: no-cache\r\n"
-    , "Connection: close\r\n\r\n"
-    ]
-
-statusLine :: Status -> BS.ByteString
-statusLine status =
-  "HTTP/1.1 "
-    <> BS8.pack (show (statusCode status))
-    <> " "
-    <> statusMessage status
-    <> "\r\n"
+sendError :: Socket -> Int -> String -> IO ()
+sendError connection code message =
+  void $ sendToClient connection (encodeStatus code <> BS8.pack message)
 
 -- * Logging
 

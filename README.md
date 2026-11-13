@@ -157,14 +157,16 @@ socket directory is mode `0700` and is bind-mounted at `/run/hutian`, so the
 sandbox can connect to `/run/hutian/llm.sock`; the directory holds no key
 material.
 
-The relay accepts only an HTTP/1.1 `POST` to the exact path and query of
-`llamaUrl`. It discards all client headers, including `Authorization` and
-`Cookie`, and adds its own `Authorization: Bearer <key>` before forwarding the
-body to the fixed upstream. Response bodies, including streaming SSE, are
-relayed back. The relay does not follow upstream redirects, so a response
-cannot move the key to another host. The sandbox therefore cannot redirect the
-key, cannot use the relay as a general proxy, and never receives the key in
-argv, environment variables, files, or the Nix store.
+The relay uses a private framing protocol over the socket instead of HTTP. The
+sandbox sends only the request body and closes its write half. The relay sends
+that body to the fixed path and query of `llamaUrl` with exactly three
+headers: `Content-Type: application/json`, `Accept: text/event-stream`, and
+`Authorization: Bearer <key>`. It returns a four-byte status code followed by
+the upstream body, including streaming SSE. Because the client never supplies
+a request line or header block, the sandbox cannot choose the upstream host,
+path, or headers, cannot redirect the key, and cannot use the relay as a
+general authenticated proxy. The relay does not follow upstream redirects, and
+the key never appears in argv, environment variables, files, or the Nix store.
 
 The shell is launched with `--llama-socket /run/hutian/llm.sock` and the
 logical URL `http://hutian-relay/...`, which preserves the chat or completion
@@ -288,8 +290,9 @@ gVisor runtime settings can be overridden from the host:
   API key is configured, the default is already `none` and model traffic uses
   the host relay socket instead.
 - With `apiKeyFile` or `apiKeyCommand`, the key stays on the host. The sandbox
-  gets only the relay socket at `/run/hutian/llm.sock`, which accepts a single
-  fixed request target and cannot be used as a general authenticated proxy.
+  gets only the relay socket at `/run/hutian/llm.sock`, which accepts only a
+  request body and forwards it to one fixed target, so it cannot be used as a
+  general authenticated proxy.
 - Writes outside `/source`, `/tmp`, and the mounted package store are refused.
   Set `readOnly = true` to refuse writes to `/source` as well.
 - With `nix = true`, the full host `/nix/store` and the Nix daemon socket are
@@ -319,11 +322,11 @@ The code keeps pure logic separate from IO:
   command-line settings parsing pure, with IO limited to HTTP.
 - `Hutian.Http.Wire` contains the shared socket framing helpers used by both
   the relay and the sandbox-side client.
-- `Hutian.Llm.UnixSocket` is the sandbox-side HTTP/1.1 client for the host
-  relay socket.
-- `Hutian.Relay` is the host-side relay: it owns the key, validates the single
-  allowed request, injects authorization, and streams the response.
-  `Hutian.Relay.Http` holds the pure wire parsing and key-redaction helpers.
+- `Hutian.Llm.UnixSocket` is the sandbox-side client for the host relay socket.
+- `Hutian.Relay` is the host-side relay: it owns the key, accepts only a request
+  body, builds the single fixed upstream request, and streams the response.
+  `Hutian.Relay.Protocol` holds the four-byte status framing shared by both
+  sides.
 - `Hutian.Console` is the single terminal IO boundary: writes, terminal
   attributes, cursor styling, size, and stream colouring.
 - `Hutian.Terminal` is the prompt driver over `Hutian.Prompt` and
@@ -351,6 +354,7 @@ app/Hutian/Console.hs     Single terminal IO boundary
 app/Hutian/Prompt.hs      Pure prompt reducer
 app/Hutian/Render.hs      Pure ANSI prompt rendering
 app/Hutian/Relay.hs       Host-side LLM relay
+app/Hutian/Relay/Protocol.hs  Relay status framing
 app/Hutian/Llm/UnixSocket.hs  Relay client over a Unix socket
 app/RelayMain.hs          Relay executable entry point
 test/                     Unit and property tests
@@ -371,7 +375,7 @@ shell helpers, and interrupt handling. It also includes integration tests for:
 
 - streaming LLM responses through a local HTTP server
 - streaming LLM responses through the host relay over a Unix socket, including
-  key injection, header stripping, target rejection, and response streaming
+  key injection, fixed upstream and headers, body limits, and response streaming
 - history file persistence
 - shell command execution and command discovery
 
