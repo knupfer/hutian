@@ -11,6 +11,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.Either (fromRight)
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (isInfixOf)
 import Data.Word (Word8)
 import Hutian.Conversation (ConversationEntry (..))
@@ -27,6 +28,7 @@ import Hutian.Relay
   , newRelayRuntime
   , parseRelaySettings
   , runRelay
+  , setRelayLogger
   )
 import Hutian.Relay.Http
   ( RequestHead (..)
@@ -341,6 +343,30 @@ wireTests =
         response <- withRelaySession runtime (requestOn (postRequest "/v1/chat/completions" "{}" []))
         assertBool "unreachable upstream should be a gateway error" ("HTTP/1.1 502" `BS.isPrefixOf` response)
         assertNotInfix "s3cret-key" response
+    , testCase "relay treats a client disconnect as normal" $
+        withUpstream largeStreamingResponse $ \port _requests -> do
+          logs <- newIORef []
+          runtime <-
+            setRelayLogger
+              (\message -> modifyIORef' logs (message :))
+              <$> runtimeFor port defaultRelayMaxBody
+          (client, server) <- socketPair AF_UNIX Stream defaultProtocol
+          done <- newEmptyMVar
+          _ <-
+            forkFinally
+              (handleRelayConnection runtime server)
+              (\_ -> close server >> putMVar done ())
+          sendAll client (postRequest "/v1/chat/completions" "{}" [])
+          headResult <- recvUntil client "\r\n\r\n" maxUpstreamHead
+          case headResult of
+            Left _ -> assertFailure "relay did not send a response head"
+            Right _ -> pure ()
+          close client
+          awaitMVar "relay did not stop after the client disconnected" done
+          messages <- readIORef logs
+          assertBool
+            ("client disconnect was logged as an upstream failure: " ++ show messages)
+            (not (any ("upstream request failed" `isInfixOf`) messages))
     ]
 
 -- * Upstream-facing tests
@@ -492,6 +518,15 @@ unauthorizedResponse =
     , "Content-Type: application/json\r\n"
     , "Connection: close\r\n\r\n"
     , "{\"error\":\"bad key\"}"
+    ]
+
+largeStreamingResponse :: ByteString
+largeStreamingResponse =
+  BS.concat
+    [ "HTTP/1.1 200 OK\r\n"
+    , "Content-Type: text/event-stream\r\n"
+    , "Connection: close\r\n\r\n"
+    , BS.replicate (1024 * 1024) 97
     ]
 
 redirectResponse :: Int -> ByteString

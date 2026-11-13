@@ -12,14 +12,15 @@ module Hutian.Relay
   , defaultRelayMaxBody
   , RelayRuntime
   , newRelayRuntime
+  , setRelayLogger
   , loadRelayKey
   , runRelay
   , handleRelayConnection
   ) where
 
 import Control.Concurrent (forkFinally)
-import Control.Exception (IOException, SomeException, bracket, displayException, try)
-import Control.Monad (forever, unless, when)
+import Control.Exception (IOException, SomeException, bracket, catch, displayException, try)
+import Control.Monad (forever, unless, void, when)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BL
@@ -187,6 +188,7 @@ data RelayRuntime = RelayRuntime
   , runtimeManager :: Manager
   , runtimeUpstream :: Request
   , runtimeTarget :: BS.ByteString
+  , runtimeLogger :: String -> IO ()
   }
 
 newRelayRuntime :: RelaySettings -> BS.ByteString -> IO RelayRuntime
@@ -200,7 +202,13 @@ newRelayRuntime settings key = do
       , runtimeManager = manager
       , runtimeUpstream = upstream
       , runtimeTarget = path upstream <> queryString upstream
+      , runtimeLogger = \message -> hPutStrLn stderr ("hutian-llm-relay: " ++ message)
       }
+
+-- | Replace the log sink. Tests use this to assert that expected client
+-- disconnects are not reported as upstream failures.
+setRelayLogger :: (String -> IO ()) -> RelayRuntime -> RelayRuntime
+setRelayLogger logger runtime = runtime {runtimeLogger = logger}
 
 -- | Bind the Unix socket and serve until the process is stopped.
 runRelay :: RelayRuntime -> IO ()
@@ -338,15 +346,15 @@ forward runtime connection body = do
           if code >= 200 && code < 300
             then do
               writeIORef sent True
-              sendAll connection (streamingResponseHead code reason)
-              streamBody connection (brRead (responseBody response))
+              connected <- sendToClient connection (streamingResponseHead code reason)
+              when connected (streamBody connection (brRead (responseBody response)))
             else do
               errorBody <-
                 readBodyLimited
                   (brRead (responseBody response))
                   (relayMaxBody (runtimeSettings runtime))
               writeIORef sent True
-              sendAll connection (fullResponse code reason "application/json" errorBody)
+              void $ sendToClient connection (fullResponse code reason "application/json" errorBody)
       )
   case result of
     Left (exception :: SomeException) -> do
@@ -388,19 +396,28 @@ streamBody :: Socket -> IO BS.ByteString -> IO ()
 streamBody connection readChunk = do
   chunk <- readChunk
   unless (BS.null chunk) $ do
-    sendAll connection chunk
-    streamBody connection readChunk
+    connected <- sendToClient connection chunk
+    when connected (streamBody connection readChunk)
+
+-- | Best-effort write to the sandbox. A closed client is normal: the shell
+-- stops reading once the answer is complete. It must not be reported as an
+-- upstream failure.
+sendToClient :: Socket -> BS.ByteString -> IO Bool
+sendToClient connection bytes =
+  (sendAll connection bytes >> pure True)
+    `catch` \(_ :: IOException) -> pure False
 
 sendError :: Socket -> RelayError -> IO ()
 sendError connection relayError =
-  sendAll
-    connection
-    ( fullResponse
-        (relayErrorCode relayError)
-        (relayErrorReason relayError)
-        "text/plain; charset=utf-8"
-        (BS8.pack (relayErrorMessage relayError))
-    )
+  void $
+    sendToClient
+      connection
+      ( fullResponse
+          (relayErrorCode relayError)
+          (relayErrorReason relayError)
+          "text/plain; charset=utf-8"
+          (BS8.pack (relayErrorMessage relayError))
+      )
 
 fullResponse :: Int -> BS.ByteString -> BS.ByteString -> BS.ByteString -> BS.ByteString
 fullResponse code reason contentType body =
@@ -431,5 +448,4 @@ statusLine code reason =
 
 logRelay :: RelayRuntime -> String -> IO ()
 logRelay runtime message =
-  hPutStrLn stderr $
-    "hutian-llm-relay: " ++ redactKey (runtimeKey runtime) message
+  runtimeLogger runtime (redactKey (runtimeKey runtime) message)
