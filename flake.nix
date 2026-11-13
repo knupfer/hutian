@@ -278,7 +278,7 @@
                   "must not be inside the sandbox working directory"
                   "--llama-socket"
                   "/run/hutian/llm.sock"
-                  "/run/hutian:ro"
+                  "relay_dir:/run/hutian"
                   "--host-uds=open"
                   "GVISOR_NETWORK:-none"
                   "http://hutian-relay/v1/chat/completions"

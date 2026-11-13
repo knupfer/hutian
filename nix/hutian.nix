@@ -205,7 +205,7 @@ let
         # With a relay the sandbox needs no network at all. GVISOR_NETWORK can
         # still opt back in explicitly.
         network="''${GVISOR_NETWORK:-none}"
-        relay_volumes=(-volume "$relay_dir:/run/hutian:ro")
+        relay_volumes=(-volume "$relay_dir:/run/hutian")
         relay_runsc_args=(--host-uds=open)
         shell_args=(--llama-socket /run/hutian/llm.sock)
       ''}
