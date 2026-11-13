@@ -54,6 +54,20 @@ tests =
         let prompt = setPromptText "# not markdown" initialPrompt
             (output, _) = promptRenderText termLine TermMode 0 80 prompt
         assertBool "no heading style" (not ("\ESC[1;38;2;137;180;250m" `isInfixOf` output))
+    , testCase "term prompt highlights shell input" $ do
+        let prompt = setPromptText "if true; then echo \"hi\"; fi" initialPrompt
+            (output, _) = promptRenderText termLine TermMode 0 80 prompt
+        assertBool "expected a shell syntax style" ("\ESC[38;2;" `isInfixOf` output)
+        assertBool
+          "shell input keeps its text below the label"
+          ("shell:\nif true; then echo \"hi\"; fi" `isInfixOf` stripAnsi output)
+    , testCase "tool prompt highlights shell input" $ do
+        let prompt = setPromptText "if true; then echo \"hi\"; fi" initialPrompt
+            (output, _) = promptRenderText toolLine ToolMode 0 80 prompt
+        assertBool "expected a shell syntax style" ("\ESC[38;2;" `isInfixOf` output)
+        assertBool
+          "tool input keeps its text below the label"
+          ("tool shell:\nif true; then echo \"hi\"; fi" `isInfixOf` stripAnsi output)
     , testCase "prompt rendering uses no background colors" $ do
         let termPrompt = setPromptText "abc" initialPrompt
             (termOutput, _) = promptRenderText termLine TermMode 0 80 termPrompt
@@ -67,8 +81,8 @@ tests =
     , testCase "prompt rows are not padded with spaces" $ do
         let prompt = setPromptText "abc" initialPrompt
             (output, _) = promptRenderText termLine TermMode 0 80 prompt
-        assertBool "no trailing space padding" (not ("abc " `isInfixOf` output))
-        assertBool "erases the rest of the line instead" ("abc\ESC[K" `isInfixOf` output)
+        assertBool "no trailing space padding" (not ("abc " `isInfixOf` stripAnsi output))
+        assertBool "erases the rest of the line instead" ("\ESC[K" `isInfixOf` output)
     , testCase "llm prompt rows are not padded with spaces" $ do
         let prompt = setPromptText "hello" initialPrompt
             (output, _) = promptRenderText termLine LlmMode 0 80 prompt
@@ -101,7 +115,7 @@ tests =
         let output = toolPromptText "shell" 80 "echo hi"
         assertBool "teal prefix" ((boldTeal ++ "tool shell:") `isInfixOf` output)
         assertBool "label text" ("tool shell:" `isInfixOf` output)
-        assertBool "command text" ("echo hi" `isInfixOf` output)
+        assertBool "command text" ("echo hi" `isInfixOf` stripAnsi output)
         assertBool "label sits above the command" ("tool shell:\necho hi" `isInfixOf` stripAnsi output)
         assertBool "resets colors" (resetSequence `isInfixOf` output)
     , testCase "toolPromptText resets before the final newline" $ do

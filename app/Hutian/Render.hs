@@ -33,6 +33,7 @@ import Hutian.Editor
   , suggestionRowCount
   )
 import Hutian.Markdown (renderMarkdownRows)
+import Hutian.Syntax (highlightShellLine)
 import System.Console.ANSI
   ( clearFromCursorToScreenEndCode
   , cursorDownCode
@@ -78,13 +79,17 @@ promptRenderText termPrompt mode previousRow width prompt =
           prefixOutput
             | prefixCount > 0 = prefixForegroundFor mode ++ prefixPart ++ reset
             | otherwise = ""
+          restRendered
+            | mode == LlmMode = rest
+            | index < inputRowCount = highlightShellLine rest
+            | otherwise = rest
           styleReset
-            | mode == LlmMode && '\ESC' `elem` rest = reset
+            | '\ESC' `elem` restRendered = reset
             | otherwise = ""
           newline
             | index < total - 1 = "\n"
             | otherwise = ""
-       in prefixOutput ++ rest ++ styleReset ++ clearLine ++ newline
+       in prefixOutput ++ restRendered ++ styleReset ++ clearLine ++ newline
 
 -- | Render a command requested by the model as a prompt line, followed by a
 -- newline. Tool calls use a bright teal prompt so they stand out from

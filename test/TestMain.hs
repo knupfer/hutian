@@ -18,6 +18,7 @@ import qualified PromptSpec
 import qualified RelaySpec
 import qualified RenderSpec
 import qualified ShellSpec
+import qualified SyntaxSpec
 import Test.Tasty
 
 main :: IO ()
@@ -42,5 +43,6 @@ main =
       , RelaySpec.tests
       , RenderSpec.tests
       , ShellSpec.tests
+      , SyntaxSpec.tests
       , InterruptSpec.tests
       ]

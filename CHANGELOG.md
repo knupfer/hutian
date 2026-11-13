@@ -7,6 +7,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Added
 
+- Shell syntax highlighting with Skylighting for term-mode input and
+  model-requested `tool shell:` commands.
 - Mandatory `sandbox` and `model` option groups. `sandbox.packages` selects the
   sandbox's package closures. `sandbox.internet = false`
   forces gVisor's `none` network mode and cannot be overridden with

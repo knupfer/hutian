@@ -76,6 +76,7 @@ executable hutian-shell
       Hutian.Relay.Protocol
       Hutian.Render
       Hutian.Shell
+      Hutian.Syntax
       Hutian.Terminal
   hs-source-dirs:   app
   build-depends:
@@ -135,6 +136,7 @@ test-suite hutian-shell-test
       Hutian.Relay.Protocol
       Hutian.Render
       Hutian.Shell
+      Hutian.Syntax
       InterruptSpec
       LlmIntegrationSpec
       LlmProtocolSpec
@@ -147,6 +149,7 @@ test-suite hutian-shell-test
       RelaySpec
       RenderSpec
       ShellSpec
+      SyntaxSpec
       TestSupport
   hs-source-dirs:   test app
   build-depends:

@@ -112,7 +112,7 @@ streams its output to the terminal in gray under a dimmed teal `tool output:`
 line, and sends the output back to the model. Every call runs in a fresh shell,
 so `cd`, exported variables, and other shell state do not persist between
 calls. The requested command is shown under a bold teal `tool shell:` line,
-distinguishing it from commands typed by the user.
+syntax-highlighted as shell, distinguishing it from commands typed by the user.
 
 ```console
 Explain what a syscall is.
@@ -122,9 +122,9 @@ Explain what a syscall is.
 ### Term mode
 
 Term mode shows a bold pink `shell:` line above the input and prints command
-output in gray under a dimmed pink `output:` line. `help` shows the builtin
-help; every other line is executed with `/bin/sh -c` in the sandbox working
-directory.
+output in gray under a dimmed pink `output:` line. Input is syntax-highlighted
+as shell while you type. `help` shows the builtin help; every other line is
+executed with `/bin/sh -c` in the sandbox working directory.
 
 Each term-mode command runs in a fresh shell, so `cd`, exported variables, and
 other shell state do not carry over between commands. Use absolute paths or
@@ -415,6 +415,8 @@ The code keeps pure logic separate from IO:
   `Hutian.Conversation` also represents tool calls and tool results.
 - `Hutian.History` owns the pure on-disk history codec.
 - `Hutian.Markdown` is a pure streaming renderer for Markdown and ANSI styles.
+- `Hutian.Syntax` highlights shell input for term mode and model-requested
+  commands with Skylighting.
 - `Hutian.Llm` keeps SSE parsing, tool-call accumulation, request building, and
   command-line settings parsing pure, with IO limited to HTTP.
 - `Hutian.Http.Wire` contains the shared socket framing helpers used by both
