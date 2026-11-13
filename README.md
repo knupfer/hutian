@@ -131,7 +131,56 @@ as `SYSTEM_CERTIFICATE_PATH` so the Haskell HTTP client can verify TLS
 certificates.
 
 The sandbox uses gVisor's `sandbox` network mode by default, which can reach a
-server bound to the host's loopback interface.
+server bound to the host's loopback interface. When an API key is configured,
+the default becomes `none` instead; see [API keys](#api-keys).
+
+## API keys
+
+Hutian can keep an API key on the host and give the sandbox only a private
+relay socket. Pass `apiKeyFile` or `apiKeyCommand` to `mkHutianShellFlake` or
+`mkHutianShell`:
+
+```nix
+hutian.lib.mkHutianShellFlake nixpkgs {
+  # ...
+  apiKeyFile = "/run/secrets/hutian-key";
+}
+```
+
+The launcher starts `hutian-llm-relay` on the host. The relay reads the key
+from the file, or from the standard output of `apiKeyCommand`, and listens on a
+per-session Unix socket under `$XDG_RUNTIME_DIR` (falling back to `/tmp`). The
+socket directory is mode `0700` and is bind-mounted read-only at `/run/hutian`,
+so the sandbox can connect to `/run/hutian/llm.sock`; the directory holds no
+key material.
+
+The relay accepts only an HTTP/1.1 `POST` to the exact path and query of
+`llamaUrl`. It discards all client headers, including `Authorization` and
+`Cookie`, and adds its own `Authorization: Bearer <key>` before forwarding the
+body to the fixed upstream. Response bodies, including streaming SSE, are
+relayed back. The relay does not follow upstream redirects, so a response
+cannot move the key to another host. The sandbox therefore cannot redirect the
+key, cannot use the relay as a general proxy, and never receives the key in
+argv, environment variables, files, or the Nix store.
+
+The shell is launched with `--llama-socket /run/hutian/llm.sock` and the
+logical URL `http://hutian-relay/...`, which preserves the chat or completion
+API shape without exposing the real upstream host or any credentials embedded
+in `llamaUrl`.
+
+When a key is configured, `GVISOR_NETWORK` defaults to `none`. Set it to
+`sandbox` or `host` to restore networking for other tools. `apiKeyFile` and
+`apiKeyCommand` are mutually exclusive. `apiKeyFile` must not point into the
+Nix store or the host working directory, both of which the sandbox can read;
+the launcher rejects such paths at startup. Keep `apiKeyCommand` as a command
+that fetches the key, for example from `pass` or `sops`, rather than embedding
+the key in the command string, because option values live in the Nix store.
+
+For example, with `pass`:
+
+```nix
+apiKeyCommand = "pass show llama/api-key";
+```
 
 ## Adding packages
 
@@ -232,7 +281,12 @@ gVisor runtime settings can be overridden from the host:
   user namespace. The sandbox process is UID 0 inside that namespace, mapped to
   your host UID; it gains no host privileges.
 - With the default `sandbox` network mode, the sandbox can reach the host's
-  loopback interface. Set `GVISOR_NETWORK=none` to disable networking.
+  loopback interface. Set `GVISOR_NETWORK=none` to disable networking. When an
+  API key is configured, the default is already `none` and model traffic uses
+  the host relay socket instead.
+- With `apiKeyFile` or `apiKeyCommand`, the key stays on the host. The sandbox
+  gets only the relay socket at `/run/hutian/llm.sock`, which accepts a single
+  fixed request target and cannot be used as a general authenticated proxy.
 - Writes outside `/source`, `/tmp`, and the mounted package store are refused.
   Set `readOnly = true` to refuse writes to `/source` as well.
 - With `nix = true`, the full host `/nix/store` and the Nix daemon socket are
@@ -260,6 +314,13 @@ The code keeps pure logic separate from IO:
 - `Hutian.Markdown` is a pure streaming renderer for Markdown and ANSI styles.
 - `Hutian.Llm` keeps SSE parsing, tool-call accumulation, request building, and
   command-line settings parsing pure, with IO limited to HTTP.
+- `Hutian.Http.Wire` contains the shared socket framing helpers used by both
+  the relay and the sandbox-side client.
+- `Hutian.Llm.UnixSocket` is the sandbox-side HTTP/1.1 client for the host
+  relay socket.
+- `Hutian.Relay` is the host-side relay: it owns the key, validates the single
+  allowed request, injects authorization, and streams the response.
+  `Hutian.Relay.Http` holds the pure wire parsing and key-redaction helpers.
 - `Hutian.Console` is the single terminal IO boundary: writes, terminal
   attributes, cursor styling, size, and stream colouring.
 - `Hutian.Terminal` is the prompt driver over `Hutian.Prompt` and
@@ -286,6 +347,9 @@ app/Hutian/Completion.hs  Pure completion selection
 app/Hutian/Console.hs     Single terminal IO boundary
 app/Hutian/Prompt.hs      Pure prompt reducer
 app/Hutian/Render.hs      Pure ANSI prompt rendering
+app/Hutian/Relay.hs       Host-side LLM relay
+app/Hutian/Llm/UnixSocket.hs  Relay client over a Unix socket
+app/RelayMain.hs          Relay executable entry point
 test/                     Unit and property tests
 test/TestSupport.hs       Shared test helpers
 hutian-shell.cabal        Haskell package manifest
@@ -303,6 +367,8 @@ requests, streaming tool calls, Markdown rendering, code highlighting, path and
 shell helpers, and interrupt handling. It also includes integration tests for:
 
 - streaming LLM responses through a local HTTP server
+- streaming LLM responses through the host relay over a Unix socket, including
+  key injection, header stripping, target rejection, and response streaming
 - history file persistence
 - shell command execution and command discovery
 

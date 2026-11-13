@@ -8,10 +8,12 @@ import qualified HistorySpec
 import qualified InterruptSpec
 import qualified LlmIntegrationSpec
 import qualified LlmProtocolSpec
+import qualified LlmSocketSpec
 import qualified LlmSpec
 import qualified MarkdownSpec
 import qualified PathsSpec
 import qualified PromptSpec
+import qualified RelaySpec
 import qualified RenderSpec
 import qualified ShellSpec
 import Test.Tasty
@@ -28,10 +30,12 @@ main =
       , HistorySpec.tests
       , LlmSpec.tests
       , LlmIntegrationSpec.tests
+      , LlmSocketSpec.tests
       , LlmProtocolSpec.tests
       , MarkdownSpec.tests
       , PathsSpec.tests
       , PromptSpec.tests
+      , RelaySpec.tests
       , RenderSpec.tests
       , ShellSpec.tests
       , InterruptSpec.tests

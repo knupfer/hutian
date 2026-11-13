@@ -62,10 +62,12 @@ executable hutian-shell
       Hutian.Editor
       Hutian.History
       Hutian.History.Store
+      Hutian.Http.Wire
       Hutian.Interrupt
       Hutian.Key
       Hutian.Llm
       Hutian.Llm.Protocol
+      Hutian.Llm.UnixSocket
       Hutian.Markdown
       Hutian.Output
       Hutian.Paths
@@ -75,7 +77,27 @@ executable hutian-shell
       Hutian.Terminal
   hs-source-dirs:   app
   build-depends:
-      terminal-size
+      network
+    , terminal-size
+
+executable hutian-llm-relay
+  import:           defaults
+  main-is:          RelayMain.hs
+  other-modules:
+      Hutian.Http.Wire
+      Hutian.Relay
+      Hutian.Relay.Http
+  hs-source-dirs:   app
+  build-depends:
+      base
+    , bytestring
+    , directory
+    , http-client
+    , http-client-tls
+    , http-types
+    , network
+    , text
+    , unix
 
 test-suite hutian-shell-test
   import:           defaults, dependencies
@@ -95,23 +117,29 @@ test-suite hutian-shell-test
       Hutian.Editor
       Hutian.History
       Hutian.History.Store
+      Hutian.Http.Wire
       Hutian.Interrupt
       Hutian.Key
       Hutian.Llm
       Hutian.Llm.Protocol
+      Hutian.Llm.UnixSocket
       Hutian.Markdown
       Hutian.Output
       Hutian.Paths
       Hutian.Prompt
+      Hutian.Relay
+      Hutian.Relay.Http
       Hutian.Render
       Hutian.Shell
       InterruptSpec
       LlmIntegrationSpec
       LlmProtocolSpec
+      LlmSocketSpec
       LlmSpec
       MarkdownSpec
       PathsSpec
       PromptSpec
+      RelaySpec
       RenderSpec
       ShellSpec
       TestSupport

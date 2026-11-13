@@ -44,10 +44,7 @@
 
       requireString =
         name: value:
-        if builtins.isString value then
-          value
-        else
-          throw "hutian: option `${name}` must be a string";
+        if builtins.isString value then value else throw "hutian: option `${name}` must be a string";
 
       requireNonEmptyString =
         name: value:
@@ -56,12 +53,13 @@
         else
           throw "hutian: option `${name}` must be a non-empty string";
 
+      optionalNonEmptyString =
+        name: args:
+        if args ? ${name} && args.${name} != null then requireNonEmptyString name args.${name} else null;
+
       requireBool =
         name: value:
-        if builtins.isBool value then
-          value
-        else
-          throw "hutian: option `${name}` must be a boolean";
+        if builtins.isBool value then value else throw "hutian: option `${name}` must be a boolean";
 
       requireList =
         name: value:
@@ -88,6 +86,8 @@
           llamaUrl = requireNonEmptyString "llamaUrl" checked.llamaUrl;
           readOnly = requireBool "readOnly" checked.readOnly;
           nix = requireBool "nix" checked.nix;
+          apiKeyFile = optionalNonEmptyString "apiKeyFile" args;
+          apiKeyCommand = optionalNonEmptyString "apiKeyCommand" args;
         };
 
       # Used only by this flake's own package. Consumers must pass every
@@ -120,13 +120,11 @@
           }
         );
 
-      mkApp =
-        program:
-        {
-          type = "app";
-          inherit program;
-          meta.description = "Run an unprivileged gVisor shell with a configured package closure";
-        };
+      mkApp = program: {
+        type = "app";
+        inherit program;
+        meta.description = "Run an unprivileged gVisor shell with a configured package closure";
+      };
 
       # Convenience helper for consumer flakes: derive packages and apps for
       # every supported system from a single package selector.
@@ -207,6 +205,18 @@
           probe = extra: mkHutianShell ({ inherit pkgs; } // probeOptions // extra);
           probeLauncher = "${probe { }}/bin/hutian";
           readOnlyLauncher = "${probe { readOnly = true; }}/bin/hutian";
+          keyLauncher = "${probe { apiKeyFile = "/run/secrets/hutian-key"; }}/bin/hutian";
+          keyStoreRejected =
+            !(builtins.tryEval (probe { apiKeyFile = "${builtins.storeDir}/hutian-key"; }).drvPath).success;
+          keyConflictRejected =
+            !(builtins.tryEval
+              (probe {
+                apiKeyFile = "/run/secrets/k";
+                apiKeyCommand = "pass show k";
+              }).drvPath
+            ).success;
+          keyEmptyRejected = !(builtins.tryEval (probe { apiKeyFile = ""; }).drvPath).success;
+          keyCommandEmptyRejected = !(builtins.tryEval (probe { apiKeyCommand = ""; }).drvPath).success;
           expected = [
             "--llama-url"
             "--model"
@@ -253,6 +263,46 @@
             ${pkgs.gnugrep}/bin/grep -F 'hutian-sandbox' ${probeLauncher}
             ${pkgs.coreutils}/bin/touch $out
           '';
+          api-key-configuration = pkgs.runCommand "hutian-api-key-check" { } ''
+            ${builtins.concatStringsSep "\n" (
+              map
+                (pattern: ''
+                  ${pkgs.gnugrep}/bin/grep -F -- ${lib.escapeShellArg pattern} ${keyLauncher}
+                '')
+                [
+                  "hutian-llm-relay"
+                  "--key-file"
+                  "/run/secrets/hutian-key"
+                  "chmod 700"
+                  "trap cleanup"
+                  "must not be inside the sandbox working directory"
+                  "--llama-socket"
+                  "/run/hutian/llm.sock"
+                  "/run/hutian:ro"
+                  "--host-uds=open"
+                  "GVISOR_NETWORK:-none"
+                  "http://hutian-relay/v1/chat/completions"
+                ]
+            )}
+            if ${pkgs.gnugrep}/bin/grep -F -- '--api-key' ${keyLauncher}; then
+              echo "the launcher must not pass the API key as an argument" >&2
+              exit 1
+            fi
+            if ${pkgs.gnugrep}/bin/grep -F -- 'hutian-llm-relay' ${probeLauncher}; then
+              echo "a launcher without apiKeyFile must not start the relay" >&2
+              exit 1
+            fi
+            if ${pkgs.gnugrep}/bin/grep -F -- '--llama-socket' ${probeLauncher}; then
+              echo "a launcher without apiKeyFile must use the direct transport" >&2
+              exit 1
+            fi
+            ${pkgs.coreutils}/bin/touch $out
+          '';
+          api-key-rejected =
+            if keyStoreRejected && keyConflictRejected && keyEmptyRejected && keyCommandEmptyRejected then
+              pkgs.runCommand "hutian-api-key-rejected-check" { } "touch $out"
+            else
+              throw "hutian: a store-backed, empty, or conflicting key source must be rejected";
         }
       );
     };

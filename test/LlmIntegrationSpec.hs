@@ -4,7 +4,6 @@ module LlmIntegrationSpec (tests) where
 
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (finally)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
@@ -39,19 +38,10 @@ import Network.Socket
   , tupleToHostAddress
   )
 import Network.Socket.ByteString (recv, sendAll)
-import System.IO (hClose, hFlush, stdout)
-import System.Posix.IO
-  ( closeFd
-  , createPipe
-  , dup
-  , dupTo
-  , fdToHandle
-  , stdOutput
-  )
-import System.Posix.Types (Fd)
 import System.Timeout (timeout)
 import Test.Tasty
 import Test.Tasty.HUnit
+import TestSupport (captureStdout)
 
 tests :: TestTree
 tests =
@@ -102,6 +92,7 @@ settingsFor port =
     { settingUrl = LlmUrl ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
     , settingModel = ModelName "test-model"
     , settingSystemPrompt = SystemPrompt "system prompt"
+    , settingSocket = Nothing
     }
 
 emptyResult :: LlmResult
@@ -227,27 +218,3 @@ responseFor chunks =
               ++ "Connection: close\r\n\r\n"
           )
    in headers <> body
-
-captureStdout :: IO a -> IO (a, String)
-captureStdout action = do
-  (readFd, writeFd) <- createPipe
-  savedStdout <- dup stdOutput
-  _ <- dupTo writeFd stdOutput
-  closeFd writeFd
-  hFlush stdout
-  result <-
-    action
-      `finally` do
-        hFlush stdout
-        _ <- dupTo savedStdout stdOutput
-        closeFd savedStdout
-  hFlush stdout
-  output <- readPipe readFd
-  pure (result, output)
-
-readPipe :: Fd -> IO String
-readPipe readFd = do
-  handle <- fdToHandle readFd
-  contents <- BS.hGetContents handle
-  hClose handle
-  pure (BS8.unpack contents)

@@ -20,6 +20,12 @@
       model = "Qwen3.8-Flash-Next-IQ4_XS";
       llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
 
+      # Optional: keep the API key on the host and expose only a private relay
+      # socket to the sandbox. Set at most one of these. apiKeyFile must not
+      # point into the Nix store, which the sandbox can read.
+      # apiKeyFile = "/run/secrets/hutian-key";
+      # apiKeyCommand = "pass show llama/api-key";
+
       # Mount the host working directory read-only at /source. Set this to
       # true when the model should only inspect the project.
       readOnly = false;

@@ -74,6 +74,7 @@ data LlmSettings = LlmSettings
   { settingUrl :: LlmUrl
   , settingModel :: ModelName
   , settingSystemPrompt :: SystemPrompt
+  , settingSocket :: Maybe FilePath
   }
   deriving stock (Eq, Show)
 
@@ -98,34 +99,40 @@ emptyLlmResult = LlmResult Nothing []
 
 -- | Parse the launcher-provided connection settings. All three options are
 -- required so the shell never falls back to ambient environment variables.
+-- '--llama-socket' is optional and moves the HTTP request to the host relay.
 parseLlmSettings :: [String] -> Either String LlmSettings
-parseLlmSettings = go Nothing Nothing Nothing
+parseLlmSettings = go Nothing Nothing Nothing Nothing
   where
-    go url model systemPrompt [] =
+    go url model systemPrompt socket [] =
       case (url, model, systemPrompt) of
         (Just parsedUrl, Just parsedModel, Just parsedSystemPrompt) ->
-          settingsFrom parsedUrl parsedModel parsedSystemPrompt
+          settingsFrom parsedUrl parsedModel parsedSystemPrompt socket
         _ -> Left (missingMessage (missingArguments url model systemPrompt))
-    go _ _ _ ["--llama-url"] = missingValue "--llama-url"
-    go _ _ _ ["--model"] = missingValue "--model"
-    go _ _ _ ["--system-prompt"] = missingValue "--system-prompt"
-    go _ model systemPrompt ("--llama-url" : value : rest) =
-      go (Just (LlmUrl value)) model systemPrompt rest
-    go url _ systemPrompt ("--model" : value : rest) =
-      go url (Just (ModelName value)) systemPrompt rest
-    go url model _ ("--system-prompt" : value : rest) =
-      go url model (Just (SystemPrompt value)) rest
-    go _ _ _ (argument : _) =
+    go _ _ _ _ ["--llama-url"] = missingValue "--llama-url"
+    go _ _ _ _ ["--model"] = missingValue "--model"
+    go _ _ _ _ ["--system-prompt"] = missingValue "--system-prompt"
+    go _ _ _ _ ["--llama-socket"] = missingValue "--llama-socket"
+    go _ model systemPrompt socket ("--llama-url" : value : rest) =
+      go (Just (LlmUrl value)) model systemPrompt socket rest
+    go url _ systemPrompt socket ("--model" : value : rest) =
+      go url (Just (ModelName value)) systemPrompt socket rest
+    go url model _ socket ("--system-prompt" : value : rest) =
+      go url model (Just (SystemPrompt value)) socket rest
+    go url model systemPrompt _ ("--llama-socket" : value : rest) =
+      go url model systemPrompt (Just value) rest
+    go _ _ _ _ (argument : _) =
       Left ("unknown argument: " ++ argument ++ "\n" ++ llmUsage)
 
     missingValue flag = Left ("missing value for " ++ flag ++ "\n" ++ llmUsage)
 
--- | Reject empty URLs and model names; an empty system prompt is allowed.
-settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Either String LlmSettings
-settingsFrom url model systemPrompt
+-- | Reject empty URLs, model names, and socket paths; an empty system prompt
+-- is allowed.
+settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Maybe FilePath -> Either String LlmSettings
+settingsFrom url model systemPrompt socket
   | null (unLlmUrl url) = Left ("empty value for --llama-url\n" ++ llmUsage)
   | null (unModelName model) = Left ("empty value for --model\n" ++ llmUsage)
-  | otherwise = Right (LlmSettings url model systemPrompt)
+  | maybe False null socket = Left ("empty value for --llama-socket\n" ++ llmUsage)
+  | otherwise = Right (LlmSettings url model systemPrompt socket)
 
 missingMessage :: [String] -> String
 missingMessage missing =
@@ -151,7 +158,8 @@ missingArguments url model systemPrompt =
     ]
 
 llmUsage :: String
-llmUsage = "usage: hutian-shell --llama-url URL --model MODEL --system-prompt PROMPT"
+llmUsage =
+  "usage: hutian-shell --llama-url URL --model MODEL --system-prompt PROMPT [--llama-socket PATH]"
 
 data Api
   = ChatApi

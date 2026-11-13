@@ -44,6 +44,7 @@ unitTests =
                 (LlmUrl "http://127.0.0.1:8080/v1/chat/completions")
                 (ModelName "test-model")
                 (SystemPrompt "system rules")
+                Nothing
             )
         parseLlmSettings
           [ "--llama-url"
@@ -54,7 +55,40 @@ unitTests =
           , ""
           ]
           @?= Right
-            (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt ""))
+            (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt "") Nothing)
+    , testCase "parseLlmSettings accepts an optional relay socket" $ do
+        parseLlmSettings
+          [ "--llama-url"
+          , "http://example.test/v1/chat/completions"
+          , "--model"
+          , "m"
+          , "--system-prompt"
+          , "system rules"
+          , "--llama-socket"
+          , "/run/hutian/llm.sock"
+          ]
+          @?= Right
+            ( LlmSettings
+                (LlmUrl "http://example.test/v1/chat/completions")
+                (ModelName "m")
+                (SystemPrompt "system rules")
+                (Just "/run/hutian/llm.sock")
+            )
+    , testCase "parseLlmSettings rejects an empty relay socket" $
+        case
+            parseLlmSettings
+              [ "--llama-url"
+              , "http://example.test/v1/chat/completions"
+              , "--model"
+              , "m"
+              , "--system-prompt"
+              , ""
+              , "--llama-socket"
+              , ""
+              ]
+          of
+            Left message -> assertBool "empty socket should be named" ("--llama-socket" `isInfixOf` message)
+            Right _ -> assertFailure "an empty socket should fail"
     , testCase "parseLlmSettings rejects empty URLs and model names" $ do
         case parseLlmSettings ["--llama-url", "", "--model", "m", "--system-prompt", ""] of
           Left message -> assertBool "empty url should be named" ("--llama-url" `isInfixOf` message)
@@ -72,6 +106,9 @@ unitTests =
         case parseLlmSettings ["--llama-url"] of
           Left message -> assertBool "missing value should be named" ("--llama-url" `isInfixOf` message)
           Right _ -> assertFailure "a flag without a value should fail"
+        case parseLlmSettings ["--llama-socket"] of
+          Left message -> assertBool "missing socket value should be named" ("--llama-socket" `isInfixOf` message)
+          Right _ -> assertFailure "a socket flag without a value should fail"
         case parseLlmSettings ["--unknown", "value"] of
           Left message -> assertBool "unknown argument should be named" ("--unknown" `isInfixOf` message)
           Right _ -> assertFailure "unknown arguments should fail"
@@ -241,6 +278,7 @@ propertyTests =
     , testProperty "extractError finds nested messages" prop_extractError
     , testProperty "request bodies always name the model and stream" prop_requestBody
     , testProperty "settings round-trip through the command line" prop_parseSettings
+    , testProperty "settings round-trip with a relay socket" prop_parseSettingsWithSocket
     ]
 
 -- * Properties
@@ -288,10 +326,35 @@ prop_parseSettings url model systemPrompt =
           (LlmUrl urlText)
           (ModelName modelText)
           (SystemPrompt systemPrompt)
+          Nothing
       )
   where
     urlText = getNonEmpty url
     modelText = getNonEmpty model
+
+prop_parseSettingsWithSocket :: NonEmptyList Char -> NonEmptyList Char -> String -> NonEmptyList Char -> Property
+prop_parseSettingsWithSocket url model systemPrompt socket =
+  parseLlmSettings
+    [ "--llama-url"
+    , urlText
+    , "--llama-socket"
+    , socketText
+    , "--model"
+    , modelText
+    , "--system-prompt"
+    , systemPrompt
+    ]
+    === Right
+      ( LlmSettings
+          (LlmUrl urlText)
+          (ModelName modelText)
+          (SystemPrompt systemPrompt)
+          (Just socketText)
+      )
+  where
+    urlText = getNonEmpty url
+    modelText = getNonEmpty model
+    socketText = getNonEmpty socket
 
 prop_extractContent :: String -> Property
 prop_extractContent text =

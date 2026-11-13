@@ -7,12 +7,27 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Added
 
+- Host-side API key handling. `apiKeyFile` and `apiKeyCommand` start
+  `hutian-llm-relay`, which keeps the key on the host and listens on a private
+  per-session Unix socket. The sandbox only receives `--llama-socket
+  /run/hutian/llm.sock`, so the key never appears in argv, environment
+  variables, `/source`, `/tmp`, or the Nix store.
+- `--llama-socket` support in `hutian-shell`, with a minimal HTTP/1.1 client
+  for Unix domain sockets and streaming SSE responses.
+- Relay tests covering request validation, key injection, header stripping,
+  fixed-upstream forwarding, redaction, error forwarding, and the full
+  shell-to-relay-to-upstream path.
 - HTTPS support for OpenAI-compatible model endpoints. The HTTP client now uses
   TLS, and the sandbox ships the nixpkgs CA bundle together with
   `SYSTEM_CERTIFICATE_PATH` so `https://` values for `llamaUrl` are verified.
 
 ### Changed
 
+- With an API key configured, the sandbox network defaults to `none` and the
+  shell receives a sanitized `http://hutian-relay/...` URL. Set
+  `GVISOR_NETWORK` explicitly to restore networking for other tools.
+- `apiKeyFile` must not point into the Nix store or the sandbox working
+  directory, and `apiKeyFile` and `apiKeyCommand` are mutually exclusive.
 - Terminal colours, styles, and cursor movement are now generated with
   `ansi-terminal` from typed RGB values instead of hand-written escape codes,
   so palettes can be darkened before they are encoded.
