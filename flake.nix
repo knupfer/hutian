@@ -15,30 +15,70 @@
       forAllSystems = lib.genAttrs systems;
       pkgsFor = system: nixpkgs.legacyPackages.${system};
 
-      # Keep every helper option mandatory while naming any that are missing
+      # Keep every helper option mandatory while naming any missing paths
       # instead of relying on Nix's low-level argument error.
-      requiredOptions = [
-        "packages"
-        "systemPrompt"
-        "model"
-        "llamaUrl"
-        "readOnly"
-        "nix"
-        "internet"
-        "shell"
+      requiredPaths = [
+        [
+          "sandbox"
+          "packages"
+        ]
+        [
+          "sandbox"
+          "readOnly"
+        ]
+        [
+          "sandbox"
+          "nix"
+        ]
+        [
+          "sandbox"
+          "internet"
+        ]
+        [
+          "model"
+          "name"
+        ]
+        [
+          "model"
+          "url"
+        ]
+        [
+          "model"
+          "systemPrompt"
+        ]
+        [
+          "model"
+          "shell"
+        ]
       ];
 
-      requireOptions =
-        helper: names: args:
+      hasPath =
+        path: value:
+        if path == [ ] then
+          true
+        else if !(builtins.isAttrs value) then
+          false
+        else
+          let
+            name = builtins.head path;
+          in
+          value ? ${name} && hasPath (builtins.tail path) value.${name};
+
+      requirePaths =
+        helper: extraPaths: args:
         let
-          missing = builtins.filter (name: !(args ? ${name})) names;
-          plural = lib.optionalString (builtins.length missing != 1) "s";
+          paths = extraPaths ++ requiredPaths;
+          missing = builtins.filter (path: !(hasPath path args)) paths;
+          formatPath = path: lib.concatStringsSep "." path;
+          names = map formatPath paths;
+          missingNames = map formatPath missing;
+          plural = lib.optionalString (builtins.length missingNames != 1) "s";
         in
         if missing == [ ] then
           args
         else
           throw ''
-            hutian: ${helper} is missing required option${plural}: ${lib.concatStringsSep ", " missing}
+            hutian: ${helper} is missing required option${plural}: ${lib.concatStringsSep ", " missingNames}
 
             Required options: ${lib.concatStringsSep ", " names}.
             See README.md for a complete example.
@@ -56,12 +96,26 @@
           throw "hutian: option `${name}` must be a non-empty string";
 
       optionalNonEmptyString =
-        name: args:
-        if args ? ${name} && args.${name} != null then requireNonEmptyString name args.${name} else null;
+        name: label: args:
+        if args ? ${name} && args.${name} != null then requireNonEmptyString label args.${name} else null;
 
       requireBool =
         name: value:
         if builtins.isBool value then value else throw "hutian: option `${name}` must be a boolean";
+
+      requireModelShell =
+        name: value:
+        if
+          builtins.isString value
+          && builtins.elem value [
+            "deny"
+            "ask"
+            "allow"
+          ]
+        then
+          value
+        else
+          throw "hutian: option `${name}` must be \"deny\", \"ask\", or \"allow\"";
 
       requireList =
         name: value:
@@ -78,44 +132,51 @@
           throw "hutian: option `${name}` must be a function of pkgs";
 
       checkedCommonOptions =
-        helper: extraOptions: args:
+        helper: extraPaths: args:
         let
-          checked = requireOptions helper (extraOptions ++ requiredOptions) args;
+          checked = requirePaths helper extraPaths args;
+          inherit (checked) sandbox model;
         in
         {
-          systemPrompt = requireString "systemPrompt" checked.systemPrompt;
-          model = requireNonEmptyString "model" checked.model;
-          llamaUrl = requireNonEmptyString "llamaUrl" checked.llamaUrl;
-          readOnly = requireBool "readOnly" checked.readOnly;
-          nix = requireBool "nix" checked.nix;
-          internet = requireBool "internet" checked.internet;
-          shell = requireBool "shell" checked.shell;
-          apiKeyFile = optionalNonEmptyString "apiKeyFile" args;
-          apiKeyCommand = optionalNonEmptyString "apiKeyCommand" args;
+          inherit (sandbox) packages;
+          systemPrompt = requireString "model.systemPrompt" model.systemPrompt;
+          model = requireNonEmptyString "model.name" model.name;
+          llamaUrl = requireNonEmptyString "model.url" model.url;
+          readOnly = requireBool "sandbox.readOnly" sandbox.readOnly;
+          nix = requireBool "sandbox.nix" sandbox.nix;
+          internet = requireBool "sandbox.internet" sandbox.internet;
+          modelShell = requireModelShell "model.shell" model.shell;
+          apiKeyFile = optionalNonEmptyString "apiKeyFile" "model.apiKeyFile" model;
+          apiKeyCommand = optionalNonEmptyString "apiKeyCommand" "model.apiKeyCommand" model;
         };
 
       # Used only by this flake's own package. Consumers must pass every
       # option explicitly.
       defaults = {
-        systemPrompt = ''
-          You are a careful coding assistant working inside a sandboxed shell.
-          Prefer small, verifiable changes and explain commands before destructive
-          actions.
-        '';
-        model = "default";
-        llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
-        readOnly = false;
-        nix = false;
-        internet = true;
-        shell = true;
+        sandbox = {
+          packages = _: [ ];
+          readOnly = false;
+          nix = false;
+          internet = true;
+        };
+        model = {
+          name = "default";
+          url = "http://127.0.0.1:8080/v1/chat/completions";
+          systemPrompt = ''
+            You are a careful coding assistant working inside a sandboxed shell.
+            Prefer small, verifiable changes and explain commands before destructive
+            actions.
+          '';
+          shell = "allow";
+        };
       };
 
       # Always build the Haskell package from this flake's source.
       mkHutianShell =
         args:
         let
-          options = checkedCommonOptions "mkHutianShell" [ "pkgs" ] args;
-          packages = requireList "packages" args.packages;
+          options = checkedCommonOptions "mkHutianShell" [ [ "pkgs" ] ] args;
+          packages = requireList "sandbox.packages" options.packages;
         in
         import ./nix/hutian.nix (
           options
@@ -138,17 +199,18 @@
         nixpkgsInput: args:
         let
           options = checkedCommonOptions "mkHutianShellFlake" [ ] args;
-          packages = requirePackageSelector "packages" args.packages;
+          packages = requirePackageSelector "sandbox.packages" options.packages;
           mkPackage =
             system:
             let
               pkgs = nixpkgsInput.legacyPackages.${system};
             in
-            mkHutianShell (
+            import ./nix/hutian.nix (
               options
               // {
                 inherit pkgs;
                 packages = packages pkgs;
+                src = self;
               }
             );
         in
@@ -162,35 +224,43 @@
           });
         };
 
-      built = mkHutianShellFlake nixpkgs (defaults // { packages = _: [ ]; });
+      built = mkHutianShellFlake nixpkgs defaults;
     in
     {
       # Import this from another flake:
       #
       #   hutian.lib.mkHutianShell {
       #     inherit pkgs;
-      #     packages = [ pkgs.git pkgs.jq ];
-      #     systemPrompt = "You are a coding assistant.";
-      #     model = "your-model";
-      #     llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
-      #     readOnly = false;
-      #     nix = false;
-      #     internet = true;
-      #     shell = true;
+      #     sandbox = {
+      #       packages = [ pkgs.git pkgs.jq ];
+      #       readOnly = false;
+      #       nix = false;
+      #       internet = true;
+      #     };
+      #     model = {
+      #       name = "your-model";
+      #       url = "http://127.0.0.1:8080/v1/chat/completions";
+      #       systemPrompt = "You are a coding assistant.";
+      #       shell = "allow";
+      #     };
       #   }
       #
       # Or, for a minimal consumer flake:
       #
       #   outputs = { nixpkgs, hutian, ... }:
       #     hutian.lib.mkHutianShellFlake nixpkgs {
-      #       packages = pkgs: [ pkgs.git pkgs.jq ];
-      #       systemPrompt = "You are a coding assistant.";
-      #       model = "your-model";
-      #       llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
-      #       readOnly = false;
-      #       nix = false;
-      #       internet = true;
-      #       shell = true;
+      #       sandbox = {
+      #         packages = pkgs: [ pkgs.git pkgs.jq ];
+      #         readOnly = false;
+      #         nix = false;
+      #         internet = true;
+      #       };
+      #       model = {
+      #         name = "your-model";
+      #         url = "http://127.0.0.1:8080/v1/chat/completions";
+      #         systemPrompt = "You are a coding assistant.";
+      #         shell = "allow";
+      #       };
       #     };
       lib = { inherit mkHutianShell mkHutianShellFlake; };
 
@@ -207,30 +277,37 @@
             src = self;
           };
           probeOptions = defaults // {
-            packages = [ ];
-            systemPrompt = "probe system prompt";
-            model = "probe-model";
-            llamaUrl = "http://probe.invalid/v1/chat/completions";
+            sandbox = defaults.sandbox // {
+              packages = [ ];
+            };
+            model = defaults.model // {
+              name = "probe-model";
+              url = "http://probe.invalid/v1/chat/completions";
+              systemPrompt = "probe system prompt";
+            };
           };
           probe = extra: mkHutianShell ({ inherit pkgs; } // probeOptions // extra);
+          withSandbox = extra: probe { sandbox = probeOptions.sandbox // extra; };
+          withModel = extra: probe { model = probeOptions.model // extra; };
           relayPackage = pkgs.callPackage ./nix/hutian-shell.nix { src = self; };
           probeLauncher = "${probe { }}/bin/hutian";
-          readOnlyLauncher = "${probe { readOnly = true; }}/bin/hutian";
-          noInternetLauncher = "${probe { internet = false; }}/bin/hutian";
-          noShellLauncher = "${probe { shell = false; }}/bin/hutian";
-          keyLauncher = "${probe { apiKeyFile = "/run/secrets/hutian-key"; }}/bin/hutian";
-          keyCommandLauncher = "${probe { apiKeyCommand = "pass show k"; }}/bin/hutian";
+          readOnlyLauncher = "${withSandbox { readOnly = true; }}/bin/hutian";
+          noInternetLauncher = "${withSandbox { internet = false; }}/bin/hutian";
+          deniedModelShellLauncher = "${withModel { shell = "deny"; }}/bin/hutian";
+          askModelShellLauncher = "${withModel { shell = "ask"; }}/bin/hutian";
+          keyLauncher = "${withModel { apiKeyFile = "/run/secrets/hutian-key"; }}/bin/hutian";
+          keyCommandLauncher = "${withModel { apiKeyCommand = "pass show k"; }}/bin/hutian";
           keyStoreRejected =
-            !(builtins.tryEval (probe { apiKeyFile = "${builtins.storeDir}/hutian-key"; }).drvPath).success;
+            !(builtins.tryEval (withModel { apiKeyFile = "${builtins.storeDir}/hutian-key"; }).drvPath).success;
           keyConflictRejected =
             !(builtins.tryEval
-              (probe {
+              (withModel {
                 apiKeyFile = "/run/secrets/k";
                 apiKeyCommand = "pass show k";
               }).drvPath
             ).success;
-          keyEmptyRejected = !(builtins.tryEval (probe { apiKeyFile = ""; }).drvPath).success;
-          keyCommandEmptyRejected = !(builtins.tryEval (probe { apiKeyCommand = ""; }).drvPath).success;
+          keyEmptyRejected = !(builtins.tryEval (withModel { apiKeyFile = ""; }).drvPath).success;
+          keyCommandEmptyRejected = !(builtins.tryEval (withModel { apiKeyCommand = ""; }).drvPath).success;
           expected = [
             "--llama-url"
             "--model"
@@ -247,7 +324,7 @@
             "/run/hutian/llm.sock"
             "relay_dir:/run/hutian"
             "--host-uds=open"
-            "--allow-shell"
+            "--model-shell allow"
           ];
         in
         {
@@ -268,7 +345,7 @@
           read-only-option = pkgs.runCommand "hutian-read-only-option-check" { } ''
             ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${readOnlyLauncher}
             if ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${probeLauncher}; then
-              echo "readOnly = false must not request a read-only working directory" >&2
+              echo "sandbox.readOnly = false must not request a read-only working directory" >&2
               exit 1
             fi
             ${pkgs.coreutils}/bin/touch $out
@@ -277,18 +354,20 @@
             ${pkgs.gnugrep}/bin/grep -F 'GVISOR_NETWORK:-sandbox' ${probeLauncher}
             ${pkgs.gnugrep}/bin/grep -F 'network=none' ${noInternetLauncher}
             if ${pkgs.gnugrep}/bin/grep -F 'GVISOR_NETWORK:-sandbox' ${noInternetLauncher}; then
-              echo "internet = false must not allow GVISOR_NETWORK to re-enable networking" >&2
+              echo "sandbox.internet = false must not allow GVISOR_NETWORK to re-enable networking" >&2
               exit 1
             fi
             ${pkgs.coreutils}/bin/touch $out
           '';
-          shell-option = pkgs.runCommand "hutian-shell-option-check" { } ''
-            ${pkgs.gnugrep}/bin/grep -F -- '--allow-shell' ${probeLauncher}
-            if ${pkgs.gnugrep}/bin/grep -F -- '--allow-shell' ${noShellLauncher}; then
-              echo "shell = false must not grant the model's shell tool" >&2
+          model-shell-option = pkgs.runCommand "hutian-model-shell-option-check" { } ''
+            ${pkgs.gnugrep}/bin/grep -F -- '--model-shell allow' ${probeLauncher}
+            ${pkgs.gnugrep}/bin/grep -F -- '--model-shell ask' ${askModelShellLauncher}
+            ${pkgs.gnugrep}/bin/grep -F -- '--model-shell deny' ${deniedModelShellLauncher}
+            if ${pkgs.gnugrep}/bin/grep -F -- '--model-shell allow' ${deniedModelShellLauncher}; then
+              echo "model.shell = \"deny\" must not grant the model's shell tool" >&2
               exit 1
             fi
-            ${pkgs.gnugrep}/bin/grep -F 'hutian-llm-relay' ${noShellLauncher}
+            ${pkgs.gnugrep}/bin/grep -F 'hutian-llm-relay' ${deniedModelShellLauncher}
             ${pkgs.coreutils}/bin/touch $out
           '';
           launcher-volumes = pkgs.runCommand "hutian-launcher-volume-check" { } ''

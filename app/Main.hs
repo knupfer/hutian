@@ -15,6 +15,7 @@ import Hutian.Command
   )
 import Hutian.Console
   ( configureConsole
+  , confirmToolCommand
   , consoleFlush
   , consoleIsErrorInteractive
   , consoleIsInteractive
@@ -65,10 +66,10 @@ import Hutian.Llm
   , parseLlmSettings
   , runLlmContinuation
   , runLlmWithTools
-  , settingShell
+  , settingModelShell
   , toolCommand
   )
-import Hutian.Policy (ShellAccess (..))
+import Hutian.Policy (ModelShell (..))
 import Hutian.Output (grayOutputText)
 import Hutian.Shell
   ( CommandResult (..)
@@ -193,7 +194,7 @@ continueLlm settings interruptFlag conversation result
   | otherwise = do
       conversation' <-
         runToolCalls
-          (settingShell settings)
+          (settingModelShell settings)
           conversation
           (llmToolCalls result)
       next <- runLlmContinuation interruptFlag settings conversation'
@@ -203,27 +204,46 @@ continueLlm settings interruptFlag conversation result
         (appendResult Nothing (llmResponseText next) (llmToolCalls next) conversation')
         next
 
-runToolCalls :: ShellAccess -> Conversation -> [ToolCall] -> IO Conversation
-runToolCalls access = foldM (runToolCall access)
+runToolCalls :: ModelShell -> Conversation -> [ToolCall] -> IO Conversation
+runToolCalls policy = foldM (runToolCall policy)
 
-runToolCall :: ShellAccess -> Conversation -> ToolCall -> IO Conversation
-runToolCall ShellDenied conversation call =
-  pure (appendToolResult (toolCallId call) "tool error: shell access is disabled" conversation)
-runToolCall ShellAllowed conversation call =
+runToolCall :: ModelShell -> Conversation -> ToolCall -> IO Conversation
+runToolCall policy conversation call =
   case toolCommand call of
     Left message ->
       pure (appendToolResult (toolCallId call) ("tool error: " ++ message) conversation)
-    Right command -> do
-      consoleWriteToolCommand (toolCallName call) command
-      printOutputLabel ToolMode
-      result <- runShellCommandOutput command
-      case result of
-        Left message -> do
-          consoleWriteErrorLine message
-          pure (appendToolResult (toolCallId call) message conversation)
-        Right output -> do
-          displayCommandResult output
-          pure (appendToolResult (toolCallId call) (commandResultText output) conversation)
+    Right command ->
+      case policy of
+        ModelShellDenied ->
+          pure (appendToolResult (toolCallId call) "tool error: the model shell tool is disabled" conversation)
+        ModelShellAllowed -> do
+          consoleWriteToolCommand (toolCallName call) command
+          executeShellTool conversation call command
+        ModelShellAsk -> do
+          approved <- confirmToolCommand (toolCallName call) command
+          if approved
+            then executeShellTool conversation call command
+            else
+              pure
+                ( appendToolResult
+                    (toolCallId call)
+                    "tool error: the user did not approve the shell command"
+                    conversation
+                )
+
+-- | Run a command the model is already allowed to execute. The caller is
+-- responsible for showing the command first.
+executeShellTool :: Conversation -> ToolCall -> String -> IO Conversation
+executeShellTool conversation call command = do
+  printOutputLabel ToolMode
+  result <- runShellCommandOutput command
+  case result of
+    Left message -> do
+      consoleWriteErrorLine message
+      pure (appendToolResult (toolCallId call) message conversation)
+    Right output -> do
+      displayCommandResult output
+      pure (appendToolResult (toolCallId call) (commandResultText output) conversation)
 
 runTerminalInput :: Conversation -> String -> IO Conversation
 runTerminalInput conversation text =

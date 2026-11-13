@@ -12,6 +12,7 @@ import qualified LlmSocketSpec
 import qualified LlmSpec
 import qualified MarkdownSpec
 import qualified PathsSpec
+import qualified PolicySpec
 import qualified PromptSpec
 import qualified RelaySpec
 import qualified RenderSpec
@@ -34,6 +35,7 @@ main =
       , LlmProtocolSpec.tests
       , MarkdownSpec.tests
       , PathsSpec.tests
+      , PolicySpec.tests
       , PromptSpec.tests
       , RelaySpec.tests
       , RenderSpec.tests

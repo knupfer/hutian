@@ -4,6 +4,7 @@
 -- and size. Other modules build strings and call these functions.
 module Hutian.Console
   ( configureConsole
+  , confirmToolCommand
   , consoleFlush
   , consoleInputReady
   , consoleIsErrorInteractive
@@ -24,7 +25,7 @@ module Hutian.Console
   ) where
 
 import Control.Concurrent (forkIO, killThread, threadDelay)
-import Control.Exception (catch, finally)
+import Control.Exception (IOException, catch, finally, try)
 import Control.Monad (when)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Hutian.Editor (PromptMode)
@@ -128,6 +129,37 @@ consoleWriteToolCommand toolName command = do
       consoleWrite (toolPromptText toolName width command)
     else consoleWriteLine command
   consoleFlush
+
+-- | Show a requested command and ask for single-key approval. Returns 'False'
+-- without prompting when output is not a terminal. Pending input is discarded
+-- so text typed while the model was streaming cannot approve the command.
+confirmToolCommand :: String -> String -> IO Bool
+confirmToolCommand toolName command = do
+  consoleWriteToolCommand toolName command
+  interactive <- consoleIsInteractive
+  inputIsTerminal <- hIsTerminalDevice stdin
+  if not interactive || not inputIsTerminal
+    then pure False
+    else do
+      drainPendingInput
+      withRawTerminal $ do
+        consoleWrite "run? [y/N] "
+        consoleFlush
+        key <- getChar `catch` \(_ :: IOException) -> pure 'n'
+        consoleWrite "\n"
+        consoleFlush
+        pure (key == 'y' || key == 'Y')
+
+-- | Consume already-buffered input. Typed-ahead text is meant for the next
+-- prompt, but it must not accidentally approve a model command.
+drainPendingInput :: IO ()
+drainPendingInput = do
+  ready <- consoleInputReady
+  when ready $ do
+    next <- try getChar :: IO (Either IOException Char)
+    case next of
+      Left _ -> pure ()
+      Right _ -> drainPendingInput
 
 -- | Print the label shown on its own line before shell or tool output.
 printOutputLabel :: PromptMode -> IO ()

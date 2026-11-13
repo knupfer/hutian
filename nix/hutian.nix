@@ -8,7 +8,7 @@
   readOnly,
   nix,
   internet,
-  shell,
+  modelShell,
   apiKeyFile ? null,
   apiKeyCommand ? null,
 }:
@@ -24,7 +24,14 @@ assert pkgs.lib.assertMsg (
 assert pkgs.lib.assertMsg (builtins.isBool readOnly) "hutian: readOnly must be a boolean";
 assert pkgs.lib.assertMsg (builtins.isBool nix) "hutian: nix must be a boolean";
 assert pkgs.lib.assertMsg (builtins.isBool internet) "hutian: internet must be a boolean";
-assert pkgs.lib.assertMsg (builtins.isBool shell) "hutian: shell must be a boolean";
+assert pkgs.lib.assertMsg (
+  builtins.isString modelShell
+  && builtins.elem modelShell [
+    "deny"
+    "ask"
+    "allow"
+  ]
+) "hutian: modelShell must be \"deny\", \"ask\", or \"allow\"";
 assert pkgs.lib.assertMsg (
   apiKeyFile == null || (builtins.isString apiKeyFile && apiKeyFile != "")
 ) "hutian: apiKeyFile must be a non-empty string";
@@ -200,7 +207,7 @@ let
 
       relay_volumes=()
       relay_runsc_args=()
-      shell_args=()
+      llm_args=()
 
       relay_pid=""
       relay_dir=""
@@ -245,8 +252,7 @@ let
 
       relay_volumes=(-volume "$relay_dir:/run/hutian")
       relay_runsc_args=(--host-uds=open)
-      shell_args=(--llama-socket /run/hutian/llm.sock)
-      ${optionalString shell "shell_args+=(--allow-shell)"}
+      llm_args=(--llama-socket /run/hutian/llm.sock --model-shell ${escapeShellArg modelShell})
 
       ${optionalString nix ''
         # The launcher exposes the host store in the rootfs. Mount the Nix
@@ -273,7 +279,7 @@ let
           --llama-url ${escapeShellArg relayLogicalUrl} \
           --model ${escapeShellArg model} \
           --system-prompt ${escapeShellArg systemPrompt} \
-          "''${shell_args[@]}"
+          "''${llm_args[@]}"
       fi
 
       # runsc resolves -cwd on the host, so start in / and enter /source after

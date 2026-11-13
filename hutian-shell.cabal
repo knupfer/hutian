@@ -141,6 +141,7 @@ test-suite hutian-shell-test
       LlmSpec
       MarkdownSpec
       PathsSpec
+      PolicySpec
       PromptSpec
       RelaySpec
       RenderSpec

@@ -7,12 +7,20 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Added
 
-- Mandatory `internet` and `shell` flake options. `internet = false` forces
-  gVisor's `none` network mode and cannot be overridden with `GVISOR_NETWORK`.
-  `shell = false` disables only the model's `shell` tool; term mode and
-  `Ctrl+X` remain available. The tool is omitted from every LLM request and
-  tool calls are refused.
-- Host-side API key handling. `apiKeyFile` and `apiKeyCommand` start
+- Mandatory `sandbox` and `model` option groups. `sandbox.packages` selects the
+  sandbox's package closures. `sandbox.internet = false`
+  forces gVisor's `none` network mode and cannot be overridden with
+  `GVISOR_NETWORK`. `model.shell` accepts `"deny"`, `"ask"`, or `"allow"`.
+  `"deny"` disables only the model's `shell` tool; term mode and `Ctrl+X`
+  remain available. `"ask"` advertises the tool but requires interactive
+  approval for each command; non-interactive runs deny tool calls. The tool is
+  omitted from the request in deny mode, and tool calls are refused when they
+  arrive anyway.
+- A capability matrix in the README documenting how `sandbox.readOnly`,
+  `sandbox.nix`, `sandbox.internet`, `model.shell`, and the relay compose,
+  including the fact that `sandbox.internet = false` covers direct sandbox
+  networking but not host Nix fetches or the fixed relay upstream.
+- Host-side API key handling. `model.apiKeyFile` and `model.apiKeyCommand` start
   `hutian-llm-relay`, which keeps the key on the host and listens on a private
   per-session Unix socket. The sandbox only receives `--llama-socket
   /run/hutian/llm.sock`, so the key never appears in argv, environment
@@ -24,27 +32,37 @@ All notable changes to Hutian are documented here. The format follows
   shell-to-relay-to-upstream path.
 - HTTPS support for OpenAI-compatible model endpoints. The HTTP client now uses
   TLS, and the sandbox ships the nixpkgs CA bundle together with
-  `SYSTEM_CERTIFICATE_PATH` so `https://` values for `llamaUrl` are verified.
+  `SYSTEM_CERTIFICATE_PATH` so `https://` values for `model.url` are verified.
 
 ### Changed
 
+- Sandbox and model settings are now grouped. `sandbox` contains `packages`,
+  `readOnly`, `nix`, and `internet`; `model` contains `name`, `url`,
+  `systemPrompt`, `shell`, and the optional `apiKeyFile`/`apiKeyCommand`. The
+  internal launcher arguments stay flat.
+- The `shell` flake option and `--allow-shell` launcher flag were replaced by
+  `model.shell` and `--model-shell deny|ask|allow`. The new path and name
+  reflect that the option controls the model's shell tool, not the user's term
+  mode.
 - The relay is always used for model traffic. Without an API key it starts with
   `--no-auth`, does not read standard input, and forwards without an
   `Authorization` header. The sandbox still receives only the relay socket and
   the logical `http://hutian-relay/...` URL.
 - When a key is configured, the relay reads it from standard input. The
-  launcher pipes either `apiKeyFile` or `apiKeyCommand` into it, so the key
-  never appears in the relay's argument list or environment.
+  launcher pipes either `model.apiKeyFile` or `model.apiKeyCommand` into it, so
+  the key never appears in the relay's argument list or environment.
 - The relay now uses a private body/status protocol instead of HTTP/1.1. The
   sandbox sends only a request body; the host relay builds the single fixed
   upstream request, so there is no client-supplied request line or header block
   to parse, validate, strip, or redirect. The response is a four-byte status
   code followed by the upstream body.
-- The sandbox network now follows the mandatory `internet` option instead of
-  the presence of an API key. With `internet = true`, `GVISOR_NETWORK` may still
-  narrow the gVisor mode; with `internet = false`, networking is always `none`.
-- `apiKeyFile` must not point into the Nix store or the sandbox working
-  directory, and `apiKeyFile` and `apiKeyCommand` are mutually exclusive.
+- The sandbox network now follows the mandatory `sandbox.internet` option
+  instead of the presence of an API key. With `sandbox.internet = true`,
+  `GVISOR_NETWORK` may still narrow the gVisor mode; with
+  `sandbox.internet = false`, networking is always `none`.
+- `model.apiKeyFile` must not point into the Nix store or the sandbox working
+  directory, and `model.apiKeyFile` and `model.apiKeyCommand` are mutually
+  exclusive.
 - Terminal colours, styles, and cursor movement are now generated with
   `ansi-terminal` from typed RGB values instead of hand-written escape codes,
   so palettes can be darkened before they are encoded.
@@ -59,11 +77,11 @@ All notable changes to Hutian are documented here. The format follows
 - Interrupting a model reply with `Ctrl+C` no longer kills the host relay. The
   relay ignores the terminal's `SIGINT`, so its socket stays available for
   follow-up prompts; the launcher still stops it with `SIGTERM` on exit.
-- `apiKeyCommand` now runs in the foreground, so interactive prompts such as
+- `model.apiKeyCommand` now runs in the foreground, so interactive prompts such as
   `passage` can wait for input and be cancelled with `Ctrl+C`. The launcher no
   longer reports a missing relay socket while the command is still running.
 - The launcher restores the terminal settings on every exit path, including an
-  interrupted `apiKeyCommand`, so echo and the cursor are not left disabled.
+  interrupted `model.apiKeyCommand`, so echo and the cursor are not left disabled.
 - Pasting large blocks of text no longer redraws the prompt once per character;
   a queued burst of input is rendered as a single frame.
 - The cursor stays blinking teal for the whole model turn, including shell tool

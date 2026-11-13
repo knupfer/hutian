@@ -20,7 +20,7 @@ import Hutian.Conversation (ConversationEntry (..))
 import Hutian.Http.Wire (recvAll, recvExactly, recvUntil)
 import Hutian.Interrupt (newInterruptFlag)
 import Hutian.Llm (LlmSettings (..), LlmUrl (..), ModelName (..), SystemPrompt (..), runLlm)
-import Hutian.Policy (ShellAccess (..))
+import Hutian.Policy (ModelShell (..))
 import Hutian.Relay
   ( RelayRuntime
   , RelaySettings (..)
@@ -361,7 +361,7 @@ endToEndTests =
                     (ModelName "test-model")
                     (SystemPrompt "system prompt")
                     (Just socketPath)
-                    ShellAllowed
+                    ModelShellAllowed
             runtime <-
               newRelayRuntime
                 silentLogger
