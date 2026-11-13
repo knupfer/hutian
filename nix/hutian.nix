@@ -125,6 +125,17 @@ let
       read_only=${if readOnly then "true" else "false"}
       nix_mode=${if nix then "true" else "false"}
 
+      # A key command or the sandbox may leave the terminal in raw or no-echo
+      # mode. Restore the saved settings on every exit path.
+      restore_terminal() {
+        if [ -n "''${saved_tty:-}" ]; then
+          stty "$saved_tty" 2>/dev/null || true
+        fi
+        if [ -t 1 ]; then
+          printf '\033[0m\033[?25h' || true
+        fi
+      }
+
       nixEnv=()
       nixVolumes=()
       nixRunscArgs=()
@@ -146,6 +157,7 @@ let
           if [ -n "''${relay_dir:-}" ]; then
             rm -rf "$relay_dir"
           fi
+          restore_terminal
         }
         trap cleanup EXIT
         # While the relay starts, Ctrl+C aborts the launcher. Once the sandbox
@@ -283,12 +295,7 @@ let
         "''${sandbox[@]}" || status=$?
 
       # Keep the host terminal usable even if the sandbox leaves it in raw mode.
-      if [ -n "''${saved_tty:-}" ]; then
-        stty "$saved_tty" 2>/dev/null || true
-      fi
-      if [ -t 1 ]; then
-        printf '\033[0m\033[?25h' || true
-      fi
+      restore_terminal
       exit "$status"
     '';
     meta = {

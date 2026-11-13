@@ -296,6 +296,7 @@
                   "printf '%s'"
                   "unset key"
                   "trap 'exit 130' INT TERM HUP"
+                  "restore_terminal"
                   "--llama-socket"
                   "/run/hutian/llm.sock"
                 ]
