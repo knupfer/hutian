@@ -147,7 +147,10 @@ let
             rm -rf "$relay_dir"
           fi
         }
-        trap cleanup EXIT INT TERM HUP
+        trap cleanup EXIT
+        # While the relay starts, Ctrl+C aborts the launcher. Once the sandbox
+        # is running, the sandbox owns the terminal again.
+        trap 'exit 130' INT TERM HUP
 
         relay_parent="''${XDG_RUNTIME_DIR:-/tmp}"
         if [ ! -d "$relay_parent" ]; then
@@ -179,31 +182,30 @@ let
             ''
           else
             ''
-              # The command writes the key to the relay's stdin. It never appears
-              # in an argument list or in the sandbox environment.
-              eval ${escapeShellArg apiKeyCommand} | ${relayBin} \
+              # Run the command in the foreground so its password prompt keeps
+              # Ctrl+C and the terminal. The key is captured in a shell variable
+              # and piped to the relay, so it stays out of argv and the
+              # environment. The relay creates its socket only after the key is
+              # available, so the launcher waits here rather than timing out.
+              key=$(eval ${escapeShellArg apiKeyCommand})
+              printf '%s' "$key" | ${relayBin} \
                 --listen "$relay_socket" \
                 --upstream ${escapeShellArg llamaUrl} &
+              unset key
             ''
         }
         relay_pid=$!
 
-        attempt=0
-        while [ "$attempt" -lt 200 ]; do
-          if [ -S "$relay_socket" ]; then
-            break
-          fi
+        while [ ! -S "$relay_socket" ]; do
           if ! kill -0 "$relay_pid" 2>/dev/null; then
             echo "hutian: the LLM relay exited before creating its socket" >&2
             exit 1
           fi
-          attempt=$((attempt + 1))
           sleep 0.05
         done
-        if [ ! -S "$relay_socket" ]; then
-          echo "hutian: the LLM relay did not create its socket" >&2
-          exit 1
-        fi
+
+        # The sandbox handles Ctrl+C from here on.
+        trap cleanup INT TERM HUP
 
         # With a relay the sandbox needs no network at all. GVISOR_NETWORK can
         # still opt back in explicitly.

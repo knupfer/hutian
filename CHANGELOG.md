@@ -42,6 +42,9 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Fixed
 
+- `apiKeyCommand` now runs in the foreground, so interactive prompts such as
+  `passage` can wait for input and be cancelled with `Ctrl+C`. The launcher no
+  longer reports a missing relay socket while the command is still running.
 - Pasting large blocks of text no longer redraws the prompt once per character;
   a queued burst of input is rendered as a single frame.
 - The cursor stays blinking teal for the whole model turn, including shell tool

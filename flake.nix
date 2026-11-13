@@ -206,6 +206,7 @@
           probeLauncher = "${probe { }}/bin/hutian";
           readOnlyLauncher = "${probe { readOnly = true; }}/bin/hutian";
           keyLauncher = "${probe { apiKeyFile = "/run/secrets/hutian-key"; }}/bin/hutian";
+          keyCommandLauncher = "${probe { apiKeyCommand = "pass show k"; }}/bin/hutian";
           keyStoreRejected =
             !(builtins.tryEval (probe { apiKeyFile = "${builtins.storeDir}/hutian-key"; }).drvPath).success;
           keyConflictRejected =
@@ -284,6 +285,33 @@
                   "http://hutian-relay/v1/chat/completions"
                 ]
             )}
+            ${builtins.concatStringsSep "\n" (
+              map
+                (pattern: ''
+                  ${pkgs.gnugrep}/bin/grep -F -- ${lib.escapeShellArg pattern} ${keyCommandLauncher}
+                '')
+                [
+                  "hutian-llm-relay"
+                  "key=$(eval"
+                  "printf '%s'"
+                  "unset key"
+                  "trap 'exit 130' INT TERM HUP"
+                  "--llama-socket"
+                  "/run/hutian/llm.sock"
+                ]
+            )}
+            if ${pkgs.gnugrep}/bin/grep -F -- 'did not create its socket' ${keyCommandLauncher}; then
+              echo "the launcher must wait for the key command without a fixed timeout" >&2
+              exit 1
+            fi
+            if ${pkgs.gnugrep}/bin/grep -F -- '--key-stdin' ${keyCommandLauncher}; then
+              echo "the relay always reads the key from stdin" >&2
+              exit 1
+            fi
+            if ${pkgs.gnugrep}/bin/grep -F -- '--api-key' ${keyCommandLauncher}; then
+              echo "the launcher must not pass the API key as an argument" >&2
+              exit 1
+            fi
             if ${pkgs.gnugrep}/bin/grep -F -- '--key-file' ${keyLauncher}; then
               echo "the launcher must not pass the key file path to the relay" >&2
               exit 1
