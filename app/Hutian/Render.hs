@@ -21,6 +21,8 @@ module Hutian.Render
   , reset
   ) where
 
+import Data.Char (toUpper)
+import Numeric (showHex)
 import qualified Hutian.Ansi as Ansi
 import Hutian.Editor
   ( Prompt
@@ -138,14 +140,12 @@ startPromptText :: String
 startPromptText = clearLine
 
 prefixFor :: String -> PromptMode -> String
-prefixFor termPrompt TermMode = termPrompt
-prefixFor termPrompt ToolMode = termPrompt
 prefixFor _ LlmMode = "ask:\n"
+prefixFor termPrompt _ = termPrompt
 
 prefixForegroundFor :: PromptMode -> String
-prefixForegroundFor TermMode = boldVibrantPink
 prefixForegroundFor ToolMode = boldTeal
-prefixForegroundFor LlmMode = boldVibrantPink
+prefixForegroundFor _ = boldVibrantPink
 
 -- | How the terminal cursor should look for a given activity.
 data CursorStyle
@@ -189,9 +189,13 @@ boldVibrantPink,
   clearLine,
   reset :: String
 
+pinkColour, tealColour :: Ansi.Colour
+pinkColour = Ansi.rgb 255 20 147
+tealColour = Ansi.rgb 0 255 200
+
 pinkStyle, tealStyle, dimPinkStyle, dimTealStyle, grayStyle :: Ansi.Style
-pinkStyle = Ansi.bold <> Ansi.foreground (Ansi.rgb 255 20 147)
-tealStyle = Ansi.bold <> Ansi.foreground (Ansi.rgb 0 255 200)
+pinkStyle = Ansi.bold <> Ansi.foreground pinkColour
+tealStyle = Ansi.bold <> Ansi.foreground tealColour
 dimPinkStyle = Ansi.darkenStyle 0.6 pinkStyle
 dimTealStyle = Ansi.darkenStyle 0.6 tealStyle
 grayStyle = Ansi.darkenStyle 0.6 $ Ansi.foreground (Ansi.rgb 255 255 255)
@@ -201,8 +205,8 @@ boldTeal = Ansi.styleCode tealStyle
 dimPinkForeground = Ansi.styleCode dimPinkStyle
 dimTealForeground = Ansi.styleCode dimTealStyle
 grayForeground = Ansi.styleCode grayStyle
-pinkCursorColor = "\ESC]12;#FF1493\a"
-tealCursorColor = "\ESC]12;#00FFC8\a"
+pinkCursorColor = cursorColourCode pinkColour
+tealCursorColor = cursorColourCode tealColour
 resetCursorColor = "\ESC]112\a"
 hideCursorText = hideCursorCode
 showCursorText = showCursorCode
@@ -213,3 +217,13 @@ clearToEnd = clearFromCursorToScreenEndCode
 -- by clearing only from the cursor to the end.
 clearLine = "\ESC[K"
 reset = Ansi.styleCode Ansi.reset
+
+-- | Encode a 24-bit RGB colour as an OSC 12 cursor-colour sequence.
+cursorColourCode :: Ansi.Colour -> String
+cursorColourCode colour =
+  let (red, green, blue) = Ansi.colourChannels colour
+   in "\ESC]12;#" ++ hex red ++ hex green ++ hex blue ++ "\a"
+  where
+    hex channel = map toUpper (pad (showHex channel ""))
+    pad [digit] = '0' : [digit]
+    pad digits = digits

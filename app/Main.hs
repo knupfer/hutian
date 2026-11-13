@@ -225,34 +225,28 @@ runToolCall :: ModelShell -> Conversation -> ToolCall -> IO (Bool, Conversation)
 runToolCall policy conversation call =
   case toolCommand call of
     Left message ->
-      pure (False, appendToolResult (toolCallId call) ("tool error: " ++ message) conversation)
+      failWith ("tool error: " ++ message)
     Right command ->
       case policy of
         ModelShellDenied ->
-          pure
-            ( False
-            , appendToolResult (toolCallId call) "tool error: the model shell tool is disabled" conversation
-            )
+          failWith "tool error: the model shell tool is disabled"
         ModelShellAllowed -> do
           consoleWriteToolCommand (toolCallName call) command
-          conversation' <- executeShellTool conversation call command
-          pure (False, conversation')
+          execute command
         ModelShellAsk -> do
           approval <- confirmToolCommand (toolCallName call) command
           case approval of
-            ToolApproved -> do
-              conversation' <- executeShellTool conversation call command
-              pure (False, conversation')
+            ToolApproved -> execute command
             ToolDenied ->
-              pure
-                ( False
-                , appendToolResult
-                    (toolCallId call)
-                    "tool error: the user did not approve the shell command"
-                    conversation
-                )
+              failWith "tool error: the user did not approve the shell command"
             ToolAborted ->
               pure (True, appendToolResult (toolCallId call) abortedToolMessage conversation)
+  where
+    failWith message =
+      pure (False, appendToolResult (toolCallId call) message conversation)
+    execute command = do
+      conversation' <- executeShellTool conversation call command
+      pure (False, conversation')
 
 -- | Run a command the model is already allowed to execute. The caller is
 -- responsible for showing the command first.
@@ -273,10 +267,7 @@ runTerminalInput conversation text =
   case classifyTerminalInput text of
     NoTerminalInput -> pure conversation
     SingleLineInput line -> runTerminalLine conversation line
-    MultiLineInput script -> do
-      printOutputLabel TermMode
-      withGrayOutput (runStreamingCommand script)
-      pure (appendTerminal script conversation)
+    MultiLineInput script -> runTerminalScript conversation script script
 
 runTerminalLine :: Conversation -> String -> IO Conversation
 runTerminalLine conversation line =
@@ -285,10 +276,13 @@ runTerminalLine conversation line =
     CommandHelp -> do
       withGrayOutput (mapM_ consoleWriteLine helpText)
       pure (appendTerminal line conversation)
-    CommandShell commandLine -> do
-      printOutputLabel TermMode
-      withGrayOutput (runStreamingCommand commandLine)
-      pure (appendTerminal line conversation)
+    CommandShell commandLine -> runTerminalScript conversation line commandLine
+
+runTerminalScript :: Conversation -> String -> String -> IO Conversation
+runTerminalScript conversation recorded command = do
+  printOutputLabel TermMode
+  withGrayOutput (runStreamingCommand command)
+  pure (appendTerminal recorded conversation)
 
 runStreamingCommand :: String -> IO ()
 runStreamingCommand command =

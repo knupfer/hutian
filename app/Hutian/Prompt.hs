@@ -81,33 +81,18 @@ stepPrompt :: History -> Key -> PromptState -> PromptStep
 stepPrompt history key state =
   case promptAction mode current key of
     PromptSubmit ->
-      StepFinish
-        PromptSubmitted
-        current
-        state
-          { promptHistoryState = initialHistoryState
-          , promptBuffers = clearPrompt mode (promptBuffers state)
-          }
+      StepFinish PromptSubmitted current (resetState (clearPrompt mode))
     PromptExit -> StepFinish PromptExited current state
     PromptContinue ->
       StepRedraw
-        state
-          { promptHistoryState = initialHistoryState
-          , promptBuffers = storePrompt mode (applyKey KeyEnter (cursorToEnd current)) (promptBuffers state)
-          }
+        ( resetState
+            (storePrompt mode (applyKey KeyEnter (cursorToEnd current)))
+        )
     PromptClear ->
-      StepRedraw
-        state
-          { promptHistoryState = initialHistoryState
-          , promptBuffers = clearPrompt mode (promptBuffers state)
-          }
+      StepRedraw (resetState (clearPrompt mode))
     PromptEdit key' ->
       let updated = applyKey key' current
-          next =
-            state
-              { promptHistoryState = initialHistoryState
-              , promptBuffers = storePrompt mode updated (promptBuffers state)
-              }
+          next = resetState (storePrompt mode updated)
        in if sameBuffer current updated
             then StepMoveCursor updated next
             else StepRedraw next
@@ -125,6 +110,12 @@ stepPrompt history key state =
     mode = promptMode state
     current = activePrompt mode (promptBuffers state)
     entries = historyForMode mode history
+
+    resetState update =
+      state
+        { promptHistoryState = initialHistoryState
+        , promptBuffers = update (promptBuffers state)
+        }
 
     navigate step promptState =
       case step entries (promptHistoryState promptState) (activePrompt mode (promptBuffers promptState)) of

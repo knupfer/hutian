@@ -9,24 +9,16 @@ module Hutian.Markdown
   , finishMarkdownWith
   ) where
 
-import Data.Char (isControl, isDigit, isSpace)
+import Data.Char (isDigit, isSpace)
 import Data.List (intercalate, isPrefixOf, mapAccumL)
 import qualified Data.Text as Text
 import qualified Hutian.Ansi as Ansi
+import Hutian.Highlight (codeStyle, highlightLines, sanitize, sanitizeChar)
 import Skylighting
-  ( ANSIColorLevel (..)
-  , Color (..)
-  , FormatOptions (..)
+  ( Color (..)
   , Style (..)
   , TokenStyle (..)
-  , TokenizerConfig (..)
-  , zenburn
-  , defaultFormatOpts
-  , defaultSyntaxMap
-  , lookupSyntax
-  , tokenize
   )
-import Skylighting.Format.ANSI (formatANSI)
 
 data MarkdownState = MarkdownState
   { markdownFence :: Maybe Fence
@@ -262,32 +254,12 @@ isFenceClose fence line =
 highlightCode :: MarkdownColours -> String -> [String] -> [String]
 highlightCode _ _ [] = []
 highlightCode colours language codeLines =
-  case lookupSyntax (Text.pack language) defaultSyntaxMap of
-    Nothing -> fallback
-    Just syntax ->
-      case
-          tokenize
-            (TokenizerConfig defaultSyntaxMap False)
-            syntax
-            (Text.pack (intercalate "\n" (map sanitize codeLines)))
-        of
-          Left _ -> fallback
-          Right sourceLines ->
-            let rendered =
-                  lines
-                    ( Text.unpack
-                        ( formatANSI
-                            codeFormatOptions
-                            (darkenCodeStyle (coloursScale colours) codeStyle)
-                            sourceLines
-                        )
-                    )
-             in if null rendered then fallback else rendered
+  case highlightLines styledCodeStyle language codeLines of
+    Just rendered | not (null rendered) -> rendered
+    _ -> fallback
   where
+    styledCodeStyle = darkenCodeStyle (coloursScale colours) codeStyle
     fallback = map (styled (coloursCode colours)) codeLines
-
-codeFormatOptions :: FormatOptions
-codeFormatOptions = defaultFormatOpts {ansiColorLevel = ANSITrueColor}
 
 -- | Darken a Skylighting style before handing it to 'formatANSI'. This keeps
 -- Skylighting in charge of token rendering while still applying the dimming
@@ -315,13 +287,6 @@ darkenSkylightingColour factor (RGB red green blue) =
         Ansi.colourChannels
           (Ansi.darkenColour factor (Ansi.rgb red green blue))
    in RGB red' green' blue'
-
-codeStyle :: Style
-codeStyle =
-  zenburn
-    { defaultColor = Just (RGB 255 255 255)
-    , backgroundColor = Nothing
-    }
 
 highlightInline :: MarkdownContext -> String -> String
 highlightInline context = go
@@ -423,14 +388,6 @@ breakOn needle = go ""
       | needle `isPrefixOf` input =
           Just (reverse prefix, drop (length needle) input)
       | otherwise = go (character : prefix) rest
-
-sanitize :: String -> String
-sanitize = map sanitizeChar
-
-sanitizeChar :: Char -> Char
-sanitizeChar character
-  | isControl character && character /= '\t' = ' '
-  | otherwise = character
 
 styled :: Ansi.Style -> String -> String
 styled colour value = Ansi.styleCode colour ++ sanitize value

@@ -26,7 +26,8 @@ import System.Directory
 import System.Exit (ExitCode (..))
 import System.FilePath (getSearchPath, (</>))
 import System.Process
-  ( createProcess
+  ( CreateProcess
+  , createProcess
   , delegate_ctlc
   , proc
   , readCreateProcessWithExitCode
@@ -48,7 +49,7 @@ runShellCommand line =
   ( do
       (_, _, _, processHandle) <-
         createProcess
-          (proc "/bin/sh" ["-c", line])
+          (shellProcess line)
             { delegate_ctlc = False
             }
       void (waitForProcess processHandle)
@@ -61,10 +62,13 @@ runShellCommandOutput :: String -> IO (Either String CommandResult)
 runShellCommandOutput line =
   ( do
       (exitCode, output, errors) <-
-        readCreateProcessWithExitCode (proc "/bin/sh" ["-c", line]) ""
+        readCreateProcessWithExitCode (shellProcess line) ""
       pure (Right (CommandResult exitCode output errors))
   )
     `catch` \(err :: IOException) -> pure (Left ("sh: " ++ show err))
+
+shellProcess :: String -> CreateProcess
+shellProcess line = proc "/bin/sh" ["-c", line]
 
 -- | The text sent back to the model for a captured command.
 commandResultText :: CommandResult -> String

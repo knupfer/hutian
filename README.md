@@ -415,6 +415,7 @@ The code keeps pure logic separate from IO:
   `Hutian.Conversation` also represents tool calls and tool results.
 - `Hutian.History` owns the pure on-disk history codec.
 - `Hutian.Markdown` is a pure streaming renderer for Markdown and ANSI styles.
+- `Hutian.Highlight` wraps Skylighting for fenced code and shell input.
 - `Hutian.Syntax` highlights shell input for term mode and model-requested
   commands with Skylighting.
 - `Hutian.Llm` keeps SSE parsing, tool-call accumulation, request building, and
