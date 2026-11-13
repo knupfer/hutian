@@ -75,7 +75,8 @@ initialPromptState mode buffers =
     }
 
 -- | Apply one key to the prompt state. The result tells the driver whether to
--- redraw, move the cursor, ask for filesystem completion, or finish.
+-- redraw, move the cursor, ask for filesystem completion, or finish. Term mode
+-- is always available, including when the model's shell tool is disabled.
 stepPrompt :: History -> Key -> PromptState -> PromptStep
 stepPrompt history key state =
   case promptAction mode current key of

@@ -22,6 +22,7 @@ import Hutian.Llm
   , runLlm
   , runLlmWithTools
   )
+import Hutian.Policy (ShellAccess (..))
 import Hutian.Render (dimTealForeground, grayForeground)
 import Network.Socket
   ( Family (AF_INET)
@@ -93,6 +94,7 @@ settingsFor port =
     , settingModel = ModelName "test-model"
     , settingSystemPrompt = SystemPrompt "system prompt"
     , settingSocket = Nothing
+    , settingShell = ShellAllowed
     }
 
 emptyResult :: LlmResult

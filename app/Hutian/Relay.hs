@@ -10,8 +10,8 @@
 -- * the relay reads one request body and never interprets it as text;
 -- * it sends that body to exactly one upstream 'Request', built once from the
 --   configured URL;
--- * the only headers it sends are the three fixed ones in 'relayRequest',
---   including the Bearer key;
+-- * the only headers it sends are the fixed ones in 'relayRequest', including
+--   the Bearer key when one is configured;
 -- * it never follows a redirect, and it returns only a status code plus the
 --   upstream body.
 --
@@ -71,6 +71,7 @@ data RelaySettings = RelaySettings
   { relayListenPath :: FilePath
   , relayUpstream :: String
   , relayMaxBody :: Int
+  , relayNoAuth :: Bool
   }
   deriving stock (Eq, Show)
 
@@ -79,26 +80,31 @@ data RelaySettings = RelaySettings
 defaultRelayMaxBody :: Int
 defaultRelayMaxBody = 64 * 1024 * 1024
 
--- | Parse the relay command line. The key is never an argument.
+-- | Parse the relay command line. The key is never an argument. With
+-- @--no-auth@ the relay does not read standard input and forwards without an
+-- @Authorization@ header.
 parseRelaySettings :: [String] -> Either String RelaySettings
-parseRelaySettings = go Nothing Nothing defaultRelayMaxBody
+parseRelaySettings = go Nothing Nothing defaultRelayMaxBody False
   where
-    go listenPath upstream maxBody [] =
+    go listenPath upstream maxBody noAuth [] =
       RelaySettings
         <$> required "--listen" listenPath
         <*> required "--upstream" upstream
         <*> pure maxBody
-    go _ _ _ ["--listen"] = missing "--listen"
-    go _ _ _ ["--upstream"] = missing "--upstream"
-    go _ _ _ ["--max-body"] = missing "--max-body"
-    go _ upstream maxBody ("--listen" : value : rest) =
-      go (Just value) upstream maxBody rest
-    go listenPath _ maxBody ("--upstream" : value : rest) =
-      go listenPath (Just value) maxBody rest
-    go listenPath upstream _ ("--max-body" : value : rest) = do
+        <*> pure noAuth
+    go _ _ _ _ ["--listen"] = missing "--listen"
+    go _ _ _ _ ["--upstream"] = missing "--upstream"
+    go _ _ _ _ ["--max-body"] = missing "--max-body"
+    go _ upstream maxBody noAuth ("--listen" : value : rest) =
+      go (Just value) upstream maxBody noAuth rest
+    go listenPath _ maxBody noAuth ("--upstream" : value : rest) =
+      go listenPath (Just value) maxBody noAuth rest
+    go listenPath upstream _ noAuth ("--max-body" : value : rest) = do
       parsed <- parsePositive "--max-body" value
-      go listenPath upstream parsed rest
-    go _ _ _ (argument : _) =
+      go listenPath upstream parsed noAuth rest
+    go listenPath upstream maxBody _ ("--no-auth" : rest) =
+      go listenPath upstream maxBody True rest
+    go _ _ _ _ (argument : _) =
       Left ("unknown argument: " ++ argument ++ "\n" ++ relayUsage)
 
     required name value =
@@ -117,8 +123,8 @@ parsePositive flag value =
 
 relayUsage :: String
 relayUsage =
-  "usage: hutian-llm-relay --listen PATH --upstream URL [--max-body BYTES]\n"
-    ++ "the API key is read from standard input"
+  "usage: hutian-llm-relay --listen PATH --upstream URL [--max-body BYTES] [--no-auth]\n"
+    ++ "the API key is read from standard input unless --no-auth is given"
 
 -- | Read the key from the given handle. The launcher pipes it from the
 -- configured file or command into standard input, so the key never appears in
@@ -158,7 +164,7 @@ redactKey key message
 data RelayRuntime = RelayRuntime
   { runtimeListenPath :: FilePath
   , runtimeMaxBody :: Int
-  , runtimeKey :: BS.ByteString
+  , runtimeKey :: Maybe BS.ByteString
   , runtimeManager :: Manager
   , runtimeUpstream :: Request
   , runtimeLogger :: RelayLogger
@@ -170,7 +176,7 @@ type RelayLogger = String -> IO ()
 stderrLogger :: RelayLogger
 stderrLogger message = hPutStrLn stderr ("hutian-llm-relay: " ++ message)
 
-newRelayRuntime :: RelayLogger -> RelaySettings -> BS.ByteString -> IO RelayRuntime
+newRelayRuntime :: RelayLogger -> RelaySettings -> Maybe BS.ByteString -> IO RelayRuntime
 newRelayRuntime logger settings key = do
   upstream <- parseRequest (relayUpstream settings)
   manager <- newManager tlsManagerSettings
@@ -250,8 +256,11 @@ relayRequest runtime body =
     , requestHeaders =
         [ ("Content-Type", "application/json")
         , ("Accept", "text/event-stream")
-        , ("Authorization", "Bearer " <> runtimeKey runtime)
         ]
+          ++ maybe
+            []
+            (\key -> [("Authorization", "Bearer " <> key)])
+            (runtimeKey runtime)
     , requestBody = RequestBodyLBS (BL.fromStrict body)
     , responseTimeout = responseTimeoutNone
     , redirectCount = 0
@@ -299,4 +308,5 @@ sendError connection code message =
 
 logRelay :: RelayRuntime -> String -> IO ()
 logRelay runtime message =
-  runtimeLogger runtime (redactKey (runtimeKey runtime) message)
+  runtimeLogger runtime $
+    maybe message (`redactKey` message) (runtimeKey runtime)

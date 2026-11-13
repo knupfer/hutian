@@ -24,6 +24,8 @@
         "llamaUrl"
         "readOnly"
         "nix"
+        "internet"
+        "shell"
       ];
 
       requireOptions =
@@ -86,6 +88,8 @@
           llamaUrl = requireNonEmptyString "llamaUrl" checked.llamaUrl;
           readOnly = requireBool "readOnly" checked.readOnly;
           nix = requireBool "nix" checked.nix;
+          internet = requireBool "internet" checked.internet;
+          shell = requireBool "shell" checked.shell;
           apiKeyFile = optionalNonEmptyString "apiKeyFile" args;
           apiKeyCommand = optionalNonEmptyString "apiKeyCommand" args;
         };
@@ -102,6 +106,8 @@
         llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
         readOnly = false;
         nix = false;
+        internet = true;
+        shell = true;
       };
 
       # Always build the Haskell package from this flake's source.
@@ -169,6 +175,8 @@
       #     llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
       #     readOnly = false;
       #     nix = false;
+      #     internet = true;
+      #     shell = true;
       #   }
       #
       # Or, for a minimal consumer flake:
@@ -181,6 +189,8 @@
       #       llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
       #       readOnly = false;
       #       nix = false;
+      #       internet = true;
+      #       shell = true;
       #     };
       lib = { inherit mkHutianShell mkHutianShellFlake; };
 
@@ -206,6 +216,8 @@
           relayPackage = pkgs.callPackage ./nix/hutian-shell.nix { src = self; };
           probeLauncher = "${probe { }}/bin/hutian";
           readOnlyLauncher = "${probe { readOnly = true; }}/bin/hutian";
+          noInternetLauncher = "${probe { internet = false; }}/bin/hutian";
+          noShellLauncher = "${probe { shell = false; }}/bin/hutian";
           keyLauncher = "${probe { apiKeyFile = "/run/secrets/hutian-key"; }}/bin/hutian";
           keyCommandLauncher = "${probe { apiKeyCommand = "pass show k"; }}/bin/hutian";
           keyStoreRejected =
@@ -228,6 +240,14 @@
             "http://probe.invalid/v1/chat/completions"
             "SYSTEM_CERTIFICATE_PATH"
             "ca-bundle.crt"
+            "hutian-llm-relay"
+            "--no-auth"
+            "hutian-relay/v1/chat/completions"
+            "--llama-socket"
+            "/run/hutian/llm.sock"
+            "relay_dir:/run/hutian"
+            "--host-uds=open"
+            "--allow-shell"
           ];
         in
         {
@@ -251,6 +271,24 @@
               echo "readOnly = false must not request a read-only working directory" >&2
               exit 1
             fi
+            ${pkgs.coreutils}/bin/touch $out
+          '';
+          internet-option = pkgs.runCommand "hutian-internet-option-check" { } ''
+            ${pkgs.gnugrep}/bin/grep -F 'GVISOR_NETWORK:-sandbox' ${probeLauncher}
+            ${pkgs.gnugrep}/bin/grep -F 'network=none' ${noInternetLauncher}
+            if ${pkgs.gnugrep}/bin/grep -F 'GVISOR_NETWORK:-sandbox' ${noInternetLauncher}; then
+              echo "internet = false must not allow GVISOR_NETWORK to re-enable networking" >&2
+              exit 1
+            fi
+            ${pkgs.coreutils}/bin/touch $out
+          '';
+          shell-option = pkgs.runCommand "hutian-shell-option-check" { } ''
+            ${pkgs.gnugrep}/bin/grep -F -- '--allow-shell' ${probeLauncher}
+            if ${pkgs.gnugrep}/bin/grep -F -- '--allow-shell' ${noShellLauncher}; then
+              echo "shell = false must not grant the model's shell tool" >&2
+              exit 1
+            fi
+            ${pkgs.gnugrep}/bin/grep -F 'hutian-llm-relay' ${noShellLauncher}
             ${pkgs.coreutils}/bin/touch $out
           '';
           launcher-volumes = pkgs.runCommand "hutian-launcher-volume-check" { } ''
@@ -282,7 +320,7 @@
                   "/run/hutian/llm.sock"
                   "relay_dir:/run/hutian"
                   "--host-uds=open"
-                  "GVISOR_NETWORK:-none"
+                  "GVISOR_NETWORK:-sandbox"
                   "http://hutian-relay/v1/chat/completions"
                 ]
             )}
@@ -326,12 +364,12 @@
               echo "the launcher must not pass the API key as an argument" >&2
               exit 1
             fi
-            if ${pkgs.gnugrep}/bin/grep -F -- 'hutian-llm-relay' ${probeLauncher}; then
-              echo "a launcher without apiKeyFile must not start the relay" >&2
+            if ${pkgs.gnugrep}/bin/grep -F -- '--no-auth' ${keyLauncher}; then
+              echo "a launcher with an API key must not disable authentication" >&2
               exit 1
             fi
-            if ${pkgs.gnugrep}/bin/grep -F -- '--llama-socket' ${probeLauncher}; then
-              echo "a launcher without apiKeyFile must use the direct transport" >&2
+            if ${pkgs.gnugrep}/bin/grep -F -- '--no-auth' ${keyCommandLauncher}; then
+              echo "a launcher with an API key must not disable authentication" >&2
               exit 1
             fi
             ${pkgs.coreutils}/bin/touch $out
@@ -357,6 +395,26 @@
             kill -INT "$relay_pid"
             ${pkgs.coreutils}/bin/sleep 0.2
             kill -0 "$relay_pid"
+            test -S "$socket_dir/llm.sock"
+            kill "$relay_pid"
+            wait "$relay_pid" 2>/dev/null || true
+            ${pkgs.coreutils}/bin/rm -rf "$socket_dir"
+            ${pkgs.coreutils}/bin/touch $out
+          '';
+          relay-no-key = pkgs.runCommand "hutian-relay-no-key-check" { } ''
+            socket_dir=$(${pkgs.coreutils}/bin/mktemp -d)
+            relay=${relayPackage}/bin/hutian-llm-relay
+            # No standard input is provided: --no-auth must not read a key.
+            "$relay" \
+              --listen "$socket_dir/llm.sock" \
+              --upstream http://127.0.0.1:1/v1/chat/completions \
+              --no-auth &
+            relay_pid=$!
+            trap 'kill "$relay_pid" 2>/dev/null || true' EXIT
+            for _ in $(${pkgs.coreutils}/bin/seq 1 200); do
+              [ -S "$socket_dir/llm.sock" ] && break
+              ${pkgs.coreutils}/bin/sleep 0.01
+            done
             test -S "$socket_dir/llm.sock"
             kill "$relay_pid"
             wait "$relay_pid" 2>/dev/null || true

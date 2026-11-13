@@ -20,6 +20,7 @@ import Hutian.Conversation (ConversationEntry (..))
 import Hutian.Http.Wire (recvAll, recvExactly, recvUntil)
 import Hutian.Interrupt (newInterruptFlag)
 import Hutian.Llm (LlmSettings (..), LlmUrl (..), ModelName (..), SystemPrompt (..), runLlm)
+import Hutian.Policy (ShellAccess (..))
 import Hutian.Relay
   ( RelayRuntime
   , RelaySettings (..)
@@ -108,6 +109,7 @@ settingsTests =
                 "/tmp/llm.sock"
                 "https://example.test/v1/chat/completions"
                 1024
+                False
             )
     , testCase "parseRelaySettings uses the default body limit" $
         parseRelaySettings
@@ -121,6 +123,7 @@ settingsTests =
                 "/run/hutian/llm.sock"
                 "http://127.0.0.1:8080/v1/chat/completions"
                 defaultRelayMaxBody
+                False
             )
     , testCase "parseRelaySettings rejects missing, empty, and invalid options" $ do
         assertLeftNames "--listen" (parseRelaySettings ["--upstream", "http://x"])
@@ -139,6 +142,21 @@ settingsTests =
           "--max-body"
           (parseRelaySettings ["--listen", "/tmp/s", "--upstream", "http://x", "--max-body", "nope"])
         assertLeftNames "unknown" (parseRelaySettings ["--unknown"])
+    , testCase "parseRelaySettings accepts --no-auth without a value" $
+        parseRelaySettings
+          [ "--listen"
+          , "/run/hutian/llm.sock"
+          , "--upstream"
+          , "http://127.0.0.1:8080/v1/chat/completions"
+          , "--no-auth"
+          ]
+          @?= Right
+            ( RelaySettings
+                "/run/hutian/llm.sock"
+                "http://127.0.0.1:8080/v1/chat/completions"
+                defaultRelayMaxBody
+                True
+            )
     , testCase "loadRelayKey reads, trims, and rejects empty input" $
         withTemporaryDirectory "hutian-relay-key" $ \directory -> do
           let path = directory ++ "/key"
@@ -228,6 +246,16 @@ wireTests =
           assertNotInfix "Cookie:" headPart
           assertNotInfix "X-Evil" headPart
           assertNotInfix "client-key" upstream
+    , testCase "relay omits Authorization when no key is configured" $
+        withUpstream streamingResponse $ \port requests -> do
+          runtime <- runtimeForWithoutKey port defaultRelayMaxBody
+          (status, _) <- withRelaySession runtime (sendBody "{}")
+          status @?= 200
+          upstream <- awaitMVar "upstream did not receive a request" requests
+          let (headPart, _) = BS.breakSubstring "\r\n\r\n" upstream
+          assertInfix "Content-Type: application/json" headPart
+          assertInfix "Accept: text/event-stream" headPart
+          assertNotInfix "Authorization:" headPart
     , testCase "relay rejects a body larger than the limit" $
         withUpstream streamingResponse $ \port requests -> do
           runtime <- runtimeFor port 8
@@ -256,8 +284,9 @@ wireTests =
                   "/unused.sock"
                   ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
                   defaultRelayMaxBody
+                  False
               )
-              "s3cret-key"
+              (Just "s3cret-key")
           (client, server) <- socketPair AF_UNIX Stream defaultProtocol
           done <- newEmptyMVar
           _ <-
@@ -293,8 +322,9 @@ upstreamTests =
                   "/unused.sock"
                   ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions?stream=true")
                   defaultRelayMaxBody
+                  False
               )
-              "s3cret-key"
+              (Just "s3cret-key")
           _ <- withRelaySession runtime (sendBody "{}")
           upstream <- awaitMVar "upstream did not receive a request" requests
           assertInfix "POST /v1/chat/completions?stream=true HTTP/1.1" upstream
@@ -331,6 +361,7 @@ endToEndTests =
                     (ModelName "test-model")
                     (SystemPrompt "system prompt")
                     (Just socketPath)
+                    ShellAllowed
             runtime <-
               newRelayRuntime
                 silentLogger
@@ -338,8 +369,9 @@ endToEndTests =
                     socketPath
                     ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
                     defaultRelayMaxBody
+                    False
                 )
-                "s3cret-key"
+                (Just "s3cret-key")
             withRelay runtime socketPath $ do
               permissions <- fileMode <$> getFileStatus socketPath
               permissions .&. 0o777 @?= 0o600
@@ -366,8 +398,9 @@ endToEndTests =
                   socketPath
                   "http://127.0.0.1:1/v1/chat/completions"
                   defaultRelayMaxBody
+                  False
               )
-              "s3cret-key"
+              (Just "s3cret-key")
           withRelay runtime socketPath (pure ())
           exists <- doesPathExist socketPath
           assertBool "the relay socket should be removed" (not exists)
@@ -434,8 +467,21 @@ runtimeFor port maxBody =
         "/unused.sock"
         ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
         maxBody
+        False
     )
-    "s3cret-key"
+    (Just "s3cret-key")
+
+runtimeForWithoutKey :: Int -> Int -> IO RelayRuntime
+runtimeForWithoutKey port maxBody =
+  newRelayRuntime
+    silentLogger
+    ( RelaySettings
+        "/unused.sock"
+        ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
+        maxBody
+        True
+    )
+    Nothing
 
 silentLogger :: String -> IO ()
 silentLogger _ = pure ()

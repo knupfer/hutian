@@ -38,6 +38,7 @@ runLlmWithTools interruptFlag settings conversation prompt
   | otherwise =
       runRequest interruptFlag settings $
         requestBodyFor
+          (settingShell settings)
           (apiFor (settingUrl settings))
           (settingModel settings)
           (settingSystemPrompt settings)
@@ -49,6 +50,7 @@ runLlmContinuation :: InterruptFlag -> LlmSettings -> Conversation -> IO LlmResu
 runLlmContinuation interruptFlag settings conversation =
   runRequest interruptFlag settings $
     continuationBodyFor
+      (settingShell settings)
       (apiFor (settingUrl settings))
       (settingModel settings)
       (settingSystemPrompt settings)

@@ -33,6 +33,15 @@
       # Include Nix and connect it to the host Nix daemon.
       nix = false;
 
+      # Permit the sandbox to use the network. When false, the sandbox gets
+      # GVisor's none network mode and GVISOR_NETWORK cannot re-enable it.
+      internet = true;
+
+      # Grant the model's shell tool. Term mode is always available. When
+      # false, the tool is not advertised and the model's tool calls are
+      # refused.
+      shell = true;
+
       systemPrompt = ''
         You are a coding agent operating inside the Hutian sandbox.
 

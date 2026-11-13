@@ -67,6 +67,7 @@ import Hutian.Markdown
   , renderMarkdown
   , renderMarkdownWith
   )
+import Hutian.Policy (ShellAccess (..))
 import Hutian.Render (boldTeal, dimTealForeground, grayForeground, reset)
 
 -- | Connection settings supplied by the launcher.
@@ -75,6 +76,8 @@ data LlmSettings = LlmSettings
   , settingModel :: ModelName
   , settingSystemPrompt :: SystemPrompt
   , settingSocket :: Maybe FilePath
+  -- | Whether the model may call the shell tool. Term mode is unaffected.
+  , settingShell :: ShellAccess
   }
   deriving stock (Eq, Show)
 
@@ -97,42 +100,46 @@ data LlmResult = LlmResult
 emptyLlmResult :: LlmResult
 emptyLlmResult = LlmResult Nothing []
 
--- | Parse the launcher-provided connection settings. All three options are
--- required so the shell never falls back to ambient environment variables.
--- '--llama-socket' is optional and moves the HTTP request to the host relay.
+-- | Parse the launcher-provided connection settings. All three connection
+-- options are required so the shell never falls back to ambient environment
+-- variables. '--llama-socket' is optional and moves the HTTP request to the
+-- host relay. '--allow-shell' grants the model the shell tool; its absence
+-- only denies that tool, not the user's term mode.
 parseLlmSettings :: [String] -> Either String LlmSettings
-parseLlmSettings = go Nothing Nothing Nothing Nothing
+parseLlmSettings = go Nothing Nothing Nothing Nothing ShellDenied
   where
-    go url model systemPrompt socket [] =
+    go url model systemPrompt socket shell [] =
       case (url, model, systemPrompt) of
         (Just parsedUrl, Just parsedModel, Just parsedSystemPrompt) ->
-          settingsFrom parsedUrl parsedModel parsedSystemPrompt socket
+          settingsFrom parsedUrl parsedModel parsedSystemPrompt socket shell
         _ -> Left (missingMessage (missingArguments url model systemPrompt))
-    go _ _ _ _ ["--llama-url"] = missingValue "--llama-url"
-    go _ _ _ _ ["--model"] = missingValue "--model"
-    go _ _ _ _ ["--system-prompt"] = missingValue "--system-prompt"
-    go _ _ _ _ ["--llama-socket"] = missingValue "--llama-socket"
-    go _ model systemPrompt socket ("--llama-url" : value : rest) =
-      go (Just (LlmUrl value)) model systemPrompt socket rest
-    go url _ systemPrompt socket ("--model" : value : rest) =
-      go url (Just (ModelName value)) systemPrompt socket rest
-    go url model _ socket ("--system-prompt" : value : rest) =
-      go url model (Just (SystemPrompt value)) socket rest
-    go url model systemPrompt _ ("--llama-socket" : value : rest) =
-      go url model systemPrompt (Just value) rest
-    go _ _ _ _ (argument : _) =
+    go _ _ _ _ _ ["--llama-url"] = missingValue "--llama-url"
+    go _ _ _ _ _ ["--model"] = missingValue "--model"
+    go _ _ _ _ _ ["--system-prompt"] = missingValue "--system-prompt"
+    go _ _ _ _ _ ["--llama-socket"] = missingValue "--llama-socket"
+    go url model systemPrompt socket _ ("--allow-shell" : rest) =
+      go url model systemPrompt socket ShellAllowed rest
+    go _ model systemPrompt socket shell ("--llama-url" : value : rest) =
+      go (Just (LlmUrl value)) model systemPrompt socket shell rest
+    go url _ systemPrompt socket shell ("--model" : value : rest) =
+      go url (Just (ModelName value)) systemPrompt socket shell rest
+    go url model _ socket shell ("--system-prompt" : value : rest) =
+      go url model (Just (SystemPrompt value)) socket shell rest
+    go url model systemPrompt _ shell ("--llama-socket" : value : rest) =
+      go url model systemPrompt (Just value) shell rest
+    go _ _ _ _ _ (argument : _) =
       Left ("unknown argument: " ++ argument ++ "\n" ++ llmUsage)
 
     missingValue flag = Left ("missing value for " ++ flag ++ "\n" ++ llmUsage)
 
 -- | Reject empty URLs, model names, and socket paths; an empty system prompt
 -- is allowed.
-settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Maybe FilePath -> Either String LlmSettings
-settingsFrom url model systemPrompt socket
+settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Maybe FilePath -> ShellAccess -> Either String LlmSettings
+settingsFrom url model systemPrompt socket shell
   | null (unLlmUrl url) = Left ("empty value for --llama-url\n" ++ llmUsage)
   | null (unModelName model) = Left ("empty value for --model\n" ++ llmUsage)
   | maybe False null socket = Left ("empty value for --llama-socket\n" ++ llmUsage)
-  | otherwise = Right (LlmSettings url model systemPrompt socket)
+  | otherwise = Right (LlmSettings url model systemPrompt socket shell)
 
 missingMessage :: [String] -> String
 missingMessage missing =
@@ -159,7 +166,7 @@ missingArguments url model systemPrompt =
 
 llmUsage :: String
 llmUsage =
-  "usage: hutian-shell --llama-url URL --model MODEL --system-prompt PROMPT [--llama-socket PATH]"
+  "usage: hutian-shell --llama-url URL --model MODEL --system-prompt PROMPT [--llama-socket PATH] [--allow-shell]"
 
 data Api
   = ChatApi
@@ -171,10 +178,10 @@ apiFor (LlmUrl url)
   | "/v1/chat/completions" `isInfixOf` url = ChatApi
   | otherwise = CompletionApi
 
-requestBodyFor :: Api -> ModelName -> SystemPrompt -> Conversation -> String -> Aeson.Value
-requestBodyFor api model systemPrompt conversation prompt =
+requestBodyFor :: ShellAccess -> Api -> ModelName -> SystemPrompt -> Conversation -> String -> Aeson.Value
+requestBodyFor shell api model systemPrompt conversation prompt =
   case api of
-    ChatApi -> chatBody model (requestMessages (unSystemPrompt systemPrompt) conversation prompt)
+    ChatApi -> chatBody shell model (requestMessages (unSystemPrompt systemPrompt) conversation prompt)
     CompletionApi ->
       object
         [ "model" .= unModelName model
@@ -183,10 +190,10 @@ requestBodyFor api model systemPrompt conversation prompt =
         ]
 
 -- | Build a follow-up request after tool results, without a new user message.
-continuationBodyFor :: Api -> ModelName -> SystemPrompt -> Conversation -> Aeson.Value
-continuationBodyFor api model systemPrompt conversation =
+continuationBodyFor :: ShellAccess -> Api -> ModelName -> SystemPrompt -> Conversation -> Aeson.Value
+continuationBodyFor shell api model systemPrompt conversation =
   case api of
-    ChatApi -> chatBody model (continuationMessages (unSystemPrompt systemPrompt) conversation)
+    ChatApi -> chatBody shell model (continuationMessages (unSystemPrompt systemPrompt) conversation)
     CompletionApi ->
       object
         [ "model" .= unModelName model
@@ -194,15 +201,22 @@ continuationBodyFor api model systemPrompt conversation =
         , "stream" .= True
         ]
 
-chatBody :: ModelName -> [ChatMessage] -> Aeson.Value
-chatBody model messages =
-  object
+chatBody :: ShellAccess -> ModelName -> [ChatMessage] -> Aeson.Value
+chatBody shell model messages =
+  object $
     [ "model" .= unModelName model
     , "messages" .= map messageValue messages
     , "stream" .= True
-    , "tools" .= toolDefinitions
-    , "tool_choice" .= ("auto" :: String)
     ]
+      ++ toolFields
+  where
+    toolFields =
+      case shell of
+        ShellDenied -> []
+        ShellAllowed ->
+          [ "tools" .= toolDefinitions
+          , "tool_choice" .= ("auto" :: String)
+          ]
 
 messageValue :: ChatMessage -> Aeson.Value
 messageValue message =

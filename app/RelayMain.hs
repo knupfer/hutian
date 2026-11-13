@@ -9,6 +9,7 @@ import Hutian.Relay
   , loadRelayKey
   , newRelayRuntime
   , parseRelaySettings
+  , relayNoAuth
   , runRelay
   , stderrLogger
   )
@@ -27,7 +28,10 @@ main = do
   case parseRelaySettings arguments of
     Left message -> failWith message
     Right settings -> do
-      keyResult <- loadRelayKey stdin
+      keyResult <-
+        if relayNoAuth settings
+          then pure (Right Nothing)
+          else fmap (fmap Just) (loadRelayKey stdin)
       case keyResult of
         Left message -> failWith message
         Right key -> do

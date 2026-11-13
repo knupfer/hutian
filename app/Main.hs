@@ -65,8 +65,10 @@ import Hutian.Llm
   , parseLlmSettings
   , runLlmContinuation
   , runLlmWithTools
+  , settingShell
   , toolCommand
   )
+import Hutian.Policy (ShellAccess (..))
 import Hutian.Output (grayOutputText)
 import Hutian.Shell
   ( CommandResult (..)
@@ -167,12 +169,11 @@ historyFileFor TermHistory = termHistoryFile
 historyFileFor LlmHistory = llmHistoryFile
 
 runInput :: LlmSettings -> InterruptFlag -> PromptMode -> String -> Conversation -> IO Conversation
-runInput settings interruptFlag LlmMode text conversation =
-  runLlmInput settings interruptFlag conversation text
-runInput _ _ TermMode text conversation =
-  runTerminalInput conversation text
-runInput _ _ ToolMode text conversation =
-  runTerminalInput conversation text
+runInput settings interruptFlag mode text conversation =
+  case mode of
+    LlmMode -> runLlmInput settings interruptFlag conversation text
+    TermMode -> runTerminalInput conversation text
+    ToolMode -> pure conversation
 
 -- | Run a prompt through the model, executing any shell tools it requests and
 -- feeding the results back until it produces a final answer.
@@ -190,7 +191,11 @@ continueLlm :: LlmSettings -> InterruptFlag -> Conversation -> LlmResult -> IO C
 continueLlm settings interruptFlag conversation result
   | null (llmToolCalls result) = pure conversation
   | otherwise = do
-      conversation' <- runToolCalls conversation (llmToolCalls result)
+      conversation' <-
+        runToolCalls
+          (settingShell settings)
+          conversation
+          (llmToolCalls result)
       next <- runLlmContinuation interruptFlag settings conversation'
       continueLlm
         settings
@@ -198,11 +203,13 @@ continueLlm settings interruptFlag conversation result
         (appendResult Nothing (llmResponseText next) (llmToolCalls next) conversation')
         next
 
-runToolCalls :: Conversation -> [ToolCall] -> IO Conversation
-runToolCalls = foldM runToolCall
+runToolCalls :: ShellAccess -> Conversation -> [ToolCall] -> IO Conversation
+runToolCalls access = foldM (runToolCall access)
 
-runToolCall :: Conversation -> ToolCall -> IO Conversation
-runToolCall conversation call =
+runToolCall :: ShellAccess -> Conversation -> ToolCall -> IO Conversation
+runToolCall ShellDenied conversation call =
+  pure (appendToolResult (toolCallId call) "tool error: shell access is disabled" conversation)
+runToolCall ShellAllowed conversation call =
   case toolCommand call of
     Left message ->
       pure (appendToolResult (toolCallId call) ("tool error: " ++ message) conversation)

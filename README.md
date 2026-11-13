@@ -20,10 +20,16 @@ switch to term mode, where the input has a bold pink `shell:` line above it and
 submitted text runs through BusyBox `ash`, so shell builtins and redirection
 work as expected.
 
-In LLM mode the model can also call the `shell` tool. Commands requested by the
-model run through the same `/bin/sh -c` execution path as term mode, and are
-shown with a bold teal `tool shell:` line. Shell output is preceded by a
-dimmed pink `output:` line and tool output by a dimmed teal `tool output:` line.
+The model's `shell` tool is granted by the mandatory `shell` option. Term mode
+is always available. When `shell = false`, the model is never told that a shell
+tool exists and any tool call is refused, but you can still press `Ctrl+X` and
+run commands yourself.
+
+In LLM mode the model can also call the `shell` tool when shell access is
+granted. Commands requested by the model run through the same `/bin/sh -c`
+execution path as term mode, and are shown with a bold teal `tool shell:` line.
+Shell output is preceded by a dimmed pink `output:` line and tool output by a
+dimmed teal `tool output:` line.
 
 ## Quick start
 
@@ -49,9 +55,10 @@ is read-only.
 
 ## Input modes
 
-The prompt starts in llm mode. `Ctrl+X` switches between llm mode and term
-mode. Each mode keeps its own input buffer: switching saves the current text
-and restores the text of the mode being entered. Submitted text is sent to
+The prompt starts in llm mode. `Ctrl+X` always switches between llm mode and
+term mode, even when the model's shell tool is disabled with `shell = false`.
+Each mode keeps its own input buffer: switching saves the current text and
+restores the text of the mode being entered. Submitted text is sent to
 llama.cpp in llm mode and executed with `/bin/sh -c` in term mode.
 
 The common editing keys are:
@@ -86,10 +93,10 @@ Every LLM request includes the current session's prior conversation: earlier
 LLM prompts, assistant replies, commands submitted in term mode, and tool
 calls with their results.
 
-The model can request shell commands through the `shell` tool. Hutian runs each
-command with `/bin/sh -c` in the sandbox working directory, streams its output
-to the terminal in gray under a dimmed teal `tool output:` line, and sends the
-output back to the model. Every call runs in a fresh shell, so `cd`, exported
+When `shell = true`, the model can request shell commands through the `shell`
+tool. Hutian runs each command with `/bin/sh -c` in the sandbox working
+directory, streams its output to the terminal in gray under a dimmed teal
+`tool output:` line, and sends the output back to the model. Every call runs in a fresh shell, so `cd`, exported
 variables, and other shell state do not persist between calls. The requested
 command is shown under a bold teal `tool shell:` line, distinguishing it from
 commands typed by the user.
@@ -115,10 +122,10 @@ Term command history is stored in `/tmp/hutian-shell-history`, and LLM prompt
 history in `/tmp/hutian-llm-history`.
 
 The flake requires explicit `packages`, `systemPrompt`, `model`, `llamaUrl`,
-`readOnly`, and `nix` options. Hutian expects an OpenAI-compatible llama.cpp
-chat endpoint; a native `/completion` URL is also supported. Both `http://` and
-`https://` URLs work, and HTTPS endpoints are verified against the CA bundle
-from nixpkgs:
+`readOnly`, `nix`, `internet`, and `shell` options. Hutian expects an
+OpenAI-compatible llama.cpp chat endpoint; a native `/completion` URL is also
+supported. Both `http://` and `https://` URLs work, and HTTPS endpoints are
+verified against the CA bundle from nixpkgs:
 
 ```text
 https://llama.example.test/v1/chat/completions
@@ -130,15 +137,26 @@ Hutian-specific environment variables. The sandbox receives the CA bundle path
 as `SYSTEM_CERTIFICATE_PATH` so the Haskell HTTP client can verify TLS
 certificates.
 
-The sandbox uses gVisor's `sandbox` network mode by default, which can reach a
-server bound to the host's loopback interface. When an API key is configured,
-the default becomes `none` instead; see [API keys](#api-keys).
+Hutian always routes model traffic through the host relay, whether or not an
+API key is configured. The sandbox uses gVisor's `sandbox` network mode by
+default when `internet = true`; with `internet = false` it always uses `none`,
+regardless of `GVISOR_NETWORK`. The relay itself uses a Unix socket, so model
+traffic still works without sandbox networking. See
+[Relay and API keys](#relay-and-api-keys).
 
-## API keys
+## Relay and API keys
 
-Hutian can keep an API key on the host and give the sandbox only a private
-relay socket. Pass `apiKeyFile` or `apiKeyCommand` to `mkHutianShellFlake` or
-`mkHutianShell`:
+Hutian always routes model traffic through a host-side relay. The shell is
+launched with `--llama-socket /run/hutian/llm.sock` and the logical URL
+`http://hutian-relay/...`, which preserves the chat or completion API shape
+without exposing the real upstream host or any credentials embedded in
+`llamaUrl`.
+
+Without an API key the relay starts with `--no-auth` and forwards requests
+without an `Authorization` header. This works with local llama.cpp servers that
+do not require a key, and the sandbox still needs no direct network access to
+the model endpoint. To keep a key on the host instead, pass `apiKeyFile` or
+`apiKeyCommand` to `mkHutianShellFlake` or `mkHutianShell`:
 
 ```nix
 hutian.lib.mkHutianShellFlake nixpkgs {
@@ -147,20 +165,20 @@ hutian.lib.mkHutianShellFlake nixpkgs {
 }
 ```
 
-The launcher starts `hutian-llm-relay` on the host. The relay reads the key from
-standard input; the launcher pipes either `apiKeyFile` or the standard output of
-`apiKeyCommand` into it. `apiKeyCommand` runs in the foreground before the
-sandbox starts, so commands that prompt for a password (for example `passage`)
-work normally and can be cancelled with `Ctrl+C`. The relay listens on a
-per-session Unix socket under `$XDG_RUNTIME_DIR` (falling back to `/tmp`). The
-socket directory is mode `0700` and is bind-mounted at `/run/hutian`, so the
-sandbox can connect to `/run/hutian/llm.sock`; the directory holds no key
-material.
+The launcher starts `hutian-llm-relay` on the host. With a key configured, the
+relay reads it from standard input; the launcher pipes either `apiKeyFile` or
+the standard output of `apiKeyCommand` into it. `apiKeyCommand` runs in the
+foreground before the sandbox starts, so commands that prompt for a password
+(for example `passage`) work normally and can be cancelled with `Ctrl+C`. The
+relay listens on a per-session Unix socket under `$XDG_RUNTIME_DIR` (falling
+back to `/tmp`). The socket directory is mode `0700` and is bind-mounted at
+`/run/hutian`, so the sandbox can connect to `/run/hutian/llm.sock`; the
+directory holds no key material.
 
 The relay uses a private framing protocol over the socket instead of HTTP. The
 sandbox sends only the request body and closes its write half. The relay sends
-that body to the fixed path and query of `llamaUrl` with exactly three
-headers: `Content-Type: application/json`, `Accept: text/event-stream`, and
+that body to the fixed path and query of `llamaUrl` with `Content-Type:
+application/json`, `Accept: text/event-stream`, and, when a key is configured,
 `Authorization: Bearer <key>`. It returns a four-byte status code followed by
 the upstream body, including streaming SSE. Because the client never supplies
 a request line or header block, the sandbox cannot choose the upstream host,
@@ -168,18 +186,12 @@ path, or headers, cannot redirect the key, and cannot use the relay as a
 general authenticated proxy. The relay does not follow upstream redirects, and
 the key never appears in argv, environment variables, files, or the Nix store.
 
-The shell is launched with `--llama-socket /run/hutian/llm.sock` and the
-logical URL `http://hutian-relay/...`, which preserves the chat or completion
-API shape without exposing the real upstream host or any credentials embedded
-in `llamaUrl`.
-
-When a key is configured, `GVISOR_NETWORK` defaults to `none`. Set it to
-`sandbox` or `host` to restore networking for other tools. `apiKeyFile` and
-`apiKeyCommand` are mutually exclusive. `apiKeyFile` must not point into the
-Nix store or the host working directory, both of which the sandbox can read;
-the launcher rejects such paths at startup. Keep `apiKeyCommand` as a command
-that fetches the key, for example from `pass` or `sops`, rather than embedding
-the key in the command string, because option values live in the Nix store.
+`apiKeyFile` and `apiKeyCommand` are mutually exclusive. `apiKeyFile` must not
+point into the Nix store or the host working directory, both of which the
+sandbox can read; the launcher rejects such paths at startup. Keep
+`apiKeyCommand` as a command that fetches the key, for example from `pass` or
+`sops`, rather than embedding the key in the command string, because option
+values live in the Nix store.
 
 For example, with `pass`:
 
@@ -195,9 +207,11 @@ package selector. Each selected package's runtime closure is mounted under
 are supported; Hutian bind-mounts the closure into the root filesystem instead
 of passing one sandbox volume per store path.
 
-The `systemPrompt`, `model`, `llamaUrl`, `readOnly`, and `nix` arguments are
-all required and configure the system message, model name, llama.cpp endpoint,
-whether the host working directory is writable, and whether Nix is available:
+The `systemPrompt`, `model`, `llamaUrl`, `readOnly`, `nix`, `internet`, and
+`shell` arguments are all required and configure the system message, model
+name, llama.cpp endpoint, whether the host working directory is writable,
+whether Nix is available, whether the sandbox may use the network, and whether
+shell commands may run:
 
 ```nix
 {
@@ -211,6 +225,8 @@ whether the host working directory is writable, and whether Nix is available:
       llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
       readOnly = false;
       nix = false;
+      internet = true;
+      shell = true;
       systemPrompt = ''
         You are a careful coding assistant working in a sandboxed shell.
       '';
@@ -221,6 +237,14 @@ whether the host working directory is writable, and whether Nix is available:
 Set `readOnly = true` to mount `/source` read-only. The sandbox can still read
 the working directory, but any attempt to write to it fails with a read-only
 filesystem error. This is useful when the model should only inspect a project.
+
+Set `internet = false` to give the sandbox gVisor's `none` network mode. This
+is a hard gate: `GVISOR_NETWORK` cannot re-enable networking. The host relay
+still provides model traffic over its Unix socket. Set `shell = false` to
+disable the model's `shell` tool. Term mode remains available for your own
+commands. Hutian omits the tool from every LLM request and also refuses to
+execute any tool call that arrives anyway, so the model cannot run commands
+without the option.
 
 Then run `nix run .` from that project. Package versions come from the consumer
 flake's lock file. Every option is mandatory, and omitting one fails with an
@@ -236,6 +260,8 @@ hutian.lib.mkHutianShell {
   llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
   readOnly = false;
   nix = false;
+  internet = true;
+  shell = true;
   systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
 }
 ```
@@ -253,6 +279,8 @@ outputs = { nixpkgs, hutian, ... }:
     model = "your-model";
     llamaUrl = "http://127.0.0.1:8080/v1/chat/completions";
     readOnly = false;
+    internet = true;
+    shell = true;
     systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
     nix = true;
   };
@@ -278,21 +306,25 @@ gVisor runtime settings can be overridden from the host:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `GVISOR_PLATFORM` | `systrap` | gVisor platform. Use `ptrace` if your host requires it. |
-| `GVISOR_NETWORK` | `sandbox` | gVisor network mode: `sandbox`, `host`, or `none`. |
+| `GVISOR_NETWORK` | `sandbox` | gVisor network mode: `sandbox`, `host`, or `none`. Ignored when `internet = false`, where the mode is always `none`. |
 
 ## Security model
 
 - `runsc --rootless` runs the sandbox as your unprivileged host user inside a
   user namespace. The sandbox process is UID 0 inside that namespace, mapped to
   your host UID; it gains no host privileges.
-- With the default `sandbox` network mode, the sandbox can reach the host's
-  loopback interface. Set `GVISOR_NETWORK=none` to disable networking. When an
-  API key is configured, the default is already `none` and model traffic uses
-  the host relay socket instead.
-- With `apiKeyFile` or `apiKeyCommand`, the key stays on the host. The sandbox
-  gets only the relay socket at `/run/hutian/llm.sock`, which accepts only a
-  request body and forwards it to one fixed target, so it cannot be used as a
-  general authenticated proxy.
+- With `internet = true`, the default network mode is gVisor's `sandbox`, which
+  can reach the host's loopback interface. Set `GVISOR_NETWORK=none` to disable
+  networking for other tools. With `internet = false`, the mode is always
+  `none`; model traffic uses the host relay socket instead.
+- Model traffic always uses the relay socket at `/run/hutian/llm.sock`, which
+  accepts only a request body and forwards it to one fixed target, so it cannot
+  be used as a general proxy. With `apiKeyFile` or `apiKeyCommand`, the key
+  stays on the host and is never visible to the sandbox. Without a key, the
+  relay forwards unauthenticated.
+- With `shell = false`, the model cannot run commands: the shell tool is
+  omitted from LLM requests and tool calls are refused. Term mode still lets
+  you run commands yourself.
 - Writes outside `/source`, `/tmp`, and the mounted package store are refused.
   Set `readOnly = true` to refuse writes to `/source` as well.
 - With `nix = true`, the full host `/nix/store` and the Nix daemon socket are
@@ -306,6 +338,8 @@ The code keeps pure logic separate from IO:
 
 - `Hutian.Command` parses term-mode input into a typed `Command` and classifies
   single-line versus multi-line input.
+- `Hutian.Policy` owns the shared shell-access decision used by the prompt, the
+  LLM protocol, and the tool loop.
 - `Hutian.Editor` owns prompt state, key semantics, and layout.
 - `Hutian.Prompt` is the pure prompt reducer: it turns a key and the current
   state into a step such as redraw, move cursor, complete, or finish.
@@ -323,8 +357,9 @@ The code keeps pure logic separate from IO:
 - `Hutian.Http.Wire` contains the shared socket framing helpers used by both
   the relay and the sandbox-side client.
 - `Hutian.Llm.UnixSocket` is the sandbox-side client for the host relay socket.
-- `Hutian.Relay` is the host-side relay: it owns the key, accepts only a request
-  body, builds the single fixed upstream request, and streams the response.
+- `Hutian.Relay` is the host-side relay: it owns any configured key, accepts
+  only a request body, builds the single fixed upstream request, and streams the
+  response.
   `Hutian.Relay.Protocol` holds the four-byte status framing shared by both
   sides.
 - `Hutian.Console` is the single terminal IO boundary: writes, terminal
@@ -351,6 +386,7 @@ app/Hutian/Ansi.hs        Typed terminal colours and styles
 app/Hutian/Command.hs     Typed term-mode command parsing
 app/Hutian/Completion.hs  Pure completion selection
 app/Hutian/Console.hs     Single terminal IO boundary
+app/Hutian/Policy.hs      Shared shell-access policy
 app/Hutian/Prompt.hs      Pure prompt reducer
 app/Hutian/Render.hs      Pure ANSI prompt rendering
 app/Hutian/Relay.hs       Host-side LLM relay
@@ -375,7 +411,8 @@ shell helpers, and interrupt handling. It also includes integration tests for:
 
 - streaming LLM responses through a local HTTP server
 - streaming LLM responses through the host relay over a Unix socket, including
-  key injection, fixed upstream and headers, body limits, and response streaming
+  key injection, no-auth forwarding, fixed upstream and headers, body limits,
+  and response streaming
 - history file persistence
 - shell command execution and command discovery
 

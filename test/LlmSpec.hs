@@ -13,6 +13,7 @@ import qualified Data.Vector as Vector
 import Data.Word (Word8)
 import Hutian.Conversation (ConversationEntry (..), ToolCall (..), emptyConversation)
 import Hutian.Llm
+import Hutian.Policy (ShellAccess (..))
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -45,6 +46,7 @@ unitTests =
                 (ModelName "test-model")
                 (SystemPrompt "system rules")
                 Nothing
+                ShellDenied
             )
         parseLlmSettings
           [ "--llama-url"
@@ -55,7 +57,7 @@ unitTests =
           , ""
           ]
           @?= Right
-            (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt "") Nothing)
+            (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt "") Nothing ShellDenied)
     , testCase "parseLlmSettings accepts an optional relay socket" $ do
         parseLlmSettings
           [ "--llama-url"
@@ -73,6 +75,25 @@ unitTests =
                 (ModelName "m")
                 (SystemPrompt "system rules")
                 (Just "/run/hutian/llm.sock")
+                ShellDenied
+            )
+    , testCase "parseLlmSettings grants the model shell tool only when asked" $ do
+        parseLlmSettings
+          [ "--llama-url"
+          , "http://example.test/v1/chat/completions"
+          , "--model"
+          , "m"
+          , "--system-prompt"
+          , ""
+          , "--allow-shell"
+          ]
+          @?= Right
+            ( LlmSettings
+                (LlmUrl "http://example.test/v1/chat/completions")
+                (ModelName "m")
+                (SystemPrompt "")
+                Nothing
+                ShellAllowed
             )
     , testCase "parseLlmSettings rejects an empty relay socket" $
         case
@@ -117,7 +138,7 @@ unitTests =
         apiFor (LlmUrl "http://127.0.0.1:8080/completion") @?= CompletionApi
         apiFor (LlmUrl "https://example.test/v1/chat/completions?stream=true") @?= ChatApi
     , testCase "chat request body has system and user messages" $
-        case requestBodyFor ChatApi (ModelName "test-model") (SystemPrompt "system rules") emptyConversation "hello" of
+        case requestBodyFor ShellDenied ChatApi (ModelName "test-model") (SystemPrompt "system rules") emptyConversation "hello" of
           Object body -> do
             KeyMap.lookup "model" body @?= Just (String "test-model")
             KeyMap.lookup "stream" body @?= Just (Bool True)
@@ -135,6 +156,7 @@ unitTests =
     , testCase "chat request includes prior conversation and terminal history" $
         case
             requestBodyFor
+              ShellDenied
               ChatApi
               (ModelName "test-model")
               (SystemPrompt "system rules")
@@ -161,22 +183,22 @@ unitTests =
                 other -> assertFailure ("missing messages: " ++ show other)
             other -> assertFailure ("unexpected request body: " ++ show other)
     , testCase "chat request body omits an empty system message" $
-        case requestBodyFor ChatApi (ModelName "test-model") (SystemPrompt "") emptyConversation "hello" of
+        case requestBodyFor ShellDenied ChatApi (ModelName "test-model") (SystemPrompt "") emptyConversation "hello" of
           Object body ->
             case KeyMap.lookup "messages" body of
               Just (Array messages) -> Vector.length messages @?= 1
               other -> assertFailure ("missing messages: " ++ show other)
           other -> assertFailure ("unexpected request body: " ++ show other)
     , testCase "completion request body prepends the system prompt" $
-        case requestBodyFor CompletionApi (ModelName "test-model") (SystemPrompt "system rules") emptyConversation "hello" of
+        case requestBodyFor ShellDenied CompletionApi (ModelName "test-model") (SystemPrompt "system rules") emptyConversation "hello" of
           Object body -> do
             KeyMap.lookup "model" body @?= Just (String "test-model")
             KeyMap.lookup "prompt" body @?= Just (String "System: system rules\n\nUser: hello\n\nAssistant:")
             KeyMap.lookup "stream" body @?= Just (Bool True)
             KeyMap.lookup "messages" body @?= Nothing
           other -> assertFailure ("unexpected request body: " ++ show other)
-    , testCase "chat request body advertises the shell tool" $
-        case requestBodyFor ChatApi (ModelName "test-model") (SystemPrompt "") emptyConversation "hello" of
+    , testCase "chat request body advertises the shell tool when allowed" $
+        case requestBodyFor ShellAllowed ChatApi (ModelName "test-model") (SystemPrompt "") emptyConversation "hello" of
           Object body ->
             case KeyMap.lookup "tools" body of
               Just (Array tools) ->
@@ -189,6 +211,12 @@ unitTests =
                       other -> assertFailure ("missing function: " ++ show other)
                   other -> assertFailure ("unexpected tools: " ++ show other)
               other -> assertFailure ("missing tools: " ++ show other)
+          other -> assertFailure ("unexpected request body: " ++ show other)
+    , testCase "chat request body omits the shell tool when denied" $
+        case requestBodyFor ShellDenied ChatApi (ModelName "test-model") (SystemPrompt "") emptyConversation "hello" of
+          Object body -> do
+            KeyMap.lookup "tools" body @?= Nothing
+            KeyMap.lookup "tool_choice" body @?= Nothing
           other -> assertFailure ("unexpected request body: " ++ show other)
     , testCase "toolCommand parses the command argument" $ do
         toolCommand (ToolCall "id" "shell" "{\"command\":\"ls -la\"}")
@@ -327,6 +355,7 @@ prop_parseSettings url model systemPrompt =
           (ModelName modelText)
           (SystemPrompt systemPrompt)
           Nothing
+          ShellDenied
       )
   where
     urlText = getNonEmpty url
@@ -350,6 +379,7 @@ prop_parseSettingsWithSocket url model systemPrompt socket =
           (ModelName modelText)
           (SystemPrompt systemPrompt)
           (Just socketText)
+          ShellDenied
       )
   where
     urlText = getNonEmpty url
@@ -374,7 +404,7 @@ prop_requestBody :: String -> String -> String -> Property
 prop_requestBody model systemPrompt text =
   forAll (elements [ChatApi, CompletionApi]) $ \api ->
     counterexample (show (api, model, systemPrompt, text)) $
-      case Aeson.decode (Aeson.encode (requestBodyFor api (ModelName model) (SystemPrompt systemPrompt) emptyConversation text)) of
+      case Aeson.decode (Aeson.encode (requestBodyFor ShellAllowed api (ModelName model) (SystemPrompt systemPrompt) emptyConversation text)) of
         Just (Object body) ->
           KeyMap.lookup "model" body === Just (String (Text.pack model))
             .&&. KeyMap.lookup "stream" body === Just (Bool True)

@@ -71,6 +71,7 @@ executable hutian-shell
       Hutian.Markdown
       Hutian.Output
       Hutian.Paths
+      Hutian.Policy
       Hutian.Prompt
       Hutian.Relay.Protocol
       Hutian.Render
@@ -127,6 +128,7 @@ test-suite hutian-shell-test
       Hutian.Markdown
       Hutian.Output
       Hutian.Paths
+      Hutian.Policy
       Hutian.Prompt
       Hutian.Relay
       Hutian.Relay.Protocol

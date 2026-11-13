@@ -66,8 +66,15 @@ data PromptContext = PromptContext
 -- submitted text otherwise. @Ctrl+X@ toggles between 'LlmMode' and
 -- 'TermMode'. In term mode, Enter executes the command, Up/Down browse
 -- history, and a trailing backslash continues the command on the next line.
--- Ctrl+C clears the current input.
-promptForInput :: [String] -> String -> PromptMode -> History -> PromptBuffers -> IO (PromptMode, Maybe String, PromptBuffers)
+-- Ctrl+C clears the current input. Term mode is always available, even when
+-- the model's shell tool is disabled.
+promptForInput
+  :: [String]
+  -> String
+  -> PromptMode
+  -> History
+  -> PromptBuffers
+  -> IO (PromptMode, Maybe String, PromptBuffers)
 promptForInput commands termPrompt mode history buffers = do
   interactive <- consoleIsInteractive
   let context =

@@ -7,6 +7,11 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Added
 
+- Mandatory `internet` and `shell` flake options. `internet = false` forces
+  gVisor's `none` network mode and cannot be overridden with `GVISOR_NETWORK`.
+  `shell = false` disables only the model's `shell` tool; term mode and
+  `Ctrl+X` remain available. The tool is omitted from every LLM request and
+  tool calls are refused.
 - Host-side API key handling. `apiKeyFile` and `apiKeyCommand` start
   `hutian-llm-relay`, which keeps the key on the host and listens on a private
   per-session Unix socket. The sandbox only receives `--llama-socket
@@ -23,17 +28,21 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
-- The relay always reads the API key from standard input. The launcher pipes
-  either `apiKeyFile` or `apiKeyCommand` into it, so the key never appears in
-  the relay's argument list or environment.
+- The relay is always used for model traffic. Without an API key it starts with
+  `--no-auth`, does not read standard input, and forwards without an
+  `Authorization` header. The sandbox still receives only the relay socket and
+  the logical `http://hutian-relay/...` URL.
+- When a key is configured, the relay reads it from standard input. The
+  launcher pipes either `apiKeyFile` or `apiKeyCommand` into it, so the key
+  never appears in the relay's argument list or environment.
 - The relay now uses a private body/status protocol instead of HTTP/1.1. The
   sandbox sends only a request body; the host relay builds the single fixed
   upstream request, so there is no client-supplied request line or header block
   to parse, validate, strip, or redirect. The response is a four-byte status
   code followed by the upstream body.
-- With an API key configured, the sandbox network defaults to `none` and the
-  shell receives a sanitized `http://hutian-relay/...` URL. Set
-  `GVISOR_NETWORK` explicitly to restore networking for other tools.
+- The sandbox network now follows the mandatory `internet` option instead of
+  the presence of an API key. With `internet = true`, `GVISOR_NETWORK` may still
+  narrow the gVisor mode; with `internet = false`, networking is always `none`.
 - `apiKeyFile` must not point into the Nix store or the sandbox working
   directory, and `apiKeyFile` and `apiKeyCommand` are mutually exclusive.
 - Terminal colours, styles, and cursor movement are now generated with

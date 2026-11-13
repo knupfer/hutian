@@ -19,6 +19,7 @@ import Hutian.Llm
   , runLlm
   )
 import Hutian.Llm.UnixSocket (postUnixStream)
+import Hutian.Policy (ShellAccess (..))
 import Hutian.Relay.Protocol (decodeStatus, encodeStatus)
 import Network.Socket
   ( Family (AF_UNIX)
@@ -132,6 +133,7 @@ settingsForSocket socketPath =
     , settingModel = ModelName "test-model"
     , settingSystemPrompt = SystemPrompt "system prompt"
     , settingSocket = Just socketPath
+    , settingShell = ShellAllowed
     }
 
 streamingResponse :: BS.ByteString
