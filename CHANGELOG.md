@@ -13,7 +13,11 @@ All notable changes to Hutian are documented here. The format follows
   `GVISOR_NETWORK`. `model.shell` accepts `"deny"`, `"ask"`, or `"allow"`.
   `"deny"` disables only the model's `shell` tool; term mode and `Ctrl+X`
   remain available. `"ask"` advertises the tool but requires interactive
-  approval for each command; non-interactive runs deny tool calls. The tool is
+  approval for each command; non-interactive runs deny tool calls. The approval
+  prompt colours `approve:` with the user's pink, shows `[y] Yes` and `[n] No`
+  on separate lines while the cursor is hidden, and collapses them into a
+  single `Yes` or `No` line afterwards. Keys other than `y`/`n` are ignored.
+  Ctrl+C aborts the current LLM turn instead of denying the command. The tool is
   omitted from the request in deny mode, and tool calls are refused when they
   arrive anyway.
 - A capability matrix in the README documenting how `sandbox.readOnly`,

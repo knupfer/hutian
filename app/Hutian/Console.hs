@@ -3,7 +3,9 @@
 -- | The single boundary for terminal IO: writes, attributes, cursor styling,
 -- and size. Other modules build strings and call these functions.
 module Hutian.Console
-  ( configureConsole
+  ( ToolApproval (..)
+  , approvalForKey
+  , configureConsole
   , confirmToolCommand
   , consoleFlush
   , consoleInputReady
@@ -25,6 +27,7 @@ module Hutian.Console
   ) where
 
 import Control.Concurrent (forkIO, killThread, threadDelay)
+import Control.Concurrent.MVar (MVar, newMVar, withMVar)
 import Control.Exception (IOException, catch, finally, try)
 import Control.Monad (when)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
@@ -32,6 +35,8 @@ import Hutian.Editor (PromptMode)
 import Hutian.Output (outputLabelText)
 import Hutian.Render
   ( CursorStyle (..)
+  , approvalDecisionText
+  , approvePromptText
   , cursorStyleText
   , grayForeground
   , hideCursorText
@@ -56,6 +61,7 @@ import System.IO
   , stdout
   )
 import System.IO.Error (isEOFError)
+import System.IO.Unsafe (unsafePerformIO)
 import System.Posix.IO (stdInput)
 import System.Posix.Terminal
   ( TerminalAttributes
@@ -68,6 +74,13 @@ import System.Posix.Terminal
   , withTime
   , withoutMode
   )
+
+-- | Serialize writes that show or hide the cursor. A modal prompt holds this
+-- lock while it waits so the responding-cursor blink thread cannot reveal the
+-- cursor again.
+{-# NOINLINE cursorVisibilityLock #-}
+cursorVisibilityLock :: MVar ()
+cursorVisibilityLock = unsafePerformIO (newMVar ())
 
 -- | Configure the process's text encoding and buffering before any prompt.
 configureConsole :: IO ()
@@ -130,25 +143,66 @@ consoleWriteToolCommand toolName command = do
     else consoleWriteLine command
   consoleFlush
 
--- | Show a requested command and ask for single-key approval. Returns 'False'
--- without prompting when output is not a terminal. Pending input is discarded
--- so text typed while the model was streaming cannot approve the command.
-confirmToolCommand :: String -> String -> IO Bool
+-- | The user's decision about a model-requested command.
+data ToolApproval
+  = ToolApproved
+  | ToolDenied
+  | ToolAborted
+  deriving stock (Eq, Show)
+
+-- | Map a raw terminal key to an approval decision. Unrecognised keys are
+-- ignored so only an explicit @y@ or @n@ decides the prompt. @Ctrl+C@ aborts
+-- the whole LLM turn rather than counting as a denial.
+approvalForKey :: Char -> Maybe ToolApproval
+approvalForKey 'y' = Just ToolApproved
+approvalForKey 'Y' = Just ToolApproved
+approvalForKey 'n' = Just ToolDenied
+approvalForKey 'N' = Just ToolDenied
+approvalForKey '\ETX' = Just ToolAborted
+approvalForKey _ = Nothing
+
+-- | The result line shown after the options are removed.
+approvalResult :: ToolApproval -> String
+approvalResult ToolApproved = "Yes"
+approvalResult ToolDenied = "No"
+approvalResult ToolAborted = "Aborted"
+
+-- | Show a requested command and ask for single-key approval. Returns
+-- 'ToolDenied' without prompting when output is not a terminal. Pending input
+-- is discarded so text typed while the model was streaming cannot approve the
+-- command.
+confirmToolCommand :: String -> String -> IO ToolApproval
 confirmToolCommand toolName command = do
   consoleWriteToolCommand toolName command
   interactive <- consoleIsInteractive
   inputIsTerminal <- hIsTerminalDevice stdin
   if not interactive || not inputIsTerminal
-    then pure False
+    then pure ToolDenied
     else do
       drainPendingInput
-      withRawTerminal $ do
-        consoleWrite "run? [y/N] "
-        consoleFlush
-        key <- getChar `catch` \(_ :: IOException) -> pure 'n'
-        consoleWrite "\n"
-        consoleFlush
-        pure (key == 'y' || key == 'Y')
+      withRawTerminal $
+        withHiddenCursor $ do
+          consoleWrite approvePromptText
+          consoleFlush
+          approval <- readApproval
+          consoleWrite (approvalDecisionText (approvalResult approval))
+          consoleFlush
+          pure approval
+  where
+    readApproval = do
+      key <- getChar `catch` \(_ :: IOException) -> pure 'n'
+      maybe readApproval pure (approvalForKey key)
+
+-- | Keep the cursor hidden until the action finishes, without letting the blink
+-- thread reveal it in the meantime.
+withHiddenCursor :: IO a -> IO a
+withHiddenCursor action =
+  withMVar cursorVisibilityLock $ \_ -> do
+    consoleWrite hideCursorText
+    consoleFlush
+    action `finally` do
+      consoleWrite showCursorText
+      consoleFlush
 
 -- | Consume already-buffered input. Typed-ahead text is meant for the next
 -- prompt, but it must not accidentally approve a model command.
@@ -199,12 +253,15 @@ withRespondingCursor action = do
         consoleFlush
 
 -- | Toggle the cursor independently of streamed output, starting visible.
+-- Cursor writes share 'cursorVisibilityLock' so a modal prompt can keep the
+-- cursor hidden while it waits for input.
 blinkCursor :: IO ()
 blinkCursor = loop True
   where
     loop visible = do
-      consoleWrite (if visible then showCursorText else hideCursorText)
-      consoleFlush
+      withMVar cursorVisibilityLock $ \_ -> do
+        consoleWrite (if visible then showCursorText else hideCursorText)
+        consoleFlush
       threadDelay blinkInterval
       loop (not visible)
 

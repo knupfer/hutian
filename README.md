@@ -32,9 +32,12 @@ yourself.
 In LLM mode the model can also call the `shell` tool according to
 `model.shell`. Commands requested by the model run through the same `/bin/sh -c`
 execution path as term mode, and are shown with a bold teal `tool shell:` line.
-In `"ask"` mode Hutian additionally shows a `run? [y/N]` prompt before each
-command. Shell output is preceded by a dimmed pink `output:` line and tool
-output by a dimmed teal `tool output:` line.
+In `"ask"` mode Hutian additionally shows an `approve:` prompt in the user's
+pink prompt colour while the cursor is hidden, with `[y] Yes` and `[n] No` on
+their own lines. After a decision, those lines are replaced by a single `Yes`
+or `No` line. Only `y` or `n` decides the call; other keys are ignored, and
+Ctrl+C aborts the current LLM turn. Shell output is preceded by a dimmed pink
+`output:` line and tool output by a dimmed teal `tool output:` line.
 
 ## Quick start
 
@@ -99,14 +102,17 @@ LLM prompts, assistant replies, commands submitted in term mode, and tool
 calls with their results.
 
 When `model.shell = "allow"`, the model can request shell commands through the
-`shell` tool. With `"ask"`, Hutian shows the command and waits for `y` or `Y`
-before running it; any other key denies the call, and non-interactive runs deny
-automatically. Hutian runs each command with `/bin/sh -c` in the sandbox working
-directory, streams its output to the terminal in gray under a dimmed teal
-`tool output:` line, and sends the output back to the model. Every call runs in
-a fresh shell, so `cd`, exported variables, and other shell state do not persist
-between calls. The requested command is shown under a bold teal `tool shell:`
-line, distinguishing it from commands typed by the user.
+`shell` tool. With `"ask"`, Hutian shows the command and an `approve:` prompt:
+`[y] Yes` and `[n] No` appear on separate lines while the cursor is hidden,
+then collapse into a single `Yes` or `No` line. Only `y` or `Y` approves and
+`n` or `N` denies; other keys are ignored, and Ctrl+C aborts the current LLM
+turn instead of denying the command. Non-interactive runs deny automatically.
+Hutian runs each command with `/bin/sh -c` in the sandbox working directory,
+streams its output to the terminal in gray under a dimmed teal `tool output:`
+line, and sends the output back to the model. Every call runs in a fresh shell,
+so `cd`, exported variables, and other shell state do not persist between
+calls. The requested command is shown under a bold teal `tool shell:` line,
+distinguishing it from commands typed by the user.
 
 ```console
 Explain what a syscall is.

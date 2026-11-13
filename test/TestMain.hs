@@ -2,6 +2,7 @@ module Main (main) where
 
 import qualified CommandSpec
 import qualified CompletionSpec
+import qualified ConsoleSpec
 import qualified ConversationSpec
 import qualified EditorSpec
 import qualified HistorySpec
@@ -26,6 +27,7 @@ main =
       "hutian-shell"
       [ CommandSpec.tests
       , CompletionSpec.tests
+      , ConsoleSpec.tests
       , ConversationSpec.tests
       , EditorSpec.tests
       , HistorySpec.tests

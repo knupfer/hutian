@@ -4,7 +4,7 @@
 module Main (main) where
 
 import Control.Exception (finally)
-import Control.Monad (foldM, unless)
+import Control.Monad (unless)
 import Data.List (isSuffixOf)
 import Hutian.Command
   ( Command (..)
@@ -14,7 +14,8 @@ import Hutian.Command
   , parseCommandLine
   )
 import Hutian.Console
-  ( configureConsole
+  ( ToolApproval (..)
+  , configureConsole
   , confirmToolCommand
   , consoleFlush
   , consoleIsErrorInteractive
@@ -192,44 +193,66 @@ continueLlm :: LlmSettings -> InterruptFlag -> Conversation -> LlmResult -> IO C
 continueLlm settings interruptFlag conversation result
   | null (llmToolCalls result) = pure conversation
   | otherwise = do
-      conversation' <-
+      (aborted, conversation') <-
         runToolCalls
           (settingModelShell settings)
           conversation
           (llmToolCalls result)
-      next <- runLlmContinuation interruptFlag settings conversation'
-      continueLlm
-        settings
-        interruptFlag
-        (appendResult Nothing (llmResponseText next) (llmToolCalls next) conversation')
-        next
+      if aborted
+        then pure conversation'
+        else do
+          next <- runLlmContinuation interruptFlag settings conversation'
+          continueLlm
+            settings
+            interruptFlag
+            (appendResult Nothing (llmResponseText next) (llmToolCalls next) conversation')
+            next
 
-runToolCalls :: ModelShell -> Conversation -> [ToolCall] -> IO Conversation
-runToolCalls policy = foldM (runToolCall policy)
+runToolCalls :: ModelShell -> Conversation -> [ToolCall] -> IO (Bool, Conversation)
+runToolCalls policy = go False
+  where
+    go aborted conversation [] = pure (aborted, conversation)
+    go True conversation (call : rest) =
+      go True (appendToolResult (toolCallId call) abortedToolMessage conversation) rest
+    go False conversation (call : rest) = do
+      (callAborted, conversation') <- runToolCall policy conversation call
+      go callAborted conversation' rest
 
-runToolCall :: ModelShell -> Conversation -> ToolCall -> IO Conversation
+abortedToolMessage :: String
+abortedToolMessage = "tool error: the user aborted the LLM turn"
+
+runToolCall :: ModelShell -> Conversation -> ToolCall -> IO (Bool, Conversation)
 runToolCall policy conversation call =
   case toolCommand call of
     Left message ->
-      pure (appendToolResult (toolCallId call) ("tool error: " ++ message) conversation)
+      pure (False, appendToolResult (toolCallId call) ("tool error: " ++ message) conversation)
     Right command ->
       case policy of
         ModelShellDenied ->
-          pure (appendToolResult (toolCallId call) "tool error: the model shell tool is disabled" conversation)
+          pure
+            ( False
+            , appendToolResult (toolCallId call) "tool error: the model shell tool is disabled" conversation
+            )
         ModelShellAllowed -> do
           consoleWriteToolCommand (toolCallName call) command
-          executeShellTool conversation call command
+          conversation' <- executeShellTool conversation call command
+          pure (False, conversation')
         ModelShellAsk -> do
-          approved <- confirmToolCommand (toolCallName call) command
-          if approved
-            then executeShellTool conversation call command
-            else
+          approval <- confirmToolCommand (toolCallName call) command
+          case approval of
+            ToolApproved -> do
+              conversation' <- executeShellTool conversation call command
+              pure (False, conversation')
+            ToolDenied ->
               pure
-                ( appendToolResult
+                ( False
+                , appendToolResult
                     (toolCallId call)
                     "tool error: the user did not approve the shell command"
                     conversation
                 )
+            ToolAborted ->
+              pure (True, appendToolResult (toolCallId call) abortedToolMessage conversation)
 
 -- | Run a command the model is already allowed to execute. The caller is
 -- responsible for showing the command first.

@@ -2,6 +2,8 @@
 module Hutian.Render
   ( promptRenderText
   , toolPromptText
+  , approvePromptText
+  , approvalDecisionText
   , moveCursorText
   , startPromptText
   , prefixFor
@@ -97,6 +99,21 @@ toolPromptText toolName width command =
 -- line above the command.
 toolPrefix :: String -> String
 toolPrefix toolName = "tool " ++ toolName ++ ":\n"
+
+-- | The approval prompt shown while waiting for a key. The label uses the
+-- user's prompt colour; the choices stay in the terminal's default colour.
+approvePromptText :: String
+approvePromptText =
+  boldVibrantPink
+    ++ "approve:"
+    ++ reset
+    ++ "\n[y] Yes\n[n] No\n"
+
+-- | Replace the two option lines with the chosen result. The cursor is assumed
+-- to sit on the line after @[n] No@.
+approvalDecisionText :: String -> String
+approvalDecisionText decision =
+  cursorUpCode 2 ++ "\r" ++ clearToEnd ++ decision ++ "\n"
 
 -- | Render the sequence that moves from one cursor position to another.
 moveCursorText :: (Int, Int) -> (Int, Int) -> String

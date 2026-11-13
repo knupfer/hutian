@@ -108,6 +108,7 @@ test-suite hutian-shell-test
   other-modules:
       CommandSpec
       CompletionSpec
+      ConsoleSpec
       ConversationSpec
       EditorSpec
       HistorySpec
