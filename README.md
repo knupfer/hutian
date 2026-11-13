@@ -263,7 +263,8 @@ run model-requested commands automatically.
 
 Then run `nix run .` from that project. Package versions come from the consumer
 flake's lock file. Every option is mandatory, and omitting one fails with an
-error that lists the missing option paths.
+error that lists the missing option paths. Unknown options are rejected, so a
+misspelled key such as `model.foo` cannot be ignored silently.
 
 For a single system or an existing `pkgs` instance, use the lower-level builder:
 

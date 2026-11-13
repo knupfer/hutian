@@ -20,6 +20,9 @@ All notable changes to Hutian are documented here. The format follows
   `sandbox.nix`, `sandbox.internet`, `model.shell`, and the relay compose,
   including the fact that `sandbox.internet = false` covers direct sandbox
   networking but not host Nix fetches or the fixed relay upstream.
+- Unknown flake options are rejected. The helpers list the offending paths and
+  the known option names, so a misspelled key such as `model.foo` fails instead
+  of being ignored.
 - Host-side API key handling. `model.apiKeyFile` and `model.apiKeyCommand` start
   `hutian-llm-relay`, which keeps the key on the host and listens on a private
   per-session Unix socket. The sandbox only receives `--llama-socket

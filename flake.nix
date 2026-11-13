@@ -131,24 +131,82 @@
         else
           throw "hutian: option `${name}` must be a function of pkgs";
 
+      # Known option names for each group. Every other key is rejected so a
+      # misspelled or stale option cannot silently fall back to a default.
+      knownTopLevelOptions = [
+        "sandbox"
+        "model"
+      ];
+      knownSandboxOptions = [
+        "packages"
+        "readOnly"
+        "nix"
+        "internet"
+      ];
+      knownModelOptions = [
+        "name"
+        "url"
+        "systemPrompt"
+        "shell"
+        "apiKeyFile"
+        "apiKeyCommand"
+      ];
+
+      unknownOptionPaths =
+        path: allowed: value:
+        if !(builtins.isAttrs value) then
+          [ ]
+        else
+          map (name: path ++ [ name ]) (
+            builtins.filter (name: !(builtins.elem name allowed)) (builtins.attrNames value)
+          );
+
       checkedCommonOptions =
         helper: extraPaths: args:
         let
           checked = requirePaths helper extraPaths args;
           inherit (checked) sandbox model;
+          extraNames = map builtins.head extraPaths;
+          knownTopLevel = knownTopLevelOptions ++ extraNames;
+          unknown =
+            unknownOptionPaths [ ] knownTopLevel checked
+            ++ unknownOptionPaths [ "sandbox" ] knownSandboxOptions sandbox
+            ++ unknownOptionPaths [ "model" ] knownModelOptions model;
+          formatPath = path: lib.concatStringsSep "." path;
+          unknownNames = map formatPath unknown;
+          plural = lib.optionalString (builtins.length unknownNames != 1) "s";
+          knownNames = map formatPath (
+            map (name: [ name ]) knownTopLevel
+            ++ map (name: [
+              "sandbox"
+              name
+            ]) knownSandboxOptions
+            ++ map (name: [
+              "model"
+              name
+            ]) knownModelOptions
+          );
         in
-        {
-          inherit (sandbox) packages;
-          systemPrompt = requireString "model.systemPrompt" model.systemPrompt;
-          model = requireNonEmptyString "model.name" model.name;
-          llamaUrl = requireNonEmptyString "model.url" model.url;
-          readOnly = requireBool "sandbox.readOnly" sandbox.readOnly;
-          nix = requireBool "sandbox.nix" sandbox.nix;
-          internet = requireBool "sandbox.internet" sandbox.internet;
-          modelShell = requireModelShell "model.shell" model.shell;
-          apiKeyFile = optionalNonEmptyString "apiKeyFile" "model.apiKeyFile" model;
-          apiKeyCommand = optionalNonEmptyString "apiKeyCommand" "model.apiKeyCommand" model;
-        };
+        if unknown != [ ] then
+          throw ''
+            hutian: ${helper} has unknown option${plural}: ${lib.concatStringsSep ", " unknownNames}
+
+            Known options: ${lib.concatStringsSep ", " knownNames}.
+            See README.md for a complete example.
+          ''
+        else
+          {
+            inherit (sandbox) packages;
+            systemPrompt = requireString "model.systemPrompt" model.systemPrompt;
+            model = requireNonEmptyString "model.name" model.name;
+            llamaUrl = requireNonEmptyString "model.url" model.url;
+            readOnly = requireBool "sandbox.readOnly" sandbox.readOnly;
+            nix = requireBool "sandbox.nix" sandbox.nix;
+            internet = requireBool "sandbox.internet" sandbox.internet;
+            modelShell = requireModelShell "model.shell" model.shell;
+            apiKeyFile = optionalNonEmptyString "apiKeyFile" "model.apiKeyFile" model;
+            apiKeyCommand = optionalNonEmptyString "apiKeyCommand" "model.apiKeyCommand" model;
+          };
 
       # Used only by this flake's own package. Consumers must pass every
       # option explicitly.
@@ -308,6 +366,10 @@
             ).success;
           keyEmptyRejected = !(builtins.tryEval (withModel { apiKeyFile = ""; }).drvPath).success;
           keyCommandEmptyRejected = !(builtins.tryEval (withModel { apiKeyCommand = ""; }).drvPath).success;
+          unknownTopLevelRejected = !(builtins.tryEval (probe { unknownOption = true; }).drvPath).success;
+          unknownSandboxRejected =
+            !(builtins.tryEval (withSandbox { unknownOption = true; }).drvPath).success;
+          unknownModelRejected = !(builtins.tryEval (withModel { unknownOption = true; }).drvPath).success;
           expected = [
             "--llama-url"
             "--model"
@@ -458,6 +520,11 @@
               pkgs.runCommand "hutian-api-key-rejected-check" { } "touch $out"
             else
               throw "hutian: a store-backed, empty, or conflicting key source must be rejected";
+          unknown-option-rejected =
+            if unknownTopLevelRejected && unknownSandboxRejected && unknownModelRejected then
+              pkgs.runCommand "hutian-unknown-option-check" { } "touch $out"
+            else
+              throw "hutian: unknown top-level, sandbox, or model options must be rejected";
           relay-sigint = pkgs.runCommand "hutian-relay-sigint-check" { } ''
             socket_dir=$(${pkgs.coreutils}/bin/mktemp -d)
             relay=${relayPackage}/bin/hutian-llm-relay
