@@ -3,7 +3,6 @@ module TestSupport
   ( withEnv
   , temporaryFilePath
   , withTemporaryDirectory
-  , withStdinFile
   , stripAnsi
   , captureStdout
   , awaitMVar
@@ -24,15 +23,11 @@ import System.Directory
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.IO (hClose, hFlush, openTempFile, stdout)
 import System.Posix.IO
-  ( OpenMode (ReadOnly)
-  , closeFd
+  ( closeFd
   , createPipe
-  , defaultFileFlags
   , dup
   , dupTo
   , fdToHandle
-  , openFd
-  , stdInput
   , stdOutput
   )
 import System.Posix.Types (Fd)
@@ -94,19 +89,6 @@ readPipe readFd = do
   contents <- BS.hGetContents handle
   hClose handle
   pure (BS8.unpack contents)
-
--- | Run an action with stdin redirected from a file. Used to exercise key
--- loading from the relay's standard input.
-withStdinFile :: FilePath -> IO a -> IO a
-withStdinFile path action = do
-  savedStdin <- dup stdInput
-  fileFd <- openFd path ReadOnly defaultFileFlags
-  _ <- dupTo fileFd stdInput
-  closeFd fileFd
-  action
-    `finally` do
-      _ <- dupTo savedStdin stdInput
-      closeFd savedStdin
 
 -- | Take a value, failing the test instead of hanging if it never arrives.
 awaitMVar :: String -> MVar a -> IO a

@@ -9,12 +9,12 @@ import Hutian.Relay
   , loadRelayKey
   , newRelayRuntime
   , parseRelaySettings
-  , relayKeySource
   , runRelay
+  , stderrLogger
   )
 import System.Environment (getArgs)
 import System.Exit (ExitCode (ExitFailure), exitWith)
-import System.IO (hPutStrLn, stderr)
+import System.IO (hPutStrLn, stderr, stdin)
 
 main :: IO ()
 main = do
@@ -22,12 +22,12 @@ main = do
   case parseRelaySettings arguments of
     Left message -> failWith message
     Right settings -> do
-      keyResult <- loadRelayKey (relayKeySource settings)
+      keyResult <- loadRelayKey stdin
       case keyResult of
         Left message -> failWith message
         Right key -> do
           runtimeResult <-
-            try (newRelayRuntime settings key)
+            try (newRelayRuntime stderrLogger settings key)
               :: IO (Either SomeException RelayRuntime)
           case runtimeResult of
             Left _ -> failWith "hutian-llm-relay: invalid upstream URL"

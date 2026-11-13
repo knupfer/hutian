@@ -7,12 +7,12 @@
 -- never read or redirect the credential.
 module Hutian.Relay
   ( RelaySettings (..)
-  , KeySource (..)
   , parseRelaySettings
   , defaultRelayMaxBody
+  , RelayLogger
+  , stderrLogger
   , RelayRuntime
   , newRelayRuntime
-  , setRelayLogger
   , loadRelayKey
   , runRelay
   , handleRelayConnection
@@ -32,7 +32,7 @@ import Hutian.Http.Wire (WireError (..), recvExactly, recvUntil)
 import Hutian.Relay.Http
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
-import Network.HTTP.Types (statusCode, statusMessage)
+import Network.HTTP.Types.Status (Status, mkStatus, statusCode, statusMessage)
 import Network.Socket
   ( Family (AF_UNIX)
   , SockAddr (SockAddrUnix)
@@ -47,32 +47,24 @@ import Network.Socket
   )
 import Network.Socket.ByteString (sendAll)
 import System.Directory (doesPathExist, removeFile)
-import System.IO (hPutStrLn, stderr)
+import System.IO (Handle, hPutStrLn, stderr)
 import System.Posix.Files (getFileStatus, isSocket, setFileMode)
 
--- | Everything the relay needs at startup.
+-- | Everything the relay needs at startup. The key is deliberately not part of
+-- the settings: it is read from standard input so it never appears in argv.
 data RelaySettings = RelaySettings
   { relayListenPath :: FilePath
   , relayUpstream :: String
-  , relayKeySource :: KeySource
   , relayMaxBody :: Int
   }
   deriving stock (Eq, Show)
 
-data KeySource
-  = KeyFile FilePath
-  | KeyStdin
+-- | One HTTP error the relay can return without involving the upstream.
+data RelayError = RelayError Status String
   deriving stock (Eq, Show)
 
--- | One HTTP error the relay can return without involving the upstream.
-data RelayError = RelayError
-  { relayErrorCode :: Int
-  , relayErrorReason :: BS.ByteString
-  , relayErrorMessage :: String
-  }
-
 badRequest :: String -> RelayError
-badRequest = RelayError 400 "Bad Request"
+badRequest = RelayError (mkStatus 400 "Bad Request")
 
 -- | 64 MiB is far more than a chat completion request needs while still
 -- bounding what one sandboxed client can make the host buffer.
@@ -82,39 +74,27 @@ defaultRelayMaxBody = 64 * 1024 * 1024
 maxRequestHead :: Int
 maxRequestHead = 32 * 1024
 
--- | Parse the relay command line.
+-- | Parse the relay command line. The key is never an argument.
 parseRelaySettings :: [String] -> Either String RelaySettings
-parseRelaySettings = go emptyPartial
+parseRelaySettings = go Nothing Nothing defaultRelayMaxBody
   where
-    go partial [] = finish partial
-    go _ ["--listen"] = missing "--listen"
-    go _ ["--upstream"] = missing "--upstream"
-    go _ ["--key-file"] = missing "--key-file"
-    go _ ["--max-body"] = missing "--max-body"
-    go partial ("--listen" : value : rest) =
-      go partial {partialListen = Just value} rest
-    go partial ("--upstream" : value : rest) =
-      go partial {partialUpstream = Just value} rest
-    go partial ("--key-file" : value : rest) =
-      go partial {partialKeyFile = Just value} rest
-    go partial ("--key-stdin" : rest) =
-      go partial {partialKeyStdin = True} rest
-    go partial ("--max-body" : value : rest) = do
+    go listenPath upstream maxBody [] =
+      RelaySettings
+        <$> required "--listen" listenPath
+        <*> required "--upstream" upstream
+        <*> pure maxBody
+    go _ _ _ ["--listen"] = missing "--listen"
+    go _ _ _ ["--upstream"] = missing "--upstream"
+    go _ _ _ ["--max-body"] = missing "--max-body"
+    go _ upstream maxBody ("--listen" : value : rest) =
+      go (Just value) upstream maxBody rest
+    go listenPath _ maxBody ("--upstream" : value : rest) =
+      go listenPath (Just value) maxBody rest
+    go listenPath upstream _ ("--max-body" : value : rest) = do
       parsed <- parsePositive "--max-body" value
-      go partial {partialMaxBody = parsed} rest
-    go _ (argument : _) = Left ("unknown argument: " ++ argument ++ "\n" ++ relayUsage)
-
-    finish partial = do
-      listenPath <- required "--listen" (partialListen partial)
-      upstreamUrl <- required "--upstream" (partialUpstream partial)
-      keySource <- keySourceFor partial
-      pure
-        RelaySettings
-          { relayListenPath = listenPath
-          , relayUpstream = upstreamUrl
-          , relayKeySource = keySource
-          , relayMaxBody = partialMaxBody partial
-          }
+      go listenPath upstream parsed rest
+    go _ _ _ (argument : _) =
+      Left ("unknown argument: " ++ argument ++ "\n" ++ relayUsage)
 
     required name value =
       case value of
@@ -123,17 +103,6 @@ parseRelaySettings = go emptyPartial
         Just found -> Right found
     missing name = Left ("missing value for " ++ name ++ "\n" ++ relayUsage)
 
-keySourceFor :: Partial -> Either String KeySource
-keySourceFor partial =
-  case (partialKeyFile partial, partialKeyStdin partial) of
-    (Just path, False)
-      | null path -> Left ("empty value for --key-file\n" ++ relayUsage)
-      | otherwise -> Right (KeyFile path)
-    (Nothing, True) -> Right KeyStdin
-    (Just _, True) -> Left ("--key-file and --key-stdin are mutually exclusive\n" ++ relayUsage)
-    (Nothing, False) ->
-      Left ("missing key source: pass --key-file PATH or --key-stdin\n" ++ relayUsage)
-
 parsePositive :: String -> String -> Either String Int
 parsePositive flag value =
   case decimal (Text.pack value) of
@@ -141,74 +110,59 @@ parsePositive flag value =
       | Text.null rest && number > 0 -> Right number
     _ -> Left ("invalid value for " ++ flag ++ ": " ++ value ++ "\n" ++ relayUsage)
 
-data Partial = Partial
-  { partialListen :: Maybe String
-  , partialUpstream :: Maybe String
-  , partialKeyFile :: Maybe FilePath
-  , partialKeyStdin :: Bool
-  , partialMaxBody :: Int
-  }
-
-emptyPartial :: Partial
-emptyPartial =
-  Partial
-    { partialListen = Nothing
-    , partialUpstream = Nothing
-    , partialKeyFile = Nothing
-    , partialKeyStdin = False
-    , partialMaxBody = defaultRelayMaxBody
-    }
-
 relayUsage :: String
 relayUsage =
-  "usage: hutian-llm-relay --listen PATH --upstream URL (--key-file PATH | --key-stdin) [--max-body BYTES]"
+  "usage: hutian-llm-relay --listen PATH --upstream URL [--max-body BYTES]\n"
+    ++ "the API key is read from standard input"
 
--- | Read the key from its source. The key is never accepted on the command
--- line, and errors never include key material.
-loadRelayKey :: KeySource -> IO (Either String BS.ByteString)
-loadRelayKey KeyStdin = validateKey <$> BS.getContents
-loadRelayKey (KeyFile path) = do
-  result <- try (BS.readFile path) :: IO (Either IOException BS.ByteString)
-  pure $ case result of
-    Left _ -> Left ("hutian-llm-relay: cannot read key file: " ++ path)
-    Right raw -> validateKey raw
+-- | Read the key from the given handle. The launcher pipes it from the
+-- configured file or command into standard input, so the key never appears in
+-- an argument list or environment.
+loadRelayKey :: Handle -> IO (Either String BS.ByteString)
+loadRelayKey handle = validateKey <$> BS.hGetContents handle
 
 validateKey :: BS.ByteString -> Either String BS.ByteString
 validateKey raw
   | BS.null key = Left "hutian-llm-relay: the API key is empty"
+  | BS.any isControl key =
+      Left "hutian-llm-relay: the API key contains control characters"
   | otherwise = Right key
   where
     key = trimKey raw
+    isControl byte = byte < 0x20 || byte == 0x7f
 
 -- | A prepared relay: the key, a shared HTTP manager, and the single allowed
 -- upstream request. Deliberately has no 'Show' instance.
 data RelayRuntime = RelayRuntime
-  { runtimeSettings :: RelaySettings
+  { runtimeListenPath :: FilePath
+  , runtimeMaxBody :: Int
   , runtimeKey :: BS.ByteString
   , runtimeManager :: Manager
   , runtimeUpstream :: Request
   , runtimeTarget :: BS.ByteString
-  , runtimeLogger :: String -> IO ()
+  , runtimeLogger :: RelayLogger
   }
 
-newRelayRuntime :: RelaySettings -> BS.ByteString -> IO RelayRuntime
-newRelayRuntime settings key = do
-  manager <- newManager tlsManagerSettings
+type RelayLogger = String -> IO ()
+
+-- | Write relay diagnostics to standard error.
+stderrLogger :: RelayLogger
+stderrLogger message = hPutStrLn stderr ("hutian-llm-relay: " ++ message)
+
+newRelayRuntime :: RelayLogger -> RelaySettings -> BS.ByteString -> IO RelayRuntime
+newRelayRuntime logger settings key = do
   upstream <- parseRequest (relayUpstream settings)
+  manager <- newManager tlsManagerSettings
   pure
     RelayRuntime
-      { runtimeSettings = settings
+      { runtimeListenPath = relayListenPath settings
+      , runtimeMaxBody = relayMaxBody settings
       , runtimeKey = key
       , runtimeManager = manager
       , runtimeUpstream = upstream
       , runtimeTarget = path upstream <> queryString upstream
-      , runtimeLogger = \message -> hPutStrLn stderr ("hutian-llm-relay: " ++ message)
+      , runtimeLogger = logger
       }
-
--- | Replace the log sink. Tests use this to assert that expected client
--- disconnects are not reported as upstream failures.
-setRelayLogger :: (String -> IO ()) -> RelayRuntime -> RelayRuntime
-setRelayLogger logger runtime = runtime {runtimeLogger = logger}
 
 -- | Bind the Unix socket and serve until the process is stopped.
 runRelay :: RelayRuntime -> IO ()
@@ -219,7 +173,7 @@ runRelay runtime =
       _ <- forkFinally (handleRelayConnection runtime connection) (\_ -> close connection)
       pure ()
   where
-    path = relayListenPath (runtimeSettings runtime)
+    path = runtimeListenPath runtime
     release listener = do
       close listener
       removeSocketFile path
@@ -251,7 +205,7 @@ removeSocketFile path = do
 -- relay over a socketpair without starting the accept loop.
 handleRelayConnection :: RelayRuntime -> Socket -> IO ()
 handleRelayConnection runtime connection = do
-  result <- try (serve runtime connection) :: IO (Either SomeException ())
+  result <- try (serve runtime connection) :: IO (Either IOException ())
   case result of
     Left exception ->
       logRelay runtime ("connection failed: " ++ displayException exception)
@@ -281,11 +235,15 @@ validateRequest
   -> Either RelayError Int
 validateRequest runtime request
   | headMethod request /= "POST" =
-      Left (RelayError 405 "Method Not Allowed" "only POST is allowed")
+      Left (RelayError (mkStatus 405 "Method Not Allowed") "only POST is allowed")
   | headVersion request /= "HTTP/1.1" =
-      Left (RelayError 505 "HTTP Version Not Supported" "only HTTP/1.1 is allowed")
+      Left
+        ( RelayError
+            (mkStatus 505 "HTTP Version Not Supported")
+            "only HTTP/1.1 is allowed"
+        )
   | headTarget request /= runtimeTarget runtime =
-      Left (RelayError 403 "Forbidden" "unexpected request target")
+      Left (RelayError (mkStatus 403 "Forbidden") "unexpected request target")
   | hasTransferEncoding =
       Left (badRequest "Transfer-Encoding is not supported")
   | otherwise =
@@ -295,8 +253,12 @@ validateRequest runtime request
           case parseContentLength contentLength of
             Nothing -> Left (badRequest "invalid Content-Length")
             Just bodyLength
-              | bodyLength > relayMaxBody (runtimeSettings runtime) ->
-                  Left (RelayError 413 "Payload Too Large" "request body is too large")
+              | bodyLength > runtimeMaxBody runtime ->
+                  Left
+                    ( RelayError
+                        (mkStatus 413 "Payload Too Large")
+                        "request body is too large"
+                    )
               | otherwise -> Right bodyLength
         _ -> Left (badRequest "duplicate Content-Length")
   where
@@ -341,26 +303,27 @@ forward runtime connection body = do
   result <-
     try
       ( withResponse request (runtimeManager runtime) $ \response -> do
-          let code = statusCode (responseStatus response)
-              reason = statusMessage (responseStatus response)
-          if code >= 200 && code < 300
+          let status = responseStatus response
+          if statusCode status >= 200 && statusCode status < 300
             then do
               writeIORef sent True
-              connected <- sendToClient connection (streamingResponseHead code reason)
+              connected <- sendToClient connection (streamingResponseHead status)
               when connected (streamBody connection (brRead (responseBody response)))
             else do
               errorBody <-
                 readBodyLimited
                   (brRead (responseBody response))
-                  (relayMaxBody (runtimeSettings runtime))
+                  (runtimeMaxBody runtime)
               writeIORef sent True
-              void $ sendToClient connection (fullResponse code reason "application/json" errorBody)
+              void $ sendToClient connection (fullResponse status "application/json" errorBody)
       )
   case result of
     Left (exception :: SomeException) -> do
       alreadySent <- readIORef sent
       unless alreadySent $
-        sendError connection (RelayError 502 "Bad Gateway" "upstream request failed")
+        sendError
+          connection
+          (RelayError (mkStatus 502 "Bad Gateway") "upstream request failed")
       logRelay runtime ("upstream request failed: " ++ displayException exception)
     Right () -> pure ()
 
@@ -408,21 +371,20 @@ sendToClient connection bytes =
     `catch` \(_ :: IOException) -> pure False
 
 sendError :: Socket -> RelayError -> IO ()
-sendError connection relayError =
+sendError connection (RelayError status message) =
   void $
     sendToClient
       connection
       ( fullResponse
-          (relayErrorCode relayError)
-          (relayErrorReason relayError)
+          status
           "text/plain; charset=utf-8"
-          (BS8.pack (relayErrorMessage relayError))
+          (BS8.pack message)
       )
 
-fullResponse :: Int -> BS.ByteString -> BS.ByteString -> BS.ByteString -> BS.ByteString
-fullResponse code reason contentType body =
+fullResponse :: Status -> BS.ByteString -> BS.ByteString -> BS.ByteString
+fullResponse status contentType body =
   BS.concat
-    [ statusLine code reason
+    [ statusLine status
     , "Content-Type: "
     , contentType
     , "\r\nContent-Length: "
@@ -431,18 +393,22 @@ fullResponse code reason contentType body =
     , body
     ]
 
-streamingResponseHead :: Int -> BS.ByteString -> BS.ByteString
-streamingResponseHead code reason =
+streamingResponseHead :: Status -> BS.ByteString
+streamingResponseHead status =
   BS.concat
-    [ statusLine code reason
+    [ statusLine status
     , "Content-Type: text/event-stream\r\n"
     , "Cache-Control: no-cache\r\n"
     , "Connection: close\r\n\r\n"
     ]
 
-statusLine :: Int -> BS.ByteString -> BS.ByteString
-statusLine code reason =
-  "HTTP/1.1 " <> BS8.pack (show code) <> " " <> reason <> "\r\n"
+statusLine :: Status -> BS.ByteString
+statusLine status =
+  "HTTP/1.1 "
+    <> BS8.pack (show (statusCode status))
+    <> " "
+    <> statusMessage status
+    <> "\r\n"
 
 -- * Logging
 

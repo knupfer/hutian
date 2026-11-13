@@ -23,6 +23,9 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
+- The relay always reads the API key from standard input. The launcher pipes
+  either `apiKeyFile` or `apiKeyCommand` into it, so the key never appears in
+  the relay's argument list or environment.
 - With an API key configured, the sandbox network defaults to `none` and the
   shell receives a sanitized `http://hutian-relay/...` URL. Set
   `GVISOR_NETWORK` explicitly to restore networking for other tools.

@@ -147,12 +147,12 @@ hutian.lib.mkHutianShellFlake nixpkgs {
 }
 ```
 
-The launcher starts `hutian-llm-relay` on the host. The relay reads the key
-from the file, or from the standard output of `apiKeyCommand`, and listens on a
-per-session Unix socket under `$XDG_RUNTIME_DIR` (falling back to `/tmp`). The
-socket directory is mode `0700` and is bind-mounted at `/run/hutian`, so the
-sandbox can connect to `/run/hutian/llm.sock`; the directory holds no key
-material.
+The launcher starts `hutian-llm-relay` on the host. The relay reads the key from
+standard input; the launcher pipes either `apiKeyFile` or the standard output of
+`apiKeyCommand` into it. The relay listens on a per-session Unix socket under
+`$XDG_RUNTIME_DIR` (falling back to `/tmp`). The socket directory is mode `0700`
+and is bind-mounted at `/run/hutian`, so the sandbox can connect to
+`/run/hutian/llm.sock`; the directory holds no key material.
 
 The relay accepts only an HTTP/1.1 `POST` to the exact path and query of
 `llamaUrl`. It discards all client headers, including `Authorization` and

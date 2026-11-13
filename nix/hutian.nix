@@ -168,8 +168,12 @@ let
                   exit 1
                   ;;
               esac
-              ${relayBin} \
-                --key-file "$key_file" \
+              if [ ! -r "$key_file" ]; then
+                echo "hutian: cannot read apiKeyFile: $key_file" >&2
+                exit 1
+              fi
+              # The relay reads the key from stdin, so it never appears in argv.
+              cat -- "$key_file" | ${relayBin} \
                 --listen "$relay_socket" \
                 --upstream ${escapeShellArg llamaUrl} &
             ''
@@ -178,7 +182,6 @@ let
               # The command writes the key to the relay's stdin. It never appears
               # in an argument list or in the sandbox environment.
               eval ${escapeShellArg apiKeyCommand} | ${relayBin} \
-                --key-stdin \
                 --listen "$relay_socket" \
                 --upstream ${escapeShellArg llamaUrl} &
             ''

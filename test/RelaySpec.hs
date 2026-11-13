@@ -19,8 +19,7 @@ import Hutian.Http.Wire (recvAll, recvExactly, recvUntil)
 import Hutian.Interrupt (newInterruptFlag)
 import Hutian.Llm (LlmSettings (..), LlmUrl (..), ModelName (..), SystemPrompt (..), runLlm)
 import Hutian.Relay
-  ( KeySource (..)
-  , RelayRuntime
+  ( RelayRuntime
   , RelaySettings (..)
   , defaultRelayMaxBody
   , handleRelayConnection
@@ -28,7 +27,6 @@ import Hutian.Relay
   , newRelayRuntime
   , parseRelaySettings
   , runRelay
-  , setRelayLogger
   )
 import Hutian.Relay.Http
   ( RequestHead (..)
@@ -58,6 +56,7 @@ import Network.Socket
   )
 import Network.Socket.ByteString (sendAll)
 import System.Directory (doesPathExist)
+import System.IO (IOMode (ReadMode), withFile)
 import System.Posix.Files (fileMode, getFileStatus)
 import System.Timeout (timeout)
 import Test.Tasty
@@ -76,7 +75,6 @@ import TestSupport
   , assertNotInfix
   , awaitMVar
   , captureStdout
-  , withStdinFile
   , withTemporaryDirectory
   )
 import Text.Read (readMaybe)
@@ -98,27 +96,10 @@ settingsTests :: TestTree
 settingsTests =
   testGroup
     "settings"
-    [ testCase "parseRelaySettings accepts a key file" $
-        parseRelaySettings
-          [ "--listen"
-          , "/run/hutian/llm.sock"
-          , "--upstream"
-          , "http://127.0.0.1:8080/v1/chat/completions"
-          , "--key-file"
-          , "/run/secrets/hutian-key"
-          ]
-          @?= Right
-            ( RelaySettings
-                "/run/hutian/llm.sock"
-                "http://127.0.0.1:8080/v1/chat/completions"
-                (KeyFile "/run/secrets/hutian-key")
-                defaultRelayMaxBody
-            )
-    , testCase "parseRelaySettings accepts stdin and a body limit" $
+    [ testCase "parseRelaySettings accepts listen, upstream, and a body limit" $
         parseRelaySettings
           [ "--upstream"
           , "https://example.test/v1/chat/completions"
-          , "--key-stdin"
           , "--listen"
           , "/tmp/llm.sock"
           , "--max-body"
@@ -128,53 +109,53 @@ settingsTests =
             ( RelaySettings
                 "/tmp/llm.sock"
                 "https://example.test/v1/chat/completions"
-                KeyStdin
                 1024
             )
-    , testCase "parseRelaySettings rejects missing, conflicting, and invalid options" $ do
-        assertLeftNames "--listen" (parseRelaySettings ["--upstream", "http://x", "--key-stdin"])
-        assertLeftNames "--upstream" (parseRelaySettings ["--listen", "/tmp/s", "--key-stdin"])
-        assertLeftNames
-          "key source"
-          (parseRelaySettings ["--listen", "/tmp/s", "--upstream", "http://x"])
-        assertLeftNames
-          "mutually exclusive"
-          (parseRelaySettings ["--listen", "/tmp/s", "--upstream", "http://x", "--key-file", "/k", "--key-stdin"])
+    , testCase "parseRelaySettings uses the default body limit" $
+        parseRelaySettings
+          [ "--listen"
+          , "/run/hutian/llm.sock"
+          , "--upstream"
+          , "http://127.0.0.1:8080/v1/chat/completions"
+          ]
+          @?= Right
+            ( RelaySettings
+                "/run/hutian/llm.sock"
+                "http://127.0.0.1:8080/v1/chat/completions"
+                defaultRelayMaxBody
+            )
+    , testCase "parseRelaySettings rejects missing, empty, and invalid options" $ do
+        assertLeftNames "--listen" (parseRelaySettings ["--upstream", "http://x"])
+        assertLeftNames "--upstream" (parseRelaySettings ["--listen", "/tmp/s"])
         assertLeftNames
           "empty value"
-          (parseRelaySettings ["--listen", "/tmp/s", "--upstream", "http://x", "--key-file", ""])
+          (parseRelaySettings ["--listen", "", "--upstream", "http://x"])
         assertLeftNames
           "empty value"
-          (parseRelaySettings ["--listen", "", "--upstream", "http://x", "--key-stdin"])
-        assertLeftNames
-          "empty value"
-          (parseRelaySettings ["--listen", "/tmp/s", "--upstream", "", "--key-stdin"])
+          (parseRelaySettings ["--listen", "/tmp/s", "--upstream", ""])
         assertLeftNames "--listen" (parseRelaySettings ["--listen"])
-        assertLeftNames "--max-body" (parseRelaySettings ["--listen", "/tmp/s", "--upstream", "http://x", "--key-stdin", "--max-body", "0"])
-        assertLeftNames "--max-body" (parseRelaySettings ["--listen", "/tmp/s", "--upstream", "http://x", "--key-stdin", "--max-body", "nope"])
+        assertLeftNames
+          "--max-body"
+          (parseRelaySettings ["--listen", "/tmp/s", "--upstream", "http://x", "--max-body", "0"])
+        assertLeftNames
+          "--max-body"
+          (parseRelaySettings ["--listen", "/tmp/s", "--upstream", "http://x", "--max-body", "nope"])
         assertLeftNames "unknown" (parseRelaySettings ["--unknown"])
-    , testCase "loadRelayKey reads, trims, and rejects files" $
+    , testCase "loadRelayKey reads, trims, and rejects empty input" $
         withTemporaryDirectory "hutian-relay-key" $ \directory -> do
           let path = directory ++ "/key"
-          BS.writeFile path "  file-key\r\n"
-          loadRelayKey (KeyFile path) >>= (@?= Right "file-key")
+          BS.writeFile path "  stdin-key\r\n"
+          withFile path ReadMode $ \handle -> do
+            key <- loadRelayKey handle
+            key @?= Right "stdin-key"
           BS.writeFile path " \n\t"
-          loadRelayKey (KeyFile path) >>= (@?= Left "hutian-llm-relay: the API key is empty")
-          loadRelayKey (KeyFile (directory ++ "/missing")) >>= \result ->
-            either
-              ( \message ->
-                  assertBool
-                    "a missing key file should be reported by path"
-                    ("cannot read key file" `isInfixOf` message)
-              )
-              (const (assertFailure "a missing key file should fail"))
-              result
-    , testCase "loadRelayKey reads standard input" $
-        withTemporaryDirectory "hutian-relay-key" $ \directory -> do
-          let path = directory ++ "/key"
-          BS.writeFile path "  stdin-key\n"
-          withStdinFile path $
-            loadRelayKey KeyStdin >>= (@?= Right "stdin-key")
+          withFile path ReadMode $ \handle -> do
+            key <- loadRelayKey handle
+            key @?= Left "hutian-llm-relay: the API key is empty"
+          BS.writeFile path "abc\ndef"
+          withFile path ReadMode $ \handle -> do
+            key <- loadRelayKey handle
+            key @?= Left "hutian-llm-relay: the API key contains control characters"
     , testCase "trimKey removes surrounding whitespace but not interior bytes" $ do
         trimKey "  secret\r\n" @?= "secret"
         trimKey "\tsecret\n" @?= "secret"
@@ -347,9 +328,14 @@ wireTests =
         withUpstream largeStreamingResponse $ \port _requests -> do
           logs <- newIORef []
           runtime <-
-            setRelayLogger
+            newRelayRuntime
               (\message -> modifyIORef' logs (message :))
-              <$> runtimeFor port defaultRelayMaxBody
+              ( RelaySettings
+                  "/unused.sock"
+                  ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
+                  defaultRelayMaxBody
+              )
+              "s3cret-key"
           (client, server) <- socketPair AF_UNIX Stream defaultProtocol
           done <- newEmptyMVar
           _ <-
@@ -379,10 +365,10 @@ upstreamTests =
         withUpstream streamingResponse $ \port requests -> do
           runtime <-
             newRelayRuntime
+              silentLogger
               ( RelaySettings
                   "/unused.sock"
                   ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions?stream=true")
-                  (KeyFile "/unused")
                   defaultRelayMaxBody
               )
               "s3cret-key"
@@ -448,10 +434,10 @@ endToEndTests =
                     (Just socketPath)
             runtime <-
               newRelayRuntime
+                silentLogger
                 ( RelaySettings
                     socketPath
                     ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
-                    (KeyFile "/unused")
                     defaultRelayMaxBody
                 )
                 "s3cret-key"
@@ -476,10 +462,10 @@ endToEndTests =
           let socketPath = directory ++ "/llm.sock"
           runtime <-
             newRelayRuntime
+              silentLogger
               ( RelaySettings
                   socketPath
                   "http://127.0.0.1:1/v1/chat/completions"
-                  (KeyFile "/unused")
                   defaultRelayMaxBody
               )
               "s3cret-key"
@@ -544,13 +530,16 @@ redirectResponse port =
 runtimeFor :: Int -> Int -> IO RelayRuntime
 runtimeFor port maxBody =
   newRelayRuntime
+    silentLogger
     ( RelaySettings
         "/unused.sock"
         ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
-        (KeyFile "/unused")
         maxBody
     )
     "s3cret-key"
+
+silentLogger :: String -> IO ()
+silentLogger _ = pure ()
 
 postRequest :: ByteString -> ByteString -> [ByteString] -> ByteString
 postRequest target body extraHeaders =

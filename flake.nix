@@ -271,7 +271,7 @@
                 '')
                 [
                   "hutian-llm-relay"
-                  "--key-file"
+                  "cat --"
                   "/run/secrets/hutian-key"
                   "chmod 700"
                   "trap cleanup"
@@ -284,6 +284,14 @@
                   "http://hutian-relay/v1/chat/completions"
                 ]
             )}
+            if ${pkgs.gnugrep}/bin/grep -F -- '--key-file' ${keyLauncher}; then
+              echo "the launcher must not pass the key file path to the relay" >&2
+              exit 1
+            fi
+            if ${pkgs.gnugrep}/bin/grep -F -- '--key-stdin' ${keyLauncher}; then
+              echo "the relay always reads the key from stdin" >&2
+              exit 1
+            fi
             if ${pkgs.gnugrep}/bin/grep -F -- '--api-key' ${keyLauncher}; then
               echo "the launcher must not pass the API key as an argument" >&2
               exit 1
