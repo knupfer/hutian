@@ -203,6 +203,7 @@
             llamaUrl = "http://probe.invalid/v1/chat/completions";
           };
           probe = extra: mkHutianShell ({ inherit pkgs; } // probeOptions // extra);
+          relayPackage = pkgs.callPackage ./nix/hutian-shell.nix { src = self; };
           probeLauncher = "${probe { }}/bin/hutian";
           readOnlyLauncher = "${probe { readOnly = true; }}/bin/hutian";
           keyLauncher = "${probe { apiKeyFile = "/run/secrets/hutian-key"; }}/bin/hutian";
@@ -340,6 +341,28 @@
               pkgs.runCommand "hutian-api-key-rejected-check" { } "touch $out"
             else
               throw "hutian: a store-backed, empty, or conflicting key source must be rejected";
+          relay-sigint = pkgs.runCommand "hutian-relay-sigint-check" { } ''
+            socket_dir=$(${pkgs.coreutils}/bin/mktemp -d)
+            relay=${relayPackage}/bin/hutian-llm-relay
+            printf 'test-key' | "$relay" \
+              --listen "$socket_dir/llm.sock" \
+              --upstream http://127.0.0.1:1/v1/chat/completions &
+            relay_pid=$!
+            trap 'kill "$relay_pid" 2>/dev/null || true' EXIT
+            for _ in $(${pkgs.coreutils}/bin/seq 1 200); do
+              [ -S "$socket_dir/llm.sock" ] && break
+              ${pkgs.coreutils}/bin/sleep 0.01
+            done
+            test -S "$socket_dir/llm.sock"
+            kill -INT "$relay_pid"
+            ${pkgs.coreutils}/bin/sleep 0.2
+            kill -0 "$relay_pid"
+            test -S "$socket_dir/llm.sock"
+            kill "$relay_pid"
+            wait "$relay_pid" 2>/dev/null || true
+            ${pkgs.coreutils}/bin/rm -rf "$socket_dir"
+            ${pkgs.coreutils}/bin/touch $out
+          '';
         }
       );
     };

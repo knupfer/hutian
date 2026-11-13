@@ -47,6 +47,9 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Fixed
 
+- Interrupting a model reply with `Ctrl+C` no longer kills the host relay. The
+  relay ignores the terminal's `SIGINT`, so its socket stays available for
+  follow-up prompts; the launcher still stops it with `SIGTERM` on exit.
 - `apiKeyCommand` now runs in the foreground, so interactive prompts such as
   `passage` can wait for input and be cancelled with `Ctrl+C`. The launcher no
   longer reports a missing relay socket while the command is still running.
