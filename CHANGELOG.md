@@ -30,7 +30,7 @@ All notable changes to Hutian are documented here. The format follows
   Ctrl+C aborts the current LLM turn instead of denying the command. The tool is
   omitted from the request in deny mode, and tool calls are refused when they
   arrive anyway.
-- A capability matrix in the README documenting how `sandbox.readOnly`,
+- A capability matrix in the README documenting how `sandbox.writable`,
   `sandbox.nix`, `sandbox.internet`, `model.shell`, and the relay compose,
   including the fact that `sandbox.internet = false` covers direct sandbox
   networking but not host Nix fetches or the fixed relay upstream.
@@ -54,7 +54,11 @@ All notable changes to Hutian are documented here. The format follows
 ### Changed
 
 - The built-in defaults are now safe-by-default: `sandbox.internet = false`,
-  `model.shell = "ask"`, and the system prompt is `You are a coding agent.`.
+  `sandbox.writable = false`, `model.shell = "ask"`, and the system prompt is
+  `You are a coding agent.`.
+- `sandbox.readOnly` was renamed to `sandbox.writable`, so every sandbox flag
+  now grants a capability when it is `true`. `writable = true` allows writes to
+  `/source`; the default `false` mounts it read-only.
 - `sandbox.internet = true` now selects gVisor's `host` network mode explicitly.
   Rootless gVisor does not support `sandbox` networking and silently falls back
   to `host`, so the launcher no longer requests the unsupported mode.
@@ -63,7 +67,7 @@ All notable changes to Hutian are documented here. The format follows
   are reported the same way whether they arrive directly or through the relay.
   Error bodies and relay keys are read with explicit size limits.
 - Sandbox and model settings are now grouped. `sandbox` contains `packages`,
-  `readOnly`, `nix`, and `internet`; `model` contains `name`, `url`,
+  `writable`, `nix`, and `internet`; `model` contains `name`, `url`,
   `systemPrompt`, `shell`, and the optional `apiKeyFile`/`apiKeyCommand`. The
   internal launcher arguments stay flat.
 - The `shell` flake option and `--allow-shell` launcher flag were replaced by

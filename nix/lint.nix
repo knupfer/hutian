@@ -20,7 +20,7 @@ let
 
   # The sandbox launcher has to be exercised inside a private user and mount
   # namespace. This script creates a mountpoint with a nested mount, then checks
-  # that the launcher keeps both visible and honours readOnly for both.
+  # that the launcher keeps both visible and honours the writable option for both.
   sandboxSourceTest = pkgs.writeShellScript "hutian-sandbox-source-test" ''
     set -euo pipefail
 
@@ -38,7 +38,7 @@ let
     echo inner > "$src/child/file"
 
     # Writable: nested mounts and writes are preserved.
-    "$sandbox" "$rootfs" "$closure" "$src" false false \
+    "$sandbox" "$rootfs" "$closure" "$src" true false \
       ${pkgs.bash}/bin/bash -c '
         set -e
         test "$(cat "$1/file")" = outer
@@ -48,7 +48,7 @@ let
       ' bash "$rootfs/source" "$src"
 
     # Read-only: writes through the root and the nested mount are rejected.
-    "$sandbox" "$rootfs" "$closure" "$src" true false \
+    "$sandbox" "$rootfs" "$closure" "$src" false false \
       ${pkgs.bash}/bin/bash -c '
         set -e
         test "$(cat "$1/file")" = changed
@@ -122,7 +122,7 @@ in
         printf '%s\n' "$file" >> closure/store-paths
 
         ${pkgs.util-linux}/bin/unshare --user --map-root-user --mount --propagation private \
-          ${sandboxLauncher} "$PWD/rootfs" "$PWD/closure" "$PWD/source" false false \
+          ${sandboxLauncher} "$PWD/rootfs" "$PWD/closure" "$PWD/source" true false \
           ${pkgs.bash}/bin/bash -c '
             set -e
             test "$(cat "$1")" = value-299

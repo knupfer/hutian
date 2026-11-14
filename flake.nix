@@ -24,7 +24,7 @@
         ]
         [
           "sandbox"
-          "readOnly"
+          "writable"
         ]
         [
           "sandbox"
@@ -139,7 +139,7 @@
       ];
       knownSandboxOptions = [
         "packages"
-        "readOnly"
+        "writable"
         "nix"
         "internet"
       ];
@@ -200,7 +200,7 @@
             systemPrompt = requireString "model.systemPrompt" model.systemPrompt;
             model = requireNonEmptyString "model.name" model.name;
             llamaUrl = requireNonEmptyString "model.url" model.url;
-            readOnly = requireBool "sandbox.readOnly" sandbox.readOnly;
+            writable = requireBool "sandbox.writable" sandbox.writable;
             nix = requireBool "sandbox.nix" sandbox.nix;
             internet = requireBool "sandbox.internet" sandbox.internet;
             modelShell = requireModelShell "model.shell" model.shell;
@@ -213,7 +213,7 @@
       defaults = {
         sandbox = {
           packages = _: [ ];
-          readOnly = false;
+          writable = false;
           nix = false;
           internet = false;
         };
@@ -287,7 +287,7 @@
       #     inherit pkgs;
       #     sandbox = {
       #       packages = [ pkgs.git pkgs.jq ];
-      #       readOnly = false;
+      #       writable = true;
       #       nix = false;
       #       internet = true;
       #     };
@@ -305,7 +305,7 @@
       #     hutian.lib.mkHutianShellFlake nixpkgs {
       #       sandbox = {
       #         packages = pkgs: [ pkgs.git pkgs.jq ];
-      #         readOnly = false;
+      #         writable = true;
       #         nix = false;
       #         internet = true;
       #       };
@@ -345,7 +345,7 @@
           withModel = extra: probe { model = probeOptions.model // extra; };
           relayPackage = pkgs.callPackage ./nix/hutian-shell.nix { src = self; };
           probeLauncher = "${probe { }}/bin/hutian";
-          readOnlyLauncher = "${withSandbox { readOnly = true; }}/bin/hutian";
+          writableLauncher = "${withSandbox { writable = true; }}/bin/hutian";
           internetLauncher = "${withSandbox { internet = true; }}/bin/hutian";
           noInternetLauncher = "${withSandbox { internet = false; }}/bin/hutian";
           allowedModelShellLauncher = "${withModel { shell = "allow"; }}/bin/hutian";
@@ -402,10 +402,11 @@
             fi
             ${pkgs.coreutils}/bin/touch $out
           '';
-          read-only-option = pkgs.runCommand "hutian-read-only-option-check" { } ''
-            ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${readOnlyLauncher}
-            if ${pkgs.gnugrep}/bin/grep -F 'read_only=true' ${probeLauncher}; then
-              echo "sandbox.readOnly = false must not request a read-only working directory" >&2
+          writable-option = pkgs.runCommand "hutian-writable-option-check" { } ''
+            ${pkgs.gnugrep}/bin/grep -F 'writable=false' ${probeLauncher}
+            ${pkgs.gnugrep}/bin/grep -F 'writable=true' ${writableLauncher}
+            if ${pkgs.gnugrep}/bin/grep -F 'writable=false' ${writableLauncher}; then
+              echo "sandbox.writable = true must not request a read-only working directory" >&2
               exit 1
             fi
             ${pkgs.coreutils}/bin/touch $out

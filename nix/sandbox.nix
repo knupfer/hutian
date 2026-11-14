@@ -18,7 +18,7 @@ pkgs.writeShellScript "hutian-sandbox" ''
   rootfs=$1
   closure=$2
   sourcedir=$3
-  read_only=$4
+  writable=$4
   nix_mode=$5
   shift 5
 
@@ -37,11 +37,11 @@ pkgs.writeShellScript "hutian-sandbox" ''
   # while starting the sandbox. Recursive binds also keep nested mounts visible.
   ${mount} --rbind "$sourcedir" "$rootfs/source"
 
-  if [ "$read_only" = true ]; then
+  if [ "$writable" = false ]; then
     ${mount} -o remount,bind,ro "$rootfs/source"
 
     # The remount above only covers the root of the bind. Apply it to every
-    # nested mount too so readOnly still holds when the working directory
+    # nested mount too so read-only mode still holds when the working directory
     # contains mounts of its own. Mount points from /proc/self/mountinfo escape
     # spaces and backslashes, so decode those before remounting.
     while read -r _ _ _ _ target _; do

@@ -18,9 +18,9 @@
             git
           ];
 
-        # Mount the host working directory read-only at /source. Set this to
-        # true when the model should only inspect the project.
-        readOnly = false;
+        # Allow writes to /source. The default is false (read-only); set true
+        # when the model should be able to modify the project.
+        writable = false;
 
         # Include Nix and connect it to the host Nix daemon.
         nix = false;

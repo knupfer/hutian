@@ -5,7 +5,7 @@
   systemPrompt,
   model,
   llamaUrl,
-  readOnly,
+  writable,
   nix,
   internet,
   modelShell,
@@ -21,7 +21,7 @@ assert pkgs.lib.assertMsg (
 assert pkgs.lib.assertMsg (
   builtins.isString llamaUrl && llamaUrl != ""
 ) "hutian: llamaUrl must be a non-empty string";
-assert pkgs.lib.assertMsg (builtins.isBool readOnly) "hutian: readOnly must be a boolean";
+assert pkgs.lib.assertMsg (builtins.isBool writable) "hutian: writable must be a boolean";
 assert pkgs.lib.assertMsg (builtins.isBool nix) "hutian: nix must be a boolean";
 assert pkgs.lib.assertMsg (builtins.isBool internet) "hutian: internet must be a boolean";
 assert pkgs.lib.assertMsg (
@@ -172,7 +172,7 @@ let
       sourcedir=$(pwd -P)
       platform="''${GVISOR_PLATFORM:-systrap}"
       saved_tty=$(stty -g 2>/dev/null || true)
-      read_only=${if readOnly then "true" else "false"}
+      writable=${if writable then "true" else "false"}
       nix_mode=${if nix then "true" else "false"}
 
       # The internet option is a hard gate. Without it the sandbox gets no
@@ -320,7 +320,7 @@ let
       # namespace and let gVisor recursively bind the rootfs into the sandbox.
       status=0
       ${pkgs.util-linux}/bin/unshare --user --map-root-user --mount --propagation private \
-        ${sandboxLauncher} "$rootfs" "$closure" "$sourcedir" "$read_only" "$nix_mode" \
+        ${sandboxLauncher} "$rootfs" "$closure" "$sourcedir" "$writable" "$nix_mode" \
         "''${sandbox[@]}" || status=$?
 
       # Keep the host terminal usable even if the sandbox leaves it in raw mode.

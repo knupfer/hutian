@@ -5,8 +5,8 @@ Hutian is a Nix flake that drops you into a rootless
 
 The sandbox sees only:
 
-- the current working directory, mounted at `/source` read-write by default or
-  read-only when `sandbox.readOnly = true`;
+- the current working directory, mounted at `/source` read-only by default or
+  read-write when `sandbox.writable = true`;
 - the runtime closures of the packages you configure, mounted under
   `/nix/store`;
 - optionally, when `sandbox.nix = true`, the host Nix store and Nix daemon
@@ -54,12 +54,12 @@ Run a single command without starting the interactive shell:
 
 ```console
 $ nix run /path/to/this/flake -- echo hello
-$ nix run /path/to/this/flake -- /bin/sh -c 'echo hello > result.txt'
+$ nix run /path/to/this/flake -- /bin/sh -c 'echo hello > /tmp/result.txt'
 ```
 
-Files written under `/source` appear directly in the host working directory
-unless `sandbox.readOnly = true`. `/tmp` is private to the sandbox, and the
-sandbox root is read-only.
+When `sandbox.writable = true`, files written under `/source` appear directly in
+the host working directory. `/tmp` is private to the sandbox, and the sandbox
+root is read-only.
 
 ## Input modes
 
@@ -135,7 +135,7 @@ Term command history is stored in `/tmp/hutian-shell-history`, and LLM prompt
 history in `/tmp/hutian-llm-history`.
 
 The flake requires explicit `sandbox` and `model` groups. `sandbox` must
-contain `packages`, `readOnly`, `nix`, and `internet`; `model` must contain
+contain `packages`, `writable`, `nix`, and `internet`; `model` must contain
 `name`, `url`, `systemPrompt`, and `shell`. Hutian expects an
 OpenAI-compatible llama.cpp chat endpoint; a native `/completion` URL is also
 supported. Both `http://` and `https://` URLs work, and HTTPS endpoints are
@@ -236,7 +236,7 @@ tool is handled (`"deny"`, `"ask"`, or `"allow"`):
     hutian.lib.mkHutianShellFlake nixpkgs {
       sandbox = {
         packages = pkgs: with pkgs; [ coreutils git ];
-        readOnly = false;
+        writable = true;
         nix = false;
         internet = true;
       };
@@ -252,10 +252,10 @@ tool is handled (`"deny"`, `"ask"`, or `"allow"`):
 }
 ```
 
-Set `sandbox.readOnly = true` to mount `/source` read-only. The sandbox can
+`/source` is read-only by default (`sandbox.writable = false`). The sandbox can
 still read the working directory, but any attempt to write to it fails with a
-read-only filesystem error. This is useful when the model should only inspect a
-project.
+read-only filesystem error. Set `sandbox.writable = true` when the model should
+be able to modify the project.
 
 Set `sandbox.internet = false` to give the sandbox gVisor's `none` network mode.
 This is a hard gate: `GVISOR_NETWORK` cannot re-enable networking. The host
@@ -279,7 +279,7 @@ hutian.lib.mkHutianShell {
   inherit pkgs;
   sandbox = {
     packages = [ pkgs.git pkgs.jq ];
-    readOnly = false;
+    writable = true;
     nix = false;
     internet = true;
   };
@@ -303,7 +303,7 @@ outputs = { nixpkgs, hutian, ... }:
   hutian.lib.mkHutianShellFlake nixpkgs {
     sandbox = {
       packages = pkgs: with pkgs; [ coreutils git ];
-      readOnly = false;
+      writable = true;
       nix = true;
       internet = true;
     };
@@ -345,7 +345,7 @@ Hutian separates sandbox capabilities from model-tool permissions:
 | Option | Applies to | Effect |
 | --- | --- | --- |
 | `sandbox.packages` | sandbox | Selects the package closures mounted under `/nix/store` and added to `PATH`. |
-| `sandbox.readOnly` | sandbox | Mounts `/source` read-only. It protects integrity, not confidentiality. |
+| `sandbox.writable` | sandbox | Allows writes to `/source`. `false` (the default) mounts it read-only. It protects integrity, not confidentiality. |
 | `sandbox.nix` | sandbox | Exposes the host `/nix/store` and Nix daemon socket. |
 | `sandbox.internet` | sandbox | Controls direct gVisor networking. `false` forces `none`. |
 | `model.shell` | model | `"deny"`, `"ask"`, or `"allow"` for the model's `shell` tool. |
@@ -356,7 +356,7 @@ Important composition rules:
 - `sandbox.internet = false` removes direct sandbox networking only. The relay
   socket can still reach the fixed model upstream, and `sandbox.nix = true`
   still lets the host Nix daemon fetch and build.
-- `sandbox.readOnly = true` does not prevent the model from reading `/source`
+- `sandbox.writable = false` does not prevent the model from reading `/source`
   and sending what it reads upstream. Set `model.shell = "deny"` or use a local
   model endpoint if confidentiality matters.
 - `sandbox.internet = true` defaults to gVisor's `host` mode, so the sandbox
@@ -389,7 +389,7 @@ Important composition rules:
   approval before each command, while `"allow"` runs model commands
   automatically. Term mode still lets you run commands yourself.
 - Writes outside `/source`, `/tmp`, and the mounted package store are refused.
-  Set `sandbox.readOnly = true` to refuse writes to `/source` as well.
+  `sandbox.writable = false` (the default) refuses writes to `/source` as well.
 - With `sandbox.nix = true`, the full host `/nix/store` and the Nix daemon
   socket are visible. Other host paths remain hidden.
 - The sandbox uses the `systrap` platform by default. Set
