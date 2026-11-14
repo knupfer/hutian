@@ -53,6 +53,12 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
+- The built-in defaults are now safe-by-default: `sandbox.internet = false`,
+  `model.shell = "ask"`, and the system prompt is `You are a coding agent.`.
+- `sandbox.internet = true` now selects gVisor's `host` network mode explicitly.
+  Rootless gVisor does not support `sandbox` networking and silently falls back
+  to `host`, so the launcher no longer requests the unsupported mode.
+  `GVISOR_NETWORK` can still narrow the mode to `none`.
 - Direct TCP LLM requests no longer follow redirects, and non-success responses
   are reported the same way whether they arrive directly or through the relay.
   Error bodies and relay keys are read with explicit size limits.

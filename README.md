@@ -152,11 +152,11 @@ bundle path as `SYSTEM_CERTIFICATE_PATH` so the Haskell HTTP client can verify
 TLS certificates.
 
 Hutian always routes model traffic through the host relay, whether or not an
-API key is configured. The sandbox uses gVisor's `sandbox` network mode by
-default when `sandbox.internet = true`; with `sandbox.internet = false` it
-always uses `none`, regardless of `GVISOR_NETWORK`. The relay itself uses a
-Unix socket, so model traffic still works without sandbox networking. See
-[Relay and API keys](#relay-and-api-keys).
+API key is configured. The sandbox uses gVisor's `host` network mode by default
+when `sandbox.internet = true` (rootless gVisor does not support `sandbox`
+networking); with `sandbox.internet = false` it always uses `none`, regardless
+of `GVISOR_NETWORK`. The relay itself uses a Unix socket, so model traffic still
+works without sandbox networking. See [Relay and API keys](#relay-and-api-keys).
 
 ## Relay and API keys
 
@@ -336,7 +336,7 @@ gVisor runtime settings can be overridden from the host:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `GVISOR_PLATFORM` | `systrap` | gVisor platform. Use `ptrace` if your host requires it. |
-| `GVISOR_NETWORK` | `sandbox` | gVisor network mode: `sandbox`, `host`, or `none`. Ignored when `sandbox.internet = false`, where the mode is always `none`. |
+| `GVISOR_NETWORK` | `host` | gVisor network mode: `host` or `none`. `sandbox` is not supported with `--rootless` and falls back to `host`. Ignored when `sandbox.internet = false`, where the mode is always `none`. |
 
 ## Permission model
 
@@ -359,9 +359,10 @@ Important composition rules:
 - `sandbox.readOnly = true` does not prevent the model from reading `/source`
   and sending what it reads upstream. Set `model.shell = "deny"` or use a local
   model endpoint if confidentiality matters.
-- `sandbox.internet = true` defaults to gVisor's `sandbox` mode, which can
-  reach the host loopback interface. `GVISOR_NETWORK` can narrow it but cannot
-  widen `sandbox.internet = false`.
+- `sandbox.internet = true` defaults to gVisor's `host` mode, so the sandbox
+  shares the host network namespace: loopback, LAN, and the Internet.
+  `GVISOR_NETWORK` can narrow it to `none` but cannot widen
+  `sandbox.internet = false`.
 - `model.shell = "deny"` restricts only the model. Term mode can always run
   commands in the sandbox.
 - Every process in the sandbox can connect to the relay socket. Shell commands
@@ -373,9 +374,9 @@ Important composition rules:
 - `runsc --rootless` runs the sandbox as your unprivileged host user inside a
   user namespace. The sandbox process is UID 0 inside that namespace, mapped to
   your host UID; it gains no host privileges.
-- With `sandbox.internet = true`, the default network mode is gVisor's
-  `sandbox`, which can reach the host's loopback interface. Set
-  `GVISOR_NETWORK=none` to disable networking for other tools. With
+- With `sandbox.internet = true`, the default network mode is gVisor's `host`,
+  which shares the host network namespace (loopback, LAN, and the Internet).
+  Set `GVISOR_NETWORK=none` to disable networking for other tools. With
   `sandbox.internet = false`, the mode is always `none`; model traffic uses the
   host relay socket instead.
 - Model traffic always uses the relay socket at `/run/hutian/llm.sock`, which

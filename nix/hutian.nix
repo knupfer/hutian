@@ -177,11 +177,13 @@ let
 
       # The internet option is a hard gate. Without it the sandbox gets no
       # network regardless of GVISOR_NETWORK; with it, GVISOR_NETWORK can still
-      # narrow the mode.
+      # narrow the mode. gVisor does not support sandbox networking with
+      # --rootless and silently falls back to the host namespace, so use host
+      # explicitly rather than relying on that fallback.
       ${
         if internet then
           ''
-            network="''${GVISOR_NETWORK:-sandbox}"
+            network="''${GVISOR_NETWORK:-host}"
           ''
         else
           ''

@@ -215,17 +215,13 @@
           packages = _: [ ];
           readOnly = false;
           nix = false;
-          internet = true;
+          internet = false;
         };
         model = {
           name = "default";
           url = "http://127.0.0.1:8080/v1/chat/completions";
-          systemPrompt = ''
-            You are a careful coding assistant working inside a sandboxed shell.
-            Prefer small, verifiable changes and explain commands before destructive
-            actions.
-          '';
-          shell = "allow";
+          systemPrompt = "You are a coding agent.";
+          shell = "ask";
         };
       };
 
@@ -350,7 +346,9 @@
           relayPackage = pkgs.callPackage ./nix/hutian-shell.nix { src = self; };
           probeLauncher = "${probe { }}/bin/hutian";
           readOnlyLauncher = "${withSandbox { readOnly = true; }}/bin/hutian";
+          internetLauncher = "${withSandbox { internet = true; }}/bin/hutian";
           noInternetLauncher = "${withSandbox { internet = false; }}/bin/hutian";
+          allowedModelShellLauncher = "${withModel { shell = "allow"; }}/bin/hutian";
           deniedModelShellLauncher = "${withModel { shell = "deny"; }}/bin/hutian";
           askModelShellLauncher = "${withModel { shell = "ask"; }}/bin/hutian";
           keyLauncher = "${withModel { apiKeyFile = "/run/secrets/hutian-key"; }}/bin/hutian";
@@ -386,7 +384,7 @@
             "/run/hutian/llm.sock"
             "relay_dir:/run/hutian"
             "--host-uds=open"
-            "--model-shell allow"
+            "--model-shell ask"
           ];
         in
         {
@@ -413,16 +411,16 @@
             ${pkgs.coreutils}/bin/touch $out
           '';
           internet-option = pkgs.runCommand "hutian-internet-option-check" { } ''
-            ${pkgs.gnugrep}/bin/grep -F 'GVISOR_NETWORK:-sandbox' ${probeLauncher}
+            ${pkgs.gnugrep}/bin/grep -F 'GVISOR_NETWORK:-host' ${internetLauncher}
             ${pkgs.gnugrep}/bin/grep -F 'network=none' ${noInternetLauncher}
-            if ${pkgs.gnugrep}/bin/grep -F 'GVISOR_NETWORK:-sandbox' ${noInternetLauncher}; then
+            if ${pkgs.gnugrep}/bin/grep -F 'GVISOR_NETWORK:-' ${noInternetLauncher}; then
               echo "sandbox.internet = false must not allow GVISOR_NETWORK to re-enable networking" >&2
               exit 1
             fi
             ${pkgs.coreutils}/bin/touch $out
           '';
           model-shell-option = pkgs.runCommand "hutian-model-shell-option-check" { } ''
-            ${pkgs.gnugrep}/bin/grep -F -- '--model-shell allow' ${probeLauncher}
+            ${pkgs.gnugrep}/bin/grep -F -- '--model-shell allow' ${allowedModelShellLauncher}
             ${pkgs.gnugrep}/bin/grep -F -- '--model-shell ask' ${askModelShellLauncher}
             ${pkgs.gnugrep}/bin/grep -F -- '--model-shell deny' ${deniedModelShellLauncher}
             if ${pkgs.gnugrep}/bin/grep -F -- '--model-shell allow' ${deniedModelShellLauncher}; then
@@ -461,7 +459,7 @@
                   "/run/hutian/llm.sock"
                   "relay_dir:/run/hutian"
                   "--host-uds=open"
-                  "GVISOR_NETWORK:-sandbox"
+                  "network=none"
                   "http://hutian-relay/v1/chat/completions"
                 ]
             )}
