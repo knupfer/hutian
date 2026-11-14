@@ -6,8 +6,8 @@
   model,
   llamaUrl,
   writable,
-  nix,
-  internet,
+  nixDaemon,
+  network,
   modelShell,
   apiKeyFile ? null,
   apiKeyCommand ? null,
@@ -22,8 +22,8 @@ assert pkgs.lib.assertMsg (
   builtins.isString llamaUrl && llamaUrl != ""
 ) "hutian: llamaUrl must be a non-empty string";
 assert pkgs.lib.assertMsg (builtins.isBool writable) "hutian: writable must be a boolean";
-assert pkgs.lib.assertMsg (builtins.isBool nix) "hutian: nix must be a boolean";
-assert pkgs.lib.assertMsg (builtins.isBool internet) "hutian: internet must be a boolean";
+assert pkgs.lib.assertMsg (builtins.isBool nixDaemon) "hutian: nixDaemon must be a boolean";
+assert pkgs.lib.assertMsg (builtins.isBool network) "hutian: network must be a boolean";
 assert pkgs.lib.assertMsg (
   builtins.isString modelShell
   && builtins.elem modelShell [
@@ -56,7 +56,7 @@ let
     optionalString
     ;
 
-  allPackages = packages ++ optional nix pkgs.nix;
+  allPackages = packages ++ optional nixDaemon pkgs.nix;
 
   hutianShell = pkgs.callPackage ./hutian-shell.nix { inherit src; };
 
@@ -154,7 +154,7 @@ let
       fi
     done < ${closure}/store-paths
 
-    ${optionalString nix ''
+    ${optionalString nixDaemon ''
       # Mountpoint for the host Nix daemon socket.
       mkdir -p "$out${stateDir}/daemon-socket"
     ''}
@@ -173,15 +173,15 @@ let
       platform="''${GVISOR_PLATFORM:-systrap}"
       saved_tty=$(stty -g 2>/dev/null || true)
       writable=${if writable then "true" else "false"}
-      nix_mode=${if nix then "true" else "false"}
+      nix_daemon=${if nixDaemon then "true" else "false"}
 
-      # The internet option is a hard gate. Without it the sandbox gets no
+      # The network option is a hard gate. Without it the sandbox gets no
       # network regardless of GVISOR_NETWORK; with it, GVISOR_NETWORK can still
       # narrow the mode. gVisor does not support sandbox networking with
       # --rootless and silently falls back to the host namespace, so use host
       # explicitly rather than relying on that fallback.
       ${
-        if internet then
+        if network then
           ''
             network="''${GVISOR_NETWORK:-host}"
           ''
@@ -256,7 +256,7 @@ let
       relay_runsc_args=(--host-uds=open)
       llm_args=(--llama-socket /run/hutian/llm.sock --model-shell ${escapeShellArg modelShell})
 
-      ${optionalString nix ''
+      ${optionalString nixDaemon ''
         # The launcher exposes the host store in the rootfs. Mount the Nix
         # daemon socket when present. Builds are performed by the host daemon;
         # the sandbox only reads the resulting store paths.
@@ -320,7 +320,7 @@ let
       # namespace and let gVisor recursively bind the rootfs into the sandbox.
       status=0
       ${pkgs.util-linux}/bin/unshare --user --map-root-user --mount --propagation private \
-        ${sandboxLauncher} "$rootfs" "$closure" "$sourcedir" "$writable" "$nix_mode" \
+        ${sandboxLauncher} "$rootfs" "$closure" "$sourcedir" "$writable" "$nix_daemon" \
         "''${sandbox[@]}" || status=$?
 
       # Keep the host terminal usable even if the sandbox leaves it in raw mode.

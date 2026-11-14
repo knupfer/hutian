@@ -28,11 +28,11 @@
         ]
         [
           "sandbox"
-          "nix"
+          "nixDaemon"
         ]
         [
           "sandbox"
-          "internet"
+          "network"
         ]
         [
           "model"
@@ -140,8 +140,8 @@
       knownSandboxOptions = [
         "packages"
         "writable"
-        "nix"
-        "internet"
+        "nixDaemon"
+        "network"
       ];
       knownModelOptions = [
         "name"
@@ -201,8 +201,8 @@
             model = requireNonEmptyString "model.name" model.name;
             llamaUrl = requireNonEmptyString "model.url" model.url;
             writable = requireBool "sandbox.writable" sandbox.writable;
-            nix = requireBool "sandbox.nix" sandbox.nix;
-            internet = requireBool "sandbox.internet" sandbox.internet;
+            nixDaemon = requireBool "sandbox.nixDaemon" sandbox.nixDaemon;
+            network = requireBool "sandbox.network" sandbox.network;
             modelShell = requireModelShell "model.shell" model.shell;
             apiKeyFile = optionalNonEmptyString "apiKeyFile" "model.apiKeyFile" model;
             apiKeyCommand = optionalNonEmptyString "apiKeyCommand" "model.apiKeyCommand" model;
@@ -214,8 +214,8 @@
         sandbox = {
           packages = _: [ ];
           writable = false;
-          nix = false;
-          internet = false;
+          nixDaemon = false;
+          network = false;
         };
         model = {
           name = "default";
@@ -288,8 +288,8 @@
       #     sandbox = {
       #       packages = [ pkgs.git pkgs.jq ];
       #       writable = true;
-      #       nix = false;
-      #       internet = true;
+      #       nixDaemon = false;
+      #       network = true;
       #     };
       #     model = {
       #       name = "your-model";
@@ -306,8 +306,8 @@
       #       sandbox = {
       #         packages = pkgs: [ pkgs.git pkgs.jq ];
       #         writable = true;
-      #         nix = false;
-      #         internet = true;
+      #         nixDaemon = false;
+      #         network = true;
       #       };
       #       model = {
       #         name = "your-model";
@@ -346,8 +346,8 @@
           relayPackage = pkgs.callPackage ./nix/hutian-shell.nix { src = self; };
           probeLauncher = "${probe { }}/bin/hutian";
           writableLauncher = "${withSandbox { writable = true; }}/bin/hutian";
-          internetLauncher = "${withSandbox { internet = true; }}/bin/hutian";
-          noInternetLauncher = "${withSandbox { internet = false; }}/bin/hutian";
+          networkLauncher = "${withSandbox { network = true; }}/bin/hutian";
+          noNetworkLauncher = "${withSandbox { network = false; }}/bin/hutian";
           allowedModelShellLauncher = "${withModel { shell = "allow"; }}/bin/hutian";
           deniedModelShellLauncher = "${withModel { shell = "deny"; }}/bin/hutian";
           askModelShellLauncher = "${withModel { shell = "ask"; }}/bin/hutian";
@@ -411,11 +411,11 @@
             fi
             ${pkgs.coreutils}/bin/touch $out
           '';
-          internet-option = pkgs.runCommand "hutian-internet-option-check" { } ''
-            ${pkgs.gnugrep}/bin/grep -F 'GVISOR_NETWORK:-host' ${internetLauncher}
-            ${pkgs.gnugrep}/bin/grep -F 'network=none' ${noInternetLauncher}
-            if ${pkgs.gnugrep}/bin/grep -F 'GVISOR_NETWORK:-' ${noInternetLauncher}; then
-              echo "sandbox.internet = false must not allow GVISOR_NETWORK to re-enable networking" >&2
+          network-option = pkgs.runCommand "hutian-network-option-check" { } ''
+            ${pkgs.gnugrep}/bin/grep -F 'GVISOR_NETWORK:-host' ${networkLauncher}
+            ${pkgs.gnugrep}/bin/grep -F 'network=none' ${noNetworkLauncher}
+            if ${pkgs.gnugrep}/bin/grep -F 'GVISOR_NETWORK:-' ${noNetworkLauncher}; then
+              echo "sandbox.network = false must not allow GVISOR_NETWORK to re-enable networking" >&2
               exit 1
             fi
             ${pkgs.coreutils}/bin/touch $out

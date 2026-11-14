@@ -19,11 +19,12 @@ pkgs.writeShellScript "hutian-sandbox" ''
   closure=$2
   sourcedir=$3
   writable=$4
-  nix_mode=$5
+  nix_daemon=$5
   shift 5
 
-  if [ "$nix_mode" = true ]; then
-    # Nix mode exposes the whole host store, matching the daemon socket mount.
+  if [ "$nix_daemon" = true ]; then
+    # Nix daemon mode exposes the whole host store, matching the daemon socket
+    # mount.
     ${mount} --rbind ${builtins.storeDir} "$rootfs${builtins.storeDir}"
   else
     while IFS= read -r path; do

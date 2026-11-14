@@ -22,12 +22,12 @@
         # when the model should be able to modify the project.
         writable = false;
 
-        # Include Nix and connect it to the host Nix daemon.
-        nix = false;
+        # Expose the host Nix store and connect to the Nix daemon.
+        nixDaemon = false;
 
-        # Permit direct sandbox networking. When false, the sandbox gets
-        # GVisor's none network mode and GVISOR_NETWORK cannot re-enable it.
-        internet = false;
+        # Grant direct network access. When false, the sandbox gets GVisor's
+        # none network mode and GVISOR_NETWORK cannot re-enable it.
+        network = false;
       };
 
       model = {

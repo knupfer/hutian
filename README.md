@@ -9,7 +9,7 @@ The sandbox sees only:
   read-write when `sandbox.writable = true`;
 - the runtime closures of the packages you configure, mounted under
   `/nix/store`;
-- optionally, when `sandbox.nix = true`, the host Nix store and Nix daemon
+- optionally, when `sandbox.nixDaemon = true`, the host Nix store and Nix daemon
   socket.
 
 Everything else on the host is hidden. The root filesystem is built from Nix's
@@ -135,7 +135,7 @@ Term command history is stored in `/tmp/hutian-shell-history`, and LLM prompt
 history in `/tmp/hutian-llm-history`.
 
 The flake requires explicit `sandbox` and `model` groups. `sandbox` must
-contain `packages`, `writable`, `nix`, and `internet`; `model` must contain
+contain `packages`, `writable`, `nixDaemon`, and `network`; `model` must contain
 `name`, `url`, `systemPrompt`, and `shell`. Hutian expects an
 OpenAI-compatible llama.cpp chat endpoint; a native `/completion` URL is also
 supported. Both `http://` and `https://` URLs work, and HTTPS endpoints are
@@ -153,8 +153,8 @@ TLS certificates.
 
 Hutian always routes model traffic through the host relay, whether or not an
 API key is configured. The sandbox uses gVisor's `host` network mode by default
-when `sandbox.internet = true` (rootless gVisor does not support `sandbox`
-networking); with `sandbox.internet = false` it always uses `none`, regardless
+when `sandbox.network = true` (rootless gVisor does not support `sandbox`
+networking); with `sandbox.network = false` it always uses `none`, regardless
 of `GVISOR_NETWORK`. The relay itself uses a Unix socket, so model traffic still
 works without sandbox networking. See [Relay and API keys](#relay-and-api-keys).
 
@@ -237,8 +237,8 @@ tool is handled (`"deny"`, `"ask"`, or `"allow"`):
       sandbox = {
         packages = pkgs: with pkgs; [ coreutils git ];
         writable = true;
-        nix = false;
-        internet = true;
+        nixDaemon = false;
+        network = true;
       };
       model = {
         name = "your-model";
@@ -257,7 +257,7 @@ still read the working directory, but any attempt to write to it fails with a
 read-only filesystem error. Set `sandbox.writable = true` when the model should
 be able to modify the project.
 
-Set `sandbox.internet = false` to give the sandbox gVisor's `none` network mode.
+Set `sandbox.network = false` to give the sandbox gVisor's `none` network mode.
 This is a hard gate: `GVISOR_NETWORK` cannot re-enable networking. The host
 relay still provides model traffic over its Unix socket.
 
@@ -280,8 +280,8 @@ hutian.lib.mkHutianShell {
   sandbox = {
     packages = [ pkgs.git pkgs.jq ];
     writable = true;
-    nix = false;
-    internet = true;
+    nixDaemon = false;
+    network = true;
   };
   model = {
     name = "your-model";
@@ -296,7 +296,7 @@ A complete consumer example is available in [`example.nix`](./example.nix).
 
 ## Using Nix inside the sandbox
 
-Pass `sandbox.nix = true` to include Nix and connect it to the host's Nix daemon:
+Pass `sandbox.nixDaemon = true` to expose the host Nix store and connect the sandbox to the host's Nix daemon:
 
 ```nix
 outputs = { nixpkgs, hutian, ... }:
@@ -304,8 +304,8 @@ outputs = { nixpkgs, hutian, ... }:
     sandbox = {
       packages = pkgs: with pkgs; [ coreutils git ];
       writable = true;
-      nix = true;
-      internet = true;
+      nixDaemon = true;
+      network = true;
     };
     model = {
       name = "your-model";
@@ -325,7 +325,7 @@ on the host. Flakes and the `nix` command are enabled automatically, and a CA
 bundle is provided for client-side HTTPS fetches.
 
 The sandbox still uses gVisor's network mode, but the host Nix store is visible
-in full while `sandbox.nix = true`. Set it to `false` when you only need the
+in full while `sandbox.nixDaemon = true`. Set it to `false` when you only need the
 configured package closures.
 
 ## Configuration
@@ -336,7 +336,7 @@ gVisor runtime settings can be overridden from the host:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `GVISOR_PLATFORM` | `systrap` | gVisor platform. Use `ptrace` if your host requires it. |
-| `GVISOR_NETWORK` | `host` | gVisor network mode: `host` or `none`. `sandbox` is not supported with `--rootless` and falls back to `host`. Ignored when `sandbox.internet = false`, where the mode is always `none`. |
+| `GVISOR_NETWORK` | `host` | gVisor network mode: `host` or `none`. `sandbox` is not supported with `--rootless` and falls back to `host`. Ignored when `sandbox.network = false`, where the mode is always `none`. |
 
 ## Permission model
 
@@ -346,23 +346,23 @@ Hutian separates sandbox capabilities from model-tool permissions:
 | --- | --- | --- |
 | `sandbox.packages` | sandbox | Selects the package closures mounted under `/nix/store` and added to `PATH`. |
 | `sandbox.writable` | sandbox | Allows writes to `/source`. `false` (the default) mounts it read-only. It protects integrity, not confidentiality. |
-| `sandbox.nix` | sandbox | Exposes the host `/nix/store` and Nix daemon socket. |
-| `sandbox.internet` | sandbox | Controls direct gVisor networking. `false` forces `none`. |
+| `sandbox.nixDaemon` | sandbox | Exposes the host `/nix/store` and Nix daemon socket. |
+| `sandbox.network` | sandbox | Controls direct gVisor networking. `true` uses `host` mode; `false` forces `none`. |
 | `model.shell` | model | `"deny"`, `"ask"`, or `"allow"` for the model's `shell` tool. |
 | `model.apiKeyFile`, `model.apiKeyCommand` | host relay | Supply the upstream key without exposing it to the sandbox. |
 
 Important composition rules:
 
-- `sandbox.internet = false` removes direct sandbox networking only. The relay
-  socket can still reach the fixed model upstream, and `sandbox.nix = true`
+- `sandbox.network = false` removes direct sandbox networking only. The relay
+  socket can still reach the fixed model upstream, and `sandbox.nixDaemon = true`
   still lets the host Nix daemon fetch and build.
 - `sandbox.writable = false` does not prevent the model from reading `/source`
   and sending what it reads upstream. Set `model.shell = "deny"` or use a local
   model endpoint if confidentiality matters.
-- `sandbox.internet = true` defaults to gVisor's `host` mode, so the sandbox
+- `sandbox.network = true` defaults to gVisor's `host` mode, so the sandbox
   shares the host network namespace: loopback, LAN, and the Internet.
   `GVISOR_NETWORK` can narrow it to `none` but cannot widen
-  `sandbox.internet = false`.
+  `sandbox.network = false`.
 - `model.shell = "deny"` restricts only the model. Term mode can always run
   commands in the sandbox.
 - Every process in the sandbox can connect to the relay socket. Shell commands
@@ -374,10 +374,10 @@ Important composition rules:
 - `runsc --rootless` runs the sandbox as your unprivileged host user inside a
   user namespace. The sandbox process is UID 0 inside that namespace, mapped to
   your host UID; it gains no host privileges.
-- With `sandbox.internet = true`, the default network mode is gVisor's `host`,
+- With `sandbox.network = true`, the default network mode is gVisor's `host`,
   which shares the host network namespace (loopback, LAN, and the Internet).
   Set `GVISOR_NETWORK=none` to disable networking for other tools. With
-  `sandbox.internet = false`, the mode is always `none`; model traffic uses the
+  `sandbox.network = false`, the mode is always `none`; model traffic uses the
   host relay socket instead.
 - Model traffic always uses the relay socket at `/run/hutian/llm.sock`, which
   accepts only a request body and forwards it to one fixed target, so it cannot
@@ -390,7 +390,7 @@ Important composition rules:
   automatically. Term mode still lets you run commands yourself.
 - Writes outside `/source`, `/tmp`, and the mounted package store are refused.
   `sandbox.writable = false` (the default) refuses writes to `/source` as well.
-- With `sandbox.nix = true`, the full host `/nix/store` and the Nix daemon
+- With `sandbox.nixDaemon = true`, the full host `/nix/store` and the Nix daemon
   socket are visible. Other host paths remain hidden.
 - The sandbox uses the `systrap` platform by default. Set
   `GVISOR_PLATFORM=ptrace` if your host needs the `ptrace` platform.

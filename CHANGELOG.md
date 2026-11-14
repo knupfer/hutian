@@ -18,7 +18,7 @@ All notable changes to Hutian are documented here. The format follows
 - Shell syntax highlighting with Skylighting for term-mode input and
   model-requested `tool shell:` commands.
 - Mandatory `sandbox` and `model` option groups. `sandbox.packages` selects the
-  sandbox's package closures. `sandbox.internet = false`
+  sandbox's package closures. `sandbox.network = false`
   forces gVisor's `none` network mode and cannot be overridden with
   `GVISOR_NETWORK`. `model.shell` accepts `"deny"`, `"ask"`, or `"allow"`.
   `"deny"` disables only the model's `shell` tool; term mode and `Ctrl+X`
@@ -31,8 +31,8 @@ All notable changes to Hutian are documented here. The format follows
   omitted from the request in deny mode, and tool calls are refused when they
   arrive anyway.
 - A capability matrix in the README documenting how `sandbox.writable`,
-  `sandbox.nix`, `sandbox.internet`, `model.shell`, and the relay compose,
-  including the fact that `sandbox.internet = false` covers direct sandbox
+  `sandbox.nixDaemon`, `sandbox.network`, `model.shell`, and the relay compose,
+  including the fact that `sandbox.network = false` covers direct sandbox
   networking but not host Nix fetches or the fixed relay upstream.
 - Unknown flake options are rejected. The helpers list the offending paths and
   the known option names, so a misspelled key such as `model.foo` fails instead
@@ -53,13 +53,16 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
-- The built-in defaults are now safe-by-default: `sandbox.internet = false`,
+- The built-in defaults are now safe-by-default: `sandbox.network = false`,
   `sandbox.writable = false`, `model.shell = "ask"`, and the system prompt is
   `You are a coding agent.`.
 - `sandbox.readOnly` was renamed to `sandbox.writable`, so every sandbox flag
   now grants a capability when it is `true`. `writable = true` allows writes to
   `/source`; the default `false` mounts it read-only.
-- `sandbox.internet = true` now selects gVisor's `host` network mode explicitly.
+- `sandbox.internet` was renamed to `sandbox.network`, and `sandbox.nix` was
+  renamed to `sandbox.nixDaemon`, so each name describes the capability it
+  grants. Both still default to `false`.
+- `sandbox.network = true` now selects gVisor's `host` network mode explicitly.
   Rootless gVisor does not support `sandbox` networking and silently falls back
   to `host`, so the launcher no longer requests the unsupported mode.
   `GVISOR_NETWORK` can still narrow the mode to `none`.
@@ -67,7 +70,7 @@ All notable changes to Hutian are documented here. The format follows
   are reported the same way whether they arrive directly or through the relay.
   Error bodies and relay keys are read with explicit size limits.
 - Sandbox and model settings are now grouped. `sandbox` contains `packages`,
-  `writable`, `nix`, and `internet`; `model` contains `name`, `url`,
+  `writable`, `nixDaemon`, and `network`; `model` contains `name`, `url`,
   `systemPrompt`, `shell`, and the optional `apiKeyFile`/`apiKeyCommand`. The
   internal launcher arguments stay flat.
 - The `shell` flake option and `--allow-shell` launcher flag were replaced by
@@ -86,10 +89,10 @@ All notable changes to Hutian are documented here. The format follows
   upstream request, so there is no client-supplied request line or header block
   to parse, validate, strip, or redirect. The response is a four-byte status
   code followed by the upstream body.
-- The sandbox network now follows the mandatory `sandbox.internet` option
-  instead of the presence of an API key. With `sandbox.internet = true`,
+- The sandbox network now follows the mandatory `sandbox.network` option
+  instead of the presence of an API key. With `sandbox.network = true`,
   `GVISOR_NETWORK` may still narrow the gVisor mode; with
-  `sandbox.internet = false`, networking is always `none`.
+  `sandbox.network = false`, networking is always `none`.
 - `model.apiKeyFile` must not point into the Nix store or the sandbox working
   directory, and `model.apiKeyFile` and `model.apiKeyCommand` are mutually
   exclusive.
