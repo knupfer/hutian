@@ -345,6 +345,10 @@
           withModel = extra: probe { model = probeOptions.model // extra; };
           relayPackage = pkgs.callPackage ./nix/hutian-shell.nix { src = self; };
           probeLauncher = "${probe { }}/bin/hutian";
+          queryLauncher = "${
+            withModel { url = "http://probe.invalid/v1/chat/completions?token=secret#frag"; }
+          }/bin/hutian";
+          sandboxScript = import ./nix/sandbox.nix { inherit pkgs; };
           writableLauncher = "${withSandbox { writable = true; }}/bin/hutian";
           networkLauncher = "${withSandbox { network = true; }}/bin/hutian";
           noNetworkLauncher = "${withSandbox { network = false; }}/bin/hutian";
@@ -370,8 +374,8 @@
           unknownModelRejected = !(builtins.tryEval (withModel { unknownOption = true; }).drvPath).success;
           expected = [
             "--llama-url"
-            "--model"
-            "--system-prompt"
+            "--model-file"
+            "--system-prompt-file"
             "probe system prompt"
             "probe-model"
             "http://probe.invalid/v1/chat/completions"
@@ -382,8 +386,10 @@
             "hutian-relay/v1/chat/completions"
             "--llama-socket"
             "/run/hutian/llm.sock"
+            "/run/hutian-config/model"
+            "/run/hutian-config/system-prompt"
             "/bin/dumb-init"
-            "relay_dir:/run/hutian"
+            "--single-child"
             "--host-uds=open"
             "--model-shell ask"
           ];
@@ -399,6 +405,34 @@
             '') expected}
             if ${pkgs.gnugrep}/bin/grep -F -- 'HUTIAN_' ${probeLauncher}; then
               echo "the launcher must not set HUTIAN_ environment variables" >&2
+              exit 1
+            fi
+            ${pkgs.coreutils}/bin/touch $out
+          '';
+          logical-url = pkgs.runCommand "hutian-logical-url-check" { } ''
+            ${pkgs.gnugrep}/bin/grep -F 'hutian-relay/v1/chat/completions' ${queryLauncher}
+            if ${pkgs.gnugrep}/bin/grep -F 'hutian-relay/v1/chat/completions?token=secret' ${queryLauncher}; then
+              echo "the sandbox URL must not include the upstream query" >&2
+              exit 1
+            fi
+            if ${pkgs.gnugrep}/bin/grep -F 'hutian-relay/v1/chat/completions#frag' ${queryLauncher}; then
+              echo "the sandbox URL must not include the upstream fragment" >&2
+              exit 1
+            fi
+            ${pkgs.coreutils}/bin/touch $out
+          '';
+          relay-read-only = pkgs.runCommand "hutian-relay-read-only-check" { } ''
+            ${pkgs.gnugrep}/bin/grep -F -- 'relaydir=$6' ${sandboxScript}
+            ${pkgs.gnugrep}/bin/grep -F -- 'remount,bind,ro "$rootfs/run/hutian"' ${sandboxScript}
+            if ${pkgs.gnugrep}/bin/grep -F 'relay_dir:/run/hutian' ${probeLauncher}; then
+              echo "the relay directory must not be mounted writable with -volume" >&2
+              exit 1
+            fi
+            ${pkgs.coreutils}/bin/touch $out
+          '';
+          binary-stripped = pkgs.runCommand "hutian-binary-stripped-check" { } ''
+            if ${pkgs.binutils}/bin/readelf -S ${relayPackage}/bin/hutian-shell | ${pkgs.gnugrep}/bin/grep -E '\.(symtab|debug_)'; then
+              echo "hutian-shell must be stripped" >&2
               exit 1
             fi
             ${pkgs.coreutils}/bin/touch $out
@@ -459,7 +493,6 @@
                   "must not be inside the sandbox working directory"
                   "--llama-socket"
                   "/run/hutian/llm.sock"
-                  "relay_dir:/run/hutian"
                   "--host-uds=open"
                   "network=none"
                   "http://hutian-relay/v1/chat/completions"

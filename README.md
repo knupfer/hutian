@@ -145,11 +145,14 @@ verified against the CA bundle from nixpkgs:
 https://llama.example.test/v1/chat/completions
 ```
 
-The launcher passes `model.url`, `model.name`, and `model.systemPrompt` to the
-shell as `--llama-url`, `--model`, and `--system-prompt` arguments. The shell
-reads no Hutian-specific environment variables. The sandbox receives the CA
-bundle path as `SYSTEM_CERTIFICATE_PATH` so the Haskell HTTP client can verify
-TLS certificates.
+The launcher passes `model.url` to the shell as `--llama-url`, keeping only the
+path so the query and fragment stay on the host. It writes `model.name` and
+`model.systemPrompt` to short-lived files passed as `--model-file` and
+`--system-prompt-file`; the shell removes those files before it accepts input,
+so they do not appear in the process listing. The shell reads no Hutian-specific
+environment variables. The sandbox receives the CA bundle path as
+`SYSTEM_CERTIFICATE_PATH` so the Haskell HTTP client can verify TLS
+certificates.
 
 Hutian always routes model traffic through the host relay, whether or not an
 API key is configured. The sandbox uses gVisor's `host` network mode by default
@@ -163,8 +166,8 @@ works without sandbox networking. See [Relay and API keys](#relay-and-api-keys).
 Hutian always routes model traffic through a host-side relay. The shell is
 launched with `--llama-socket /run/hutian/llm.sock` and the logical URL
 `http://hutian-relay/...`, which preserves the chat or completion API shape
-without exposing the real upstream host or any credentials embedded in
-`model.url`.
+without exposing the real upstream host, credentials, query, or fragment
+embedded in `model.url`.
 
 Without an API key the relay starts with `--no-auth` and forwards requests
 without an `Authorization` header. This works with local llama.cpp servers that
@@ -186,8 +189,9 @@ runs in the foreground before the sandbox starts, so commands that prompt for a
 password (for example `passage`) work normally and can be cancelled with
 `Ctrl+C`. The relay listens on a per-session Unix socket under
 `$XDG_RUNTIME_DIR` (falling back to `/tmp`). The socket directory is mode `0700`
-and is bind-mounted at `/run/hutian`, so the sandbox can connect to
-`/run/hutian/llm.sock`; the directory holds no key material.
+and is bind-mounted read-only at `/run/hutian`, so the sandbox can connect to
+`/run/hutian/llm.sock` but cannot unlink or replace the socket; the directory
+holds no key material.
 
 The relay uses a private framing protocol over the socket instead of HTTP. The
 sandbox sends only the request body and closes its write half. The relay sends
@@ -389,7 +393,9 @@ Important composition rules:
   approval before each command, while `"allow"` runs model commands
   automatically. Term mode still lets you run commands yourself.
 - A static `dumb-init` runs as PID 1 so background jobs that outlive their shell
-  are reaped rather than left as zombies. The user shell runs as its child.
+  are reaped rather than left as zombies. It runs in single-child mode so the
+  sandbox keeps its controlling terminal and interactive programs can open
+  `/dev/tty`; the user shell runs as its child.
 - Writes outside `/source`, `/tmp`, and the mounted package store are refused.
   `sandbox.writable = false` (the default) refuses writes to `/source` as well.
 - With `sandbox.nixDaemon = true`, the full host `/nix/store` and the Nix daemon

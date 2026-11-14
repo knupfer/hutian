@@ -64,7 +64,7 @@ import Hutian.Interrupt
 import Hutian.Llm
   ( LlmResult (..)
   , LlmSettings
-  , parseLlmSettings
+  , loadLlmSettings
   , runLlmContinuation
   , runLlmWithTools
   , settingModelShell
@@ -98,7 +98,8 @@ main :: IO ()
 main = do
   configureConsole
   arguments <- getArgs
-  case parseLlmSettings arguments of
+  parsed <- loadLlmSettings arguments
+  case parsed of
     Left message -> do
       consoleWriteErrorLine message
       exitWith (ExitFailure 2)

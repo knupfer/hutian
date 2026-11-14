@@ -8,6 +8,8 @@ module Hutian.Llm.Protocol
   , SystemPrompt (..)
   , LlmSettings (..)
   , parseLlmSettings
+  , parseLlmSettingsWithFiles
+  , llmFilePaths
   , LlmResult (..)
   , emptyLlmResult
   , Api (..)
@@ -43,8 +45,8 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.Key (Key)
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
-import Data.List (isInfixOf)
-import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
+import Data.List (isInfixOf, nub)
+import Data.Maybe (catMaybes, fromMaybe, listToMaybe, mapMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import qualified Data.Text.Encoding.Error as TextEncodingError
@@ -52,6 +54,7 @@ import qualified Data.Vector as Vector
 import Data.Word (Word8)
 import Hutian.Cli
   ( OptionKind (..)
+  , hasOption
   , missingOptions
   , optionValueFor
   , parseOptions
@@ -112,13 +115,25 @@ emptyLlmResult = LlmResult Nothing []
 -- host relay. '--model-shell' selects deny, ask, or allow for the model's shell
 -- tool; its absence denies the tool, not the user's term mode.
 parseLlmSettings :: [String] -> Either String LlmSettings
-parseLlmSettings arguments = do
+parseLlmSettings = parseLlmSettingsWithFiles []
+
+-- | Parse settings with already-loaded contents for the file-backed options.
+-- 'Hutian.Llm.loadLlmSettings' reads and removes the files before calling this
+-- function so the contents never appear in the process listing.
+parseLlmSettingsWithFiles :: [(FilePath, String)] -> [String] -> Either String LlmSettings
+parseLlmSettingsWithFiles loaded arguments = do
   options <- withUsage (parseOptions llmOptionSpec arguments)
-  case missingOptions requiredLlmOptions options of
+  let missingOption inline file =
+        [ inline | not (hasOption inline options || hasOption file options) ]
+      missing =
+        missingOptions ["--llama-url"] options
+          ++ missingOption "--model" "--model-file"
+          ++ missingOption "--system-prompt" "--system-prompt-file"
+  case missing of
     [] -> do
       url <- required "--llama-url" options
-      model <- required "--model" options
-      systemPrompt <- required "--system-prompt" options
+      model <- valueOrFile "--model" "--model-file" loaded options
+      systemPrompt <- valueOrFile "--system-prompt" "--system-prompt-file" loaded options
       policy <- policyOption options
       settingsFrom
         (LlmUrl url)
@@ -126,12 +141,24 @@ parseLlmSettings arguments = do
         (SystemPrompt systemPrompt)
         (optionValueFor "--llama-socket" options)
         policy
-    missing -> Left (missingMessage missing)
+    _ -> Left (missingMessage missing)
   where
     required name options =
       case optionValueFor name options of
         Just value -> Right value
         Nothing -> Left ("missing required argument: " ++ name ++ "\n" ++ llmUsage)
+
+    valueOrFile inline file fileContents options =
+      case (optionValueFor inline options, optionValueFor file options) of
+        (Just value, Nothing) -> Right value
+        (Nothing, Just path) ->
+          case lookup path fileContents of
+            Just value -> Right value
+            Nothing -> Left ("missing contents for " ++ file ++ ": " ++ path ++ "\n" ++ llmUsage)
+        (Just _, Just _) ->
+          Left ("use only one of " ++ inline ++ " and " ++ file ++ "\n" ++ llmUsage)
+        (Nothing, Nothing) ->
+          Left ("missing required argument: " ++ inline ++ " or " ++ file ++ "\n" ++ llmUsage)
 
     policyOption options =
       case optionValueFor "--model-shell" options of
@@ -152,17 +179,29 @@ parseLlmSettings arguments = do
         Left message -> Left (message ++ "\n" ++ llmUsage)
         Right options -> Right options
 
+-- | File paths the caller must read before 'parseLlmSettingsWithFiles'. The
+-- paths are deduplicated so a caller can point both options at one file.
+llmFilePaths :: [String] -> Either String [FilePath]
+llmFilePaths arguments =
+  case parseOptions llmOptionSpec arguments of
+    Left message -> Left (message ++ "\n" ++ llmUsage)
+    Right options ->
+      Right . nub $
+        catMaybes
+          [ optionValueFor "--model-file" options
+          , optionValueFor "--system-prompt-file" options
+          ]
+
 llmOptionSpec :: [(String, OptionKind)]
 llmOptionSpec =
   [ ("--llama-url", OptionValue)
   , ("--model", OptionValue)
+  , ("--model-file", OptionValue)
   , ("--system-prompt", OptionValue)
+  , ("--system-prompt-file", OptionValue)
   , ("--llama-socket", OptionValue)
   , ("--model-shell", OptionValue)
   ]
-
-requiredLlmOptions :: [String]
-requiredLlmOptions = ["--llama-url", "--model", "--system-prompt"]
 
 -- | Reject empty URLs, model names, and socket paths; an empty system prompt
 -- is allowed.
@@ -186,7 +225,7 @@ missingMessage missing =
 
 llmUsage :: String
 llmUsage =
-  "usage: hutian-shell --llama-url URL --model MODEL --system-prompt PROMPT [--llama-socket PATH] [--model-shell deny|ask|allow]"
+  "usage: hutian-shell --llama-url URL (--model MODEL | --model-file PATH) (--system-prompt PROMPT | --system-prompt-file PATH) [--llama-socket PATH] [--model-shell deny|ask|allow]"
 
 data Api
   = ChatApi

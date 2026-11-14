@@ -38,7 +38,7 @@ let
     echo inner > "$src/child/file"
 
     # Writable: nested mounts and writes are preserved.
-    "$sandbox" "$rootfs" "$closure" "$src" true false \
+    "$sandbox" "$rootfs" "$closure" "$src" true false "" \
       ${pkgs.bash}/bin/bash -c '
         set -e
         test "$(cat "$1/file")" = outer
@@ -48,7 +48,7 @@ let
       ' bash "$rootfs/source" "$src"
 
     # Read-only: writes through the root and the nested mount are rejected.
-    "$sandbox" "$rootfs" "$closure" "$src" false false \
+    "$sandbox" "$rootfs" "$closure" "$src" false false "" \
       ${pkgs.bash}/bin/bash -c '
         set -e
         test "$(cat "$1/file")" = changed
@@ -59,6 +59,17 @@ let
 
     test "$(cat "$src/file")" = changed
     test "$(cat "$src/child/file")" = inner
+
+    # The relay directory is mounted read-only.
+    relay="$work/relay dir"
+    mkdir -p "$relay" "$rootfs/run/hutian"
+    echo relay > "$relay/file"
+    "$sandbox" "$rootfs" "$closure" "$src" false false "$relay" \
+      ${pkgs.bash}/bin/bash -c '
+        set -e
+        test "$(cat "$1/file")" = relay
+        if { echo nope > "$1/new"; } 2>/dev/null; then exit 1; fi
+      ' bash "$rootfs/run/hutian"
   '';
 in
 {
@@ -122,7 +133,7 @@ in
         printf '%s\n' "$file" >> closure/store-paths
 
         ${pkgs.util-linux}/bin/unshare --user --map-root-user --mount --propagation private \
-          ${sandboxLauncher} "$PWD/rootfs" "$PWD/closure" "$PWD/source" true false \
+          ${sandboxLauncher} "$PWD/rootfs" "$PWD/closure" "$PWD/source" true false "" \
           ${pkgs.bash}/bin/bash -c '
             set -e
             test "$(cat "$1")" = value-299

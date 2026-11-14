@@ -6,12 +6,13 @@
 -- network and terminal IO.
 module Hutian.Llm
   ( module Hutian.Llm.Protocol
+  , loadLlmSettings
   , runLlm
   , runLlmWithTools
   , runLlmContinuation
   ) where
 
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException, displayException, evaluate, try)
 import Control.Monad (unless)
 import Data.Aeson (Value)
 import qualified Data.Aeson as Aeson
@@ -19,6 +20,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (isSpace)
 import qualified Data.Text as Text
+import qualified Data.Text.IO as TextIO
 import Hutian.Console (consoleFlush, consoleWrite, consoleWriteErrorLine)
 import Hutian.Conversation (Conversation)
 import Hutian.Interrupt (InterruptFlag, isInterrupted)
@@ -27,6 +29,39 @@ import Hutian.Llm.UnixSocket (postUnixStream)
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (statusCode)
+import System.Directory (removeFile)
+
+-- | Load settings, including file-backed model and system-prompt values. The
+-- files are removed before parsing succeeds so they are gone before the shell
+-- can run a command.
+loadLlmSettings :: [String] -> IO (Either String LlmSettings)
+loadLlmSettings arguments =
+  case llmFilePaths arguments of
+    Left message -> pure (Left message)
+    Right paths -> do
+      loaded <- mapM readAndRemove paths
+      pure $ do
+        files <- sequence loaded
+        parseLlmSettingsWithFiles files arguments
+  where
+    readAndRemove path = do
+      contents <- tryReadText path
+      removed <- try (removeFile path) :: IO (Either SomeException ())
+      pure $ case (contents, removed) of
+        (Left exception, _) ->
+          Left ("could not read " ++ path ++ ": " ++ displayException exception)
+        (Right _, Left exception) ->
+          Left ("could not remove " ++ path ++ ": " ++ displayException exception)
+        (Right text, Right ()) -> Right (path, Text.unpack text)
+
+    tryReadText :: FilePath -> IO (Either SomeException Text.Text)
+    tryReadText path =
+      try $ do
+        text <- TextIO.readFile path
+        -- Force the lazy read so a mid-file error is reported here and no file
+        -- handle stays open after the file is removed.
+        _ <- evaluate (Text.length text)
+        pure text
 
 runLlm :: InterruptFlag -> LlmSettings -> Conversation -> String -> IO (Maybe String)
 runLlm interruptFlag settings conversation prompt =

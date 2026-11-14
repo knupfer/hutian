@@ -81,6 +81,15 @@ All notable changes to Hutian are documented here. The format follows
   `--no-auth`, does not read standard input, and forwards without an
   `Authorization` header. The sandbox still receives only the relay socket and
   the logical `http://hutian-relay/...` URL.
+- The logical sandbox URL now preserves only the upstream path. Query and
+  fragment parameters from `model.url` stay on the host.
+- The relay directory is bind-mounted read-only. Sandboxed commands can still
+  connect to the relay socket, but cannot unlink or replace it.
+- `model.name` and `model.systemPrompt` are written to short-lived files that
+  the shell reads and removes before accepting input, so they no longer appear
+  in the sandbox process listing.
+- The sandboxed shell binary is explicitly kept stripped, and a check fails if a
+  symbol or debug section reappears.
 - When a key is configured, the relay reads it from standard input. The
   launcher pipes either `model.apiKeyFile` or `model.apiKeyCommand` into it, so
   the key never appears in the relay's argument list or environment.
@@ -110,7 +119,9 @@ All notable changes to Hutian are documented here. The format follows
 - Background jobs that outlive the shell that started them are no longer left as
   zombies for the rest of the session. A static `dumb-init` now runs as PID 1 in
   the sandbox and reaps orphaned processes, while the user shell runs as its
-  child.
+  child. It uses single-child mode because its default `setsid` mode detaches
+  from the controlling terminal that gVisor does not reattach, which broke
+  interactive programs such as `emacs` with `Could not open file: /dev/tty`.
 - Interrupting a model reply with `Ctrl+C` no longer kills the host relay. The
   relay ignores the terminal's `SIGINT`, so its socket stays available for
   follow-up prompts; the launcher still stops it with `SIGTERM` on exit.

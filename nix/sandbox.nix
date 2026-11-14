@@ -20,7 +20,8 @@ pkgs.writeShellScript "hutian-sandbox" ''
   sourcedir=$3
   writable=$4
   nix_daemon=$5
-  shift 5
+  relaydir=$6
+  shift 6
 
   if [ "$nix_daemon" = true ]; then
     # Nix daemon mode exposes the whole host store, matching the daemon socket
@@ -55,6 +56,13 @@ pkgs.writeShellScript "hutian-sandbox" ''
           ;;
       esac
     done < /proc/self/mountinfo
+  fi
+
+  # The relay socket is connectable from a read-only mount, but a sandboxed
+  # command cannot unlink or replace the socket file.
+  if [ -n "$relaydir" ]; then
+    ${mount} --rbind "$relaydir" "$rootfs/run/hutian"
+    ${mount} -o remount,bind,ro "$rootfs/run/hutian"
   fi
 
   exec "$@"

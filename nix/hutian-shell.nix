@@ -9,4 +9,7 @@ in
 overrideCabal base (old: {
   # Build the lint checks alongside the test suite.
   testDepends = (old.testDepends or [ ]) ++ builtins.attrValues lint;
+  # Keep the sandboxed binary stripped. Nix strips by default; being explicit
+  # prevents a future packaging change from silently shipping symbols.
+  dontStrip = false;
 })

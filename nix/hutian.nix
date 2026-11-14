@@ -65,13 +65,14 @@ let
   relayBin = "${hutianShell}/bin/hutian-llm-relay";
 
   # The shell only needs the path to choose the chat or completion request
-  # shape. Replacing the authority keeps a URL that contains credentials, and
-  # the upstream host itself, out of the sandbox.
+  # shape. Replacing the authority keeps a URL that contains credentials, the
+  # upstream host, and query or fragment parameters out of the sandbox.
   llamaUrlSuffix =
     let
-      matched = builtins.match "[a-zA-Z][a-zA-Z0-9+.-]*://[^/?]*(.*)" llamaUrl;
+      matched = builtins.match "[a-zA-Z][a-zA-Z0-9+.-]*://[^/?#]*(/[^?#]*)?([?#].*)?" llamaUrl;
+      path = if matched == null then null else builtins.head matched;
     in
-    if matched == null then "" else builtins.head matched;
+    if path == null then "" else path;
   relayLogicalUrl = "http://hutian-relay" + llamaUrlSuffix;
 
   # The relay is always present. Without a configured key it forwards without
@@ -148,6 +149,8 @@ let
     # Mountpoint for the host-side LLM relay socket. The launcher mounts a
     # private per-session directory here; no key material is ever inside it.
     mkdir -p "$out/run/hutian"
+    # Mountpoint for the short-lived model and system-prompt files.
+    mkdir -p "$out/run/hutian-config"
 
     # gVisor recursively binds the rootfs into the sandbox, so the launcher can
     # bind each closure path under its mountpoint instead of passing one gVisor
@@ -214,12 +217,13 @@ let
       nixVolumes=()
       nixRunscArgs=()
 
-      relay_volumes=()
+      config_volumes=()
       relay_runsc_args=()
       llm_args=()
 
       relay_pid=""
       relay_dir=""
+      config_dir=""
 
       # shellcheck disable=SC2329
       cleanup() {
@@ -229,6 +233,9 @@ let
         fi
         if [ -n "''${relay_dir:-}" ]; then
           rm -rf "$relay_dir"
+        fi
+        if [ -n "''${config_dir:-}" ]; then
+          rm -rf "$config_dir"
         fi
         restore_terminal
       }
@@ -259,7 +266,8 @@ let
       # The sandbox handles Ctrl+C from here on.
       trap cleanup INT TERM HUP
 
-      relay_volumes=(-volume "$relay_dir:/run/hutian")
+      # The sandbox helper mounts the relay directory read-only. The socket is
+      # still connectable, but a shell command cannot unlink or replace it.
       relay_runsc_args=(--host-uds=open)
       llm_args=(--llama-socket /run/hutian/llm.sock --model-shell ${escapeShellArg modelShell})
 
@@ -284,19 +292,31 @@ let
       ''}
 
       if [ "$#" -eq 0 ]; then
+        # Keep the model name and system prompt out of the process listing.
+        # The shell reads these files once and removes them before it can run
+        # any command.
+        config_dir=$(mktemp -d "$relay_parent/hutian-config.XXXXXX")
+        chmod 700 "$config_dir"
+        printf '%s' ${escapeShellArg model} > "$config_dir/model"
+        printf '%s' ${escapeShellArg systemPrompt} > "$config_dir/system-prompt"
+        chmod 600 "$config_dir/model" "$config_dir/system-prompt"
+        config_volumes=(-volume "$config_dir:/run/hutian-config")
+
         set -- ${hutianShell}/bin/hutian-shell \
           --llama-url ${escapeShellArg relayLogicalUrl} \
-          --model ${escapeShellArg model} \
-          --system-prompt ${escapeShellArg systemPrompt} \
+          --model-file /run/hutian-config/model \
+          --system-prompt-file /run/hutian-config/system-prompt \
           "''${llm_args[@]}"
       fi
 
       # runsc resolves -cwd on the host, so start in / and enter /source after
       # the launcher has mounted the working directory there. dumb-init runs as
       # PID 1 so orphaned background jobs are reaped instead of staying as
-      # zombies for the life of the sandbox.
+      # zombies for the life of the sandbox. Its default setsid mode detaches
+      # from the controlling terminal, which gVisor does not reattach, so
+      # --single-child keeps /dev/tty available for interactive programs.
       # shellcheck disable=SC2016
-      set -- /bin/dumb-init -- /bin/sh -c 'cd /source && "$@"' sh "$@"
+      set -- /bin/dumb-init --single-child -- /bin/sh -c 'cd /source && "$@"' sh "$@"
 
       sandbox=(
         env -i
@@ -319,7 +339,7 @@ let
             -cwd /
             -force-overlay=false
             "''${nixVolumes[@]}"
-            "''${relay_volumes[@]}"
+            "''${config_volumes[@]}"
             "$@"
       )
 
@@ -329,7 +349,7 @@ let
       # namespace and let gVisor recursively bind the rootfs into the sandbox.
       status=0
       ${pkgs.util-linux}/bin/unshare --user --map-root-user --mount --propagation private \
-        ${sandboxLauncher} "$rootfs" "$closure" "$sourcedir" "$writable" "$nix_daemon" \
+        ${sandboxLauncher} "$rootfs" "$closure" "$sourcedir" "$writable" "$nix_daemon" "$relay_dir" \
         "''${sandbox[@]}" || status=$?
 
       # Keep the host terminal usable even if the sandbox leaves it in raw mode.

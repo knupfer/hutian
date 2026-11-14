@@ -14,6 +14,8 @@ import Data.Word (Word8)
 import Hutian.Conversation (ConversationEntry (..), ToolCall (..), emptyConversation)
 import Hutian.Llm
 import Hutian.Policy (ModelShell (..))
+import System.Directory (doesFileExist, getTemporaryDirectory)
+import System.IO (hClose, hPutStr, openTempFile)
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -77,6 +79,56 @@ unitTests =
                 (Just "/run/hutian/llm.sock")
                 ModelShellDenied
             )
+    , testCase "parseLlmSettingsWithFiles reads model and prompt contents" $
+        parseLlmSettingsWithFiles
+          [ ("/run/model", "file-model")
+          , ("/run/prompt", "file rules")
+          ]
+          [ "--llama-url"
+          , "http://example.test/v1/chat/completions"
+          , "--model-file"
+          , "/run/model"
+          , "--system-prompt-file"
+          , "/run/prompt"
+          ]
+          @?= Right
+            ( LlmSettings
+                (LlmUrl "http://example.test/v1/chat/completions")
+                (ModelName "file-model")
+                (SystemPrompt "file rules")
+                Nothing
+                ModelShellDenied
+            )
+    , testCase "loadLlmSettings removes the model and prompt files" $ do
+        temporary <- getTemporaryDirectory
+        (modelPath, modelHandle) <- openTempFile temporary "hutian-model"
+        hPutStr modelHandle "file-model"
+        hClose modelHandle
+        (promptPath, promptHandle) <- openTempFile temporary "hutian-prompt"
+        hPutStr promptHandle "file rules"
+        hClose promptHandle
+        result <-
+          loadLlmSettings
+            [ "--llama-url"
+            , "http://example.test/v1/chat/completions"
+            , "--model-file"
+            , modelPath
+            , "--system-prompt-file"
+            , promptPath
+            ]
+        result
+          @?= Right
+            ( LlmSettings
+                (LlmUrl "http://example.test/v1/chat/completions")
+                (ModelName "file-model")
+                (SystemPrompt "file rules")
+                Nothing
+                ModelShellDenied
+            )
+        modelExists <- doesFileExist modelPath
+        promptExists <- doesFileExist promptPath
+        assertBool "the model file should be removed" (not modelExists)
+        assertBool "the system prompt file should be removed" (not promptExists)
     , testCase "parseLlmSettings parses each model shell policy" $ do
         let parsePolicy extra =
               parseLlmSettings
