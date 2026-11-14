@@ -388,6 +388,8 @@ Important composition rules:
   omitted from LLM requests and tool calls are refused. `"ask"` requires
   approval before each command, while `"allow"` runs model commands
   automatically. Term mode still lets you run commands yourself.
+- A static `dumb-init` runs as PID 1 so background jobs that outlive their shell
+  are reaped rather than left as zombies. The user shell runs as its child.
 - Writes outside `/source`, `/tmp`, and the mounted package store are refused.
   `sandbox.writable = false` (the default) refuses writes to `/source` as well.
 - With `sandbox.nixDaemon = true`, the full host `/nix/store` and the Nix daemon

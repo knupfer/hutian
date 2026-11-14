@@ -382,6 +382,7 @@
             "hutian-relay/v1/chat/completions"
             "--llama-socket"
             "/run/hutian/llm.sock"
+            "/bin/dumb-init"
             "relay_dir:/run/hutian"
             "--host-uds=open"
             "--model-shell ask"

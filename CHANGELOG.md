@@ -107,6 +107,10 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Fixed
 
+- Background jobs that outlive the shell that started them are no longer left as
+  zombies for the rest of the session. A static `dumb-init` now runs as PID 1 in
+  the sandbox and reaps orphaned processes, while the user shell runs as its
+  child.
 - Interrupting a model reply with `Ctrl+C` no longer kills the host relay. The
   relay ignores the terminal's `SIGINT`, so its socket stays available for
   follow-up prompts; the launcher still stops it with `SIGTERM` on exit.

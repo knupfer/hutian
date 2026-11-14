@@ -136,6 +136,13 @@ let
   rootfs = pkgs.runCommand "hutian-rootfs" { } ''
     mkdir -p "$out/bin" "$out/source" "$out/etc" "$out${storeDir}"
     cp -a ${pkgs.busybox-sandbox-shell}/bin/. "$out/bin/"
+    # cp -a copies the read-only store mode onto $out/bin, so make it writable
+    # before adding the init.
+    chmod u+w "$out/bin"
+    # A tiny static init that reaps orphaned background jobs as PID 1.
+    cp ${pkgs.pkgsStatic.dumb-init}/bin/dumb-init "$out/bin/dumb-init"
+    chmod 755 "$out/bin/dumb-init"
+    chmod 555 "$out/bin"
     printf '127.0.0.1 localhost\n::1 localhost\n' > "$out/etc/hosts"
 
     # Mountpoint for the host-side LLM relay socket. The launcher mounts a
@@ -285,9 +292,11 @@ let
       fi
 
       # runsc resolves -cwd on the host, so start in / and enter /source after
-      # the launcher has mounted the working directory there.
+      # the launcher has mounted the working directory there. dumb-init runs as
+      # PID 1 so orphaned background jobs are reaped instead of staying as
+      # zombies for the life of the sandbox.
       # shellcheck disable=SC2016
-      set -- /bin/sh -c 'cd /source && "$@"' sh "$@"
+      set -- /bin/dumb-init -- /bin/sh -c 'cd /source && "$@"' sh "$@"
 
       sandbox=(
         env -i
