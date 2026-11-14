@@ -21,6 +21,7 @@ module Hutian.Relay
   ( RelaySettings (..)
   , parseRelaySettings
   , defaultRelayMaxBody
+  , maxRelayKeyBytes
   , RelayLogger
   , stderrLogger
   , RelayRuntime
@@ -43,6 +44,13 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import qualified Data.Text.Encoding.Error as TextEncodingError
 import Data.Text.Read (decimal)
+import Hutian.Cli
+  ( OptionKind (..)
+  , flagPresent
+  , missingOptions
+  , optionValueFor
+  , parseOptions
+  )
 import Hutian.Http.Wire (WireError (..), recvAllLimited)
 import Hutian.Relay.Protocol (encodeStatus)
 import Network.HTTP.Client
@@ -84,35 +92,54 @@ defaultRelayMaxBody = 64 * 1024 * 1024
 -- @--no-auth@ the relay does not read standard input and forwards without an
 -- @Authorization@ header.
 parseRelaySettings :: [String] -> Either String RelaySettings
-parseRelaySettings = go Nothing Nothing defaultRelayMaxBody False
+parseRelaySettings arguments = do
+  options <- withUsage (parseOptions relayOptionSpec arguments)
+  case missingOptions requiredRelayOptions options of
+    [] -> do
+      listenPath <- required "--listen" options
+      upstream <- required "--upstream" options
+      maxBody <-
+        case optionValueFor "--max-body" options of
+          Nothing -> Right defaultRelayMaxBody
+          Just value -> parsePositive "--max-body" value
+      pure
+        RelaySettings
+          { relayListenPath = listenPath
+          , relayUpstream = upstream
+          , relayMaxBody = maxBody
+          , relayNoAuth = flagPresent "--no-auth" options
+          }
+    missing -> Left (missingMessage missing)
   where
-    go listenPath upstream maxBody noAuth [] =
-      RelaySettings
-        <$> required "--listen" listenPath
-        <*> required "--upstream" upstream
-        <*> pure maxBody
-        <*> pure noAuth
-    go _ _ _ _ ["--listen"] = missing "--listen"
-    go _ _ _ _ ["--upstream"] = missing "--upstream"
-    go _ _ _ _ ["--max-body"] = missing "--max-body"
-    go _ upstream maxBody noAuth ("--listen" : value : rest) =
-      go (Just value) upstream maxBody noAuth rest
-    go listenPath _ maxBody noAuth ("--upstream" : value : rest) =
-      go listenPath (Just value) maxBody noAuth rest
-    go listenPath upstream _ noAuth ("--max-body" : value : rest) = do
-      parsed <- parsePositive "--max-body" value
-      go listenPath upstream parsed noAuth rest
-    go listenPath upstream maxBody _ ("--no-auth" : rest) =
-      go listenPath upstream maxBody True rest
-    go _ _ _ _ (argument : _) =
-      Left ("unknown argument: " ++ argument ++ "\n" ++ relayUsage)
-
-    required name value =
-      case value of
-        Nothing -> Left ("missing required argument: " ++ name ++ "\n" ++ relayUsage)
+    required name options =
+      case optionValueFor name options of
         Just "" -> Left ("empty value for " ++ name ++ "\n" ++ relayUsage)
-        Just found -> Right found
-    missing name = Left ("missing value for " ++ name ++ "\n" ++ relayUsage)
+        Just value -> Right value
+        Nothing -> Left ("missing required argument: " ++ name ++ "\n" ++ relayUsage)
+
+    withUsage result =
+      case result of
+        Left message -> Left (message ++ "\n" ++ relayUsage)
+        Right options -> Right options
+
+    missingMessage missing =
+      "missing required argument"
+        ++ (if length missing > 1 then "s" else "")
+        ++ ": "
+        ++ unwords missing
+        ++ "\n"
+        ++ relayUsage
+
+relayOptionSpec :: [(String, OptionKind)]
+relayOptionSpec =
+  [ ("--listen", OptionValue)
+  , ("--upstream", OptionValue)
+  , ("--max-body", OptionValue)
+  , ("--no-auth", OptionFlag)
+  ]
+
+requiredRelayOptions :: [String]
+requiredRelayOptions = ["--listen", "--upstream"]
 
 parsePositive :: String -> String -> Either String Int
 parsePositive flag value =
@@ -126,14 +153,21 @@ relayUsage =
   "usage: hutian-llm-relay --listen PATH --upstream URL [--max-body BYTES] [--no-auth]\n"
     ++ "the API key is read from standard input unless --no-auth is given"
 
+-- | A key is a bearer token, not a document. Reading a bounded prefix keeps a
+-- misconfigured file or command from making the relay buffer arbitrary data.
+maxRelayKeyBytes :: Int
+maxRelayKeyBytes = 64 * 1024
+
 -- | Read the key from the given handle. The launcher pipes it from the
 -- configured file or command into standard input, so the key never appears in
 -- an argument list or environment.
 loadRelayKey :: Handle -> IO (Either String BS.ByteString)
-loadRelayKey handle = validateKey <$> BS.hGetContents handle
+loadRelayKey handle = validateKey <$> BS.hGet handle (maxRelayKeyBytes + 1)
 
 validateKey :: BS.ByteString -> Either String BS.ByteString
 validateKey raw
+  | BS.length raw > maxRelayKeyBytes =
+      Left "hutian-llm-relay: the API key is too long"
   | BS.null key = Left "hutian-llm-relay: the API key is empty"
   | BS.any isControl key =
       Left "hutian-llm-relay: the API key contains control characters"

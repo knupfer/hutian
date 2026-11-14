@@ -403,6 +403,12 @@ The code keeps pure logic separate from IO:
 - `Hutian.Policy` defines the model's shell-tool policy (`deny`, `ask`, or
   `allow`) used by the LLM protocol and the tool loop. Term mode is not gated
   by it.
+- `Hutian.Tool` turns a model tool call and the policy into a pure `ToolPlan`.
+  `Main` only performs the terminal or shell IO that the plan requests, so
+  refusals, approvals, and commands can be tested without a terminal.
+- `Hutian.Cli` is the shared strict option parser for the shell and relay. It
+  rejects duplicate options, unknown options, bare positional arguments, and
+  missing values instead of silently letting argument order decide.
 - `Hutian.Editor` owns prompt state, key semantics, and layout.
 - `Hutian.Prompt` is the pure prompt reducer: it turns a key and the current
   state into a step such as redraw, move cursor, complete, or finish.
@@ -419,7 +425,7 @@ The code keeps pure logic separate from IO:
 - `Hutian.Syntax` highlights shell input for term mode and model-requested
   commands with Skylighting.
 - `Hutian.Llm` keeps SSE parsing, tool-call accumulation, request building, and
-  command-line settings parsing pure, with IO limited to HTTP.
+  settings parsing pure, with IO limited to HTTP and bounded error bodies.
 - `Hutian.Http.Wire` contains the shared socket framing helpers used by both
   the relay and the sandbox-side client.
 - `Hutian.Llm.UnixSocket` is the sandbox-side client for the host relay socket.
@@ -449,12 +455,14 @@ nix/hutian-shell.nix      Haskell package definition
 nix/lint.nix              Shared lint and LiquidHaskell checks
 app/                      Haskell shell source
 app/Hutian/Ansi.hs        Typed terminal colours and styles
+app/Hutian/Cli.hs         Strict shared command-line option parser
 app/Hutian/Command.hs     Typed term-mode command parsing
 app/Hutian/Completion.hs  Pure completion selection
 app/Hutian/Console.hs     Single terminal IO boundary
 app/Hutian/Policy.hs      Model shell-tool policy
 app/Hutian/Prompt.hs      Pure prompt reducer
 app/Hutian/Render.hs      Pure ANSI prompt rendering
+app/Hutian/Tool.hs        Pure tool-call planning
 app/Hutian/Relay.hs       Host-side LLM relay
 app/Hutian/Relay/Protocol.hs  Relay status framing
 app/Hutian/Llm/UnixSocket.hs  Relay client over a Unix socket
@@ -473,9 +481,11 @@ The test suite combines HUnit tests with QuickCheck properties for the editor
 state machine, the pure prompt reducer, prompt layout and rendering, command
 parsing, completion selection, history codecs, conversation history, LLM
 requests, streaming tool calls, Markdown rendering, code highlighting, path and
-shell helpers, and interrupt handling. It also includes integration tests for:
+shell helpers, strict option parsing, tool-call plans, socket framing, and
+interrupt handling. It also includes integration tests for:
 
-- streaming LLM responses through a local HTTP server
+- streaming LLM responses through a local HTTP server, including bounded
+  non-success error reporting
 - streaming LLM responses through the host relay over a Unix socket, including
   key injection, no-auth forwarding, fixed upstream and headers, body limits,
   and response streaming

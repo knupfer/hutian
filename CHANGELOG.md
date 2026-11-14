@@ -7,6 +7,14 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Added
 
+- A shared strict command-line parser in `Hutian.Cli` for `hutian-shell` and
+  `hutian-llm-relay`. Unknown or bare arguments, missing values, and repeated
+  options are now rejected with a usage error instead of being ignored.
+- A pure `Hutian.Tool.planTool` step that turns the configured shell policy and
+  a model tool call into run, approve, or refuse. Main performs only the IO that
+  the plan requests, so policy decisions are covered without a terminal.
+- Tests for strict option parsing, tool-call planning, socket framing helpers,
+  and LLM error responses.
 - Shell syntax highlighting with Skylighting for term-mode input and
   model-requested `tool shell:` commands.
 - Mandatory `sandbox` and `model` option groups. `sandbox.packages` selects the
@@ -45,6 +53,9 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
+- Direct TCP LLM requests no longer follow redirects, and non-success responses
+  are reported the same way whether they arrive directly or through the relay.
+  Error bodies and relay keys are read with explicit size limits.
 - Sandbox and model settings are now grouped. `sandbox` contains `packages`,
   `readOnly`, `nix`, and `internet`; `model` contains `name`, `url`,
   `systemPrompt`, `shell`, and the optional `apiKeyFile`/`apiKeyCommand`. The

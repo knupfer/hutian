@@ -85,6 +85,8 @@ streamCompletionTcp interruptFlag settings body = do
           , requestHeaders = [("Content-Type", "application/json")]
           , requestBody = RequestBodyLBS (Aeson.encode body)
           , responseTimeout = responseTimeoutNone
+          , redirectCount = 0
+          , checkResponse = \_ _ -> pure ()
           }
   withResponse request manager $ \response ->
     handleStreamResponse
@@ -112,7 +114,7 @@ handleStreamResponse
   -> IO LlmResult
 handleStreamResponse interruptFlag code reader
   | code < 200 || code >= 300 = do
-      responseBody <- readBody reader []
+      responseBody <- readBodyAtMost errorBodyLimit reader []
       let message = Text.unpack (Text.strip (decode responseBody))
       consoleWriteErrorLine ("llm: llama.cpp returned HTTP " ++ show code ++ errorSuffix message)
       pure emptyLlmResult
@@ -174,12 +176,23 @@ emit output =
     consoleWrite output
     consoleFlush
 
-readBody :: IO BS.ByteString -> [BS.ByteString] -> IO BS.ByteString
-readBody reader chunks = do
-  chunk <- reader
-  if BS.null chunk
-    then pure (BS.concat (reverse chunks))
-    else readBody reader (chunk : chunks)
+-- | Error responses are diagnostics, not data. Read a bounded prefix so a
+-- misbehaving upstream cannot make the shell buffer an arbitrary body.
+errorBodyLimit :: Int
+errorBodyLimit = 64 * 1024
+
+readBodyAtMost :: Int -> IO BS.ByteString -> [BS.ByteString] -> IO BS.ByteString
+readBodyAtMost limit reader = go 0
+  where
+    go total collected
+      | total >= limit = pure (BS.concat (reverse collected))
+      | otherwise = do
+          chunk <- reader
+          if BS.null chunk
+            then pure (BS.concat (reverse collected))
+            else do
+              let kept = BS.take (limit - total) chunk
+              go (total + BS.length kept) (kept : collected)
 
 errorSuffix :: String -> String
 errorSuffix "" = ""

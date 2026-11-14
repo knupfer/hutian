@@ -27,6 +27,7 @@ import Hutian.Relay
   , defaultRelayMaxBody
   , handleRelayConnection
   , loadRelayKey
+  , maxRelayKeyBytes
   , newRelayRuntime
   , parseRelaySettings
   , redactKey
@@ -141,6 +142,12 @@ settingsTests =
         assertLeftNames
           "--max-body"
           (parseRelaySettings ["--listen", "/tmp/s", "--upstream", "http://x", "--max-body", "nope"])
+        assertLeftNames
+          "duplicate argument"
+          (parseRelaySettings ["--listen", "/tmp/s", "--listen", "/tmp/t", "--upstream", "http://x"])
+        assertLeftNames
+          "duplicate argument"
+          (parseRelaySettings ["--listen", "/tmp/s", "--upstream", "http://x", "--no-auth", "--no-auth"])
         assertLeftNames "unknown" (parseRelaySettings ["--unknown"])
     , testCase "parseRelaySettings accepts --no-auth without a value" $
         parseRelaySettings
@@ -172,6 +179,10 @@ settingsTests =
           withFile path ReadMode $ \handle -> do
             key <- loadRelayKey handle
             key @?= Left "hutian-llm-relay: the API key contains control characters"
+          BS.writeFile path (BS.replicate (maxRelayKeyBytes + 1) 97)
+          withFile path ReadMode $ \handle -> do
+            key <- loadRelayKey handle
+            key @?= Left "hutian-llm-relay: the API key is too long"
     , testCase "trimKey removes surrounding whitespace but not interior bytes" $ do
         trimKey "  secret\r\n" @?= "secret"
         trimKey "\tsecret\n" @?= "secret"

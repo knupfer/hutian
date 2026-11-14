@@ -68,7 +68,6 @@ import Hutian.Llm
   , runLlmContinuation
   , runLlmWithTools
   , settingModelShell
-  , toolCommand
   )
 import Hutian.Policy (ModelShell (..))
 import Hutian.Output (grayOutputText)
@@ -80,6 +79,7 @@ import Hutian.Shell
   , runShellCommandOutput
   )
 import Hutian.Terminal (promptForInput)
+import Hutian.Tool (ToolPlan (..), planTool)
 import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
 
@@ -223,30 +223,24 @@ abortedToolMessage = "tool error: the user aborted the LLM turn"
 
 runToolCall :: ModelShell -> Conversation -> ToolCall -> IO (Bool, Conversation)
 runToolCall policy conversation call =
-  case toolCommand call of
-    Left message ->
-      failWith ("tool error: " ++ message)
-    Right command ->
-      case policy of
-        ModelShellDenied ->
-          failWith "tool error: the model shell tool is disabled"
-        ModelShellAllowed -> do
-          consoleWriteToolCommand (toolCallName call) command
-          execute command
-        ModelShellAsk -> do
-          approval <- confirmToolCommand (toolCallName call) command
-          case approval of
-            ToolApproved -> execute command
-            ToolDenied ->
-              failWith "tool error: the user did not approve the shell command"
-            ToolAborted ->
-              pure (True, appendToolResult (toolCallId call) abortedToolMessage conversation)
+  case planTool policy call of
+    PlanRefuse message -> refuse message
+    PlanRun command -> do
+      consoleWriteToolCommand (toolCallName call) command
+      run command
+    PlanApprove command -> do
+      approval <- confirmToolCommand (toolCallName call) command
+      case approval of
+        ToolApproved -> run command
+        ToolDenied -> refuse "tool error: the user did not approve the shell command"
+        ToolAborted ->
+          pure (True, appendToolResult (toolCallId call) abortedToolMessage conversation)
   where
-    failWith message =
-      pure (False, appendToolResult (toolCallId call) message conversation)
-    execute command = do
+    run command = do
       conversation' <- executeShellTool conversation call command
       pure (False, conversation')
+    refuse message =
+      pure (False, appendToolResult (toolCallId call) message conversation)
 
 -- | Run a command the model is already allowed to execute. The caller is
 -- responsible for showing the command first.

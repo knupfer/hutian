@@ -42,7 +42,7 @@ import Network.Socket.ByteString (recv, sendAll)
 import System.Timeout (timeout)
 import Test.Tasty
 import Test.Tasty.HUnit
-import TestSupport (captureStdout)
+import TestSupport (captureStderr, captureStdout)
 
 tests :: TestTree
 tests =
@@ -85,6 +85,18 @@ tests =
         llmToolCalls result
           @?= [ToolCall "call-1" "shell" "{\"command\":\"ls\"}"]
         llmResponseText result @?= Nothing
+    , testCase "non-success responses are reported without throwing" $ do
+        (port, _) <- startFakeServerWith (httpResponse 500 "{\"error\":\"boom\"}")
+        flag <- newInterruptFlag
+        captured <-
+          timeout 7000000 $
+            captureStderr $
+              runLlm flag (settingsFor port) [] "hello"
+        (result, output) <-
+          maybe (assertFailure "error response test timed out" >> pure (Nothing, "")) pure captured
+        result @?= Nothing
+        assertBool "status code should be reported" ("HTTP 500" `isInfixOf` output)
+        assertBool "error body should be reported" ("boom" `isInfixOf` output)
     ]
 
 settingsFor :: Int -> LlmSettings
@@ -176,7 +188,10 @@ toolCallChunks =
   ]
 
 startFakeServer :: [Aeson.Value] -> IO (Int, MVar String)
-startFakeServer chunks = do
+startFakeServer = startFakeServerWith . responseFor
+
+startFakeServerWith :: BS.ByteString -> IO (Int, MVar String)
+startFakeServerWith response = do
   listener <- socket AF_INET Stream defaultProtocol
   bind listener (SockAddrInet 0 (tupleToHostAddress (127, 0, 0, 1)))
   listen listener 1
@@ -186,7 +201,7 @@ startFakeServer chunks = do
     (connection, _) <- accept listener
     request <- receiveRequest connection
     putMVar requestVar (BS8.unpack request)
-    sendAll connection (responseFor chunks)
+    sendAll connection response
     close connection
     close listener
   pure (port, requestVar)
@@ -220,3 +235,17 @@ responseFor chunks =
               ++ "Connection: close\r\n\r\n"
           )
    in headers <> body
+
+httpResponse :: Int -> BS.ByteString -> BS.ByteString
+httpResponse status body =
+  BS8.pack
+    ( "HTTP/1.1 "
+        ++ show status
+        ++ " Error\r\n"
+        ++ "Content-Type: application/json\r\n"
+        ++ "Content-Length: "
+        ++ show (BS.length body)
+        ++ "\r\n"
+        ++ "Connection: close\r\n\r\n"
+    )
+    <> body

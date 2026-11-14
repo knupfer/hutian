@@ -1,5 +1,6 @@
 module Main (main) where
 
+import qualified CliSpec
 import qualified CommandSpec
 import qualified CompletionSpec
 import qualified ConsoleSpec
@@ -19,6 +20,8 @@ import qualified RelaySpec
 import qualified RenderSpec
 import qualified ShellSpec
 import qualified SyntaxSpec
+import qualified ToolSpec
+import qualified WireSpec
 import Test.Tasty
 
 main :: IO ()
@@ -26,7 +29,8 @@ main =
   defaultMain $
     testGroup
       "hutian-shell"
-      [ CommandSpec.tests
+      [ CliSpec.tests
+      , CommandSpec.tests
       , CompletionSpec.tests
       , ConsoleSpec.tests
       , ConversationSpec.tests
@@ -44,5 +48,7 @@ main =
       , RenderSpec.tests
       , ShellSpec.tests
       , SyntaxSpec.tests
+      , ToolSpec.tests
+      , WireSpec.tests
       , InterruptSpec.tests
       ]

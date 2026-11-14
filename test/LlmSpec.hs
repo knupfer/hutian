@@ -157,6 +157,20 @@ unitTests =
         case parseLlmSettings ["--unknown", "value"] of
           Left message -> assertBool "unknown argument should be named" ("--unknown" `isInfixOf` message)
           Right _ -> assertFailure "unknown arguments should fail"
+        case
+            parseLlmSettings
+              [ "--llama-url"
+              , "http://example.test"
+              , "--model"
+              , "one"
+              , "--model"
+              , "two"
+              , "--system-prompt"
+              , ""
+              ]
+          of
+            Left message -> assertBool "duplicate option should be named" ("duplicate argument" `isInfixOf` message)
+            Right _ -> assertFailure "duplicate options should fail"
     , testCase "apiFor recognizes chat and completion endpoints" $ do
         apiFor (LlmUrl "http://127.0.0.1:8080/v1/chat/completions") @?= ChatApi
         apiFor (LlmUrl "http://127.0.0.1:8080/completion") @?= CompletionApi

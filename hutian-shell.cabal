@@ -55,6 +55,7 @@ executable hutian-shell
   main-is:          Main.hs
   other-modules:
       Hutian.Ansi
+      Hutian.Cli
       Hutian.Command
       Hutian.Completion
       Hutian.Console
@@ -79,6 +80,7 @@ executable hutian-shell
       Hutian.Shell
       Hutian.Syntax
       Hutian.Terminal
+      Hutian.Tool
   hs-source-dirs:   app
   build-depends:
       network
@@ -88,6 +90,7 @@ executable hutian-llm-relay
   import:           defaults
   main-is:          RelayMain.hs
   other-modules:
+      Hutian.Cli
       Hutian.Http.Wire
       Hutian.Relay
       Hutian.Relay.Protocol
@@ -108,6 +111,7 @@ test-suite hutian-shell-test
   type:             exitcode-stdio-1.0
   main-is:          TestMain.hs
   other-modules:
+      CliSpec
       CommandSpec
       CompletionSpec
       ConsoleSpec
@@ -115,6 +119,7 @@ test-suite hutian-shell-test
       EditorSpec
       HistorySpec
       Hutian.Ansi
+      Hutian.Cli
       Hutian.Command
       Hutian.Completion
       Hutian.Console
@@ -139,6 +144,7 @@ test-suite hutian-shell-test
       Hutian.Render
       Hutian.Shell
       Hutian.Syntax
+      Hutian.Tool
       InterruptSpec
       LlmIntegrationSpec
       LlmProtocolSpec
@@ -153,6 +159,8 @@ test-suite hutian-shell-test
       ShellSpec
       SyntaxSpec
       TestSupport
+      ToolSpec
+      WireSpec
   hs-source-dirs:   test app
   build-depends:
       network

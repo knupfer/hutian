@@ -44,12 +44,18 @@ import Data.Aeson.Key (Key)
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
 import Data.List (isInfixOf)
-import Data.Maybe (fromMaybe, isNothing, listToMaybe, mapMaybe)
+import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import qualified Data.Text.Encoding.Error as TextEncodingError
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
+import Hutian.Cli
+  ( OptionKind (..)
+  , missingOptions
+  , optionValueFor
+  , parseOptions
+  )
 import Hutian.Conversation
   ( ChatMessage (..)
   , Conversation
@@ -106,40 +112,57 @@ emptyLlmResult = LlmResult Nothing []
 -- host relay. '--model-shell' selects deny, ask, or allow for the model's shell
 -- tool; its absence denies the tool, not the user's term mode.
 parseLlmSettings :: [String] -> Either String LlmSettings
-parseLlmSettings = go Nothing Nothing Nothing Nothing ModelShellDenied
+parseLlmSettings arguments = do
+  options <- withUsage (parseOptions llmOptionSpec arguments)
+  case missingOptions requiredLlmOptions options of
+    [] -> do
+      url <- required "--llama-url" options
+      model <- required "--model" options
+      systemPrompt <- required "--system-prompt" options
+      policy <- policyOption options
+      settingsFrom
+        (LlmUrl url)
+        (ModelName model)
+        (SystemPrompt systemPrompt)
+        (optionValueFor "--llama-socket" options)
+        policy
+    missing -> Left (missingMessage missing)
   where
-    go url model systemPrompt socket policy [] =
-      case (url, model, systemPrompt) of
-        (Just parsedUrl, Just parsedModel, Just parsedSystemPrompt) ->
-          settingsFrom parsedUrl parsedModel parsedSystemPrompt socket policy
-        _ -> Left (missingMessage (missingArguments url model systemPrompt))
-    go _ _ _ _ _ ["--llama-url"] = missingValue "--llama-url"
-    go _ _ _ _ _ ["--model"] = missingValue "--model"
-    go _ _ _ _ _ ["--system-prompt"] = missingValue "--system-prompt"
-    go _ _ _ _ _ ["--llama-socket"] = missingValue "--llama-socket"
-    go _ _ _ _ _ ["--model-shell"] = missingValue "--model-shell"
-    go url model systemPrompt socket _ ("--model-shell" : value : rest) =
-      case modelShellFromArgument value of
-        Just parsed -> go url model systemPrompt socket parsed rest
-        Nothing ->
-          Left
-            ( "invalid value for --model-shell: "
-                ++ value
-                ++ " (expected deny, ask, or allow)\n"
-                ++ llmUsage
-            )
-    go _ model systemPrompt socket policy ("--llama-url" : value : rest) =
-      go (Just (LlmUrl value)) model systemPrompt socket policy rest
-    go url _ systemPrompt socket policy ("--model" : value : rest) =
-      go url (Just (ModelName value)) systemPrompt socket policy rest
-    go url model _ socket policy ("--system-prompt" : value : rest) =
-      go url model (Just (SystemPrompt value)) socket policy rest
-    go url model systemPrompt _ policy ("--llama-socket" : value : rest) =
-      go url model systemPrompt (Just value) policy rest
-    go _ _ _ _ _ (argument : _) =
-      Left ("unknown argument: " ++ argument ++ "\n" ++ llmUsage)
+    required name options =
+      case optionValueFor name options of
+        Just value -> Right value
+        Nothing -> Left ("missing required argument: " ++ name ++ "\n" ++ llmUsage)
 
-    missingValue flag = Left ("missing value for " ++ flag ++ "\n" ++ llmUsage)
+    policyOption options =
+      case optionValueFor "--model-shell" options of
+        Nothing -> Right ModelShellDenied
+        Just value ->
+          case modelShellFromArgument value of
+            Just policy -> Right policy
+            Nothing ->
+              Left
+                ( "invalid value for --model-shell: "
+                    ++ value
+                    ++ " (expected deny, ask, or allow)\n"
+                    ++ llmUsage
+                )
+
+    withUsage result =
+      case result of
+        Left message -> Left (message ++ "\n" ++ llmUsage)
+        Right options -> Right options
+
+llmOptionSpec :: [(String, OptionKind)]
+llmOptionSpec =
+  [ ("--llama-url", OptionValue)
+  , ("--model", OptionValue)
+  , ("--system-prompt", OptionValue)
+  , ("--llama-socket", OptionValue)
+  , ("--model-shell", OptionValue)
+  ]
+
+requiredLlmOptions :: [String]
+requiredLlmOptions = ["--llama-url", "--model", "--system-prompt"]
 
 -- | Reject empty URLs, model names, and socket paths; an empty system prompt
 -- is allowed.
@@ -160,18 +183,6 @@ missingMessage missing =
     ++ llmUsage
   where
     plural = if length missing > 1 then "s" else ""
-
-missingArguments
-  :: Maybe LlmUrl
-  -> Maybe ModelName
-  -> Maybe SystemPrompt
-  -> [String]
-missingArguments url model systemPrompt =
-  concat
-    [ [ "--llama-url" | isNothing url ]
-    , [ "--model" | isNothing model ]
-    , [ "--system-prompt" | isNothing systemPrompt ]
-    ]
 
 llmUsage :: String
 llmUsage =

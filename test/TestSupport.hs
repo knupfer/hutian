@@ -5,6 +5,7 @@ module TestSupport
   , withTemporaryDirectory
   , stripAnsi
   , captureStdout
+  , captureStderr
   , awaitMVar
   , assertInfix
   , assertNotInfix
@@ -21,13 +22,14 @@ import System.Directory
   , removeFile
   )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
-import System.IO (hClose, hFlush, openTempFile, stdout)
+import System.IO (Handle, hClose, hFlush, openTempFile, stderr, stdout)
 import System.Posix.IO
   ( closeFd
   , createPipe
   , dup
   , dupTo
   , fdToHandle
+  , stdError
   , stdOutput
   )
 import System.Posix.Types (Fd)
@@ -67,19 +69,26 @@ stripAnsi (character : rest) = character : stripAnsi rest
 -- | Capture everything written to stdout while an action runs. Used by the LLM
 -- streaming tests because the shell renders model output directly.
 captureStdout :: IO a -> IO (a, String)
-captureStdout action = do
+captureStdout = captureOutput stdout stdOutput
+
+-- | Capture everything written to stderr while an action runs.
+captureStderr :: IO a -> IO (a, String)
+captureStderr = captureOutput stderr stdError
+
+captureOutput :: Handle -> Fd -> IO a -> IO (a, String)
+captureOutput handle outputFd action = do
   (readFd, writeFd) <- createPipe
-  savedStdout <- dup stdOutput
-  _ <- dupTo writeFd stdOutput
+  savedFd <- dup outputFd
+  _ <- dupTo writeFd outputFd
   closeFd writeFd
-  hFlush stdout
+  hFlush handle
   result <-
     action
       `finally` do
-        hFlush stdout
-        _ <- dupTo savedStdout stdOutput
-        closeFd savedStdout
-  hFlush stdout
+        hFlush handle
+        _ <- dupTo savedFd outputFd
+        closeFd savedFd
+  hFlush handle
   output <- readPipe readFd
   pure (result, output)
 
