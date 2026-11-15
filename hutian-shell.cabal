@@ -1,6 +1,6 @@
 cabal-version:      3.4
 name:               hutian-shell
-version:            0.4.0.0
+version:            0.5.0.0
 synopsis:           Interactive shell for the hutian sandbox
 description:        A small interactive shell with a streaming llama.cpp
                     prompt and a two-mode multiline editor.

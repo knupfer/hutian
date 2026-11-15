@@ -5,6 +5,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0.0] - 2026-11-15
+
 ### Added
 
 - A shared strict command-line parser in `Hutian.Cli` for `hutian-shell` and
