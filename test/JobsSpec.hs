@@ -11,10 +11,12 @@ import Hutian.Jobs.Runtime
   , startJob
   , withJobRuntime
   )
+import Hutian.Output (grayOutputText)
+import Hutian.Render (grayForeground, reset)
 import System.Exit (ExitCode (..))
 import Test.Tasty
 import Test.Tasty.HUnit
-import TestSupport (withTemporaryDirectory)
+import TestSupport (stripAnsi, withTemporaryDirectory)
 
 tests :: TestTree
 tests =
@@ -45,6 +47,10 @@ pureTests =
         jobSummaryLine finishedJob @?= "job 1  signal 15  sleep 10"
     , testCase "a start line is a single compact notice" $
         jobStartedLine runningJob @?= "job 1 started"
+    , testCase "a styled start line keeps only the job text" $ do
+        let styled = grayOutputText True (jobStartedLine runningJob)
+        styled @?= grayForeground ++ "job 1 started" ++ reset
+        stripAnsi styled @?= "job 1 started"
     , testCase "a summary line flattens a multi-line command" $
         jobSummaryLine (runningJob {jobCommand = "echo one\necho two"})
           @?= "job 1  running  pid 1234  echo one echo two"

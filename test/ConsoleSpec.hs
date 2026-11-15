@@ -1,19 +1,24 @@
 module ConsoleSpec (tests) where
 
-import Data.List (isInfixOf, isSuffixOf)
+import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
 import Hutian.Console
   ( ToolApproval (..)
   , approvalForKey
+  , consoleWriteGrayLine
+  , consoleWriteLine
+  , withGrayOutput
   )
 import Hutian.Render
   ( approvalDecisionText
   , approvePromptText
   , boldVibrantPink
+  , grayForeground
   , reset
   )
 import System.Console.ANSI (clearFromCursorToScreenEndCode, cursorUpCode)
 import Test.Tasty
 import Test.Tasty.HUnit
+import TestSupport (stripAnsi, withPseudoTerminalOutput)
 
 tests :: TestTree
 tests =
@@ -39,4 +44,30 @@ tests =
         approvalDecisionText "Yes"
           @?= cursorUpCode 2 ++ "\r" ++ clearFromCursorToScreenEndCode ++ "Yes\n"
         assertBool "a negative decision ends with No" ("No\n" `isSuffixOf` approvalDecisionText "No")
+    , testCase "a gray line is written as one complete escape sequence" $
+        withPseudoTerminalOutput $ \readOutput -> do
+          withGrayOutput (consoleWriteLine "job 1 started")
+          output <- readOutput
+          output @?= grayForeground ++ "job 1 started\r\n" ++ reset
+    , testCase "a job start notice prints only the job line" $
+        withPseudoTerminalOutput $ \readOutput -> do
+          consoleWriteGrayLine "job 1 started"
+          output <- readOutput
+          output @?= grayForeground ++ "job 1 started" ++ reset ++ "\r\n"
+          stripAnsi output @?= "job 1 started\r\n"
+          assertBool
+            "the colour sequence must not leak into the text"
+            (not ("38;2;153;153;153m" `isInfixOf` stripAnsi output))
+          assertBool
+            "the job line must appear exactly once"
+            (countOccurrences "job 1 started" output == 1)
     ]
+
+countOccurrences :: String -> String -> Int
+countOccurrences needle = go
+  where
+    go "" = 0
+    go haystack
+      | needle `isPrefixOf` haystack = 1 + go (drop (length needle) haystack)
+      | otherwise = go (drop 1 haystack)
+

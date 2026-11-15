@@ -3,6 +3,7 @@ module TestSupport
   ( withEnv
   , temporaryFilePath
   , withTemporaryDirectory
+  , withPseudoTerminalOutput
   , stripAnsi
   , captureStdout
   , captureStderr
@@ -12,7 +13,7 @@ module TestSupport
   ) where
 
 import Control.Concurrent.MVar (MVar, takeMVar)
-import Control.Exception (finally)
+import Control.Exception (IOException, finally, try)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import System.Directory
@@ -24,14 +25,18 @@ import System.Directory
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.IO (Handle, hClose, hFlush, openTempFile, stderr, stdout)
 import System.Posix.IO
-  ( closeFd
+  ( FdOption (..)
+  , closeFd
   , createPipe
   , dup
   , dupTo
   , fdToHandle
+  , setFdOption
   , stdError
   , stdOutput
   )
+import qualified System.Posix.IO.ByteString as PosixBS
+import System.Posix.Terminal (openPseudoTerminal)
 import System.Posix.Types (Fd)
 import System.Timeout (timeout)
 import Test.Tasty.HUnit (assertBool)
@@ -98,6 +103,37 @@ readPipe readFd = do
   contents <- BS.hGetContents handle
   hClose handle
   pure (BS8.unpack contents)
+
+-- | Run an action with stdout and stderr attached to one pseudo-terminal, so
+-- terminal-only presentation paths can be observed. The callback reads
+-- everything written to the terminal while the action runs.
+withPseudoTerminalOutput :: (IO String -> IO a) -> IO a
+withPseudoTerminalOutput action = do
+  (master, slave) <- openPseudoTerminal
+  setFdOption master NonBlockingRead True
+  savedOutput <- dup stdOutput
+  savedError <- dup stdError
+  _ <- dupTo slave stdOutput
+  _ <- dupTo slave stdError
+  closeFd slave
+  hFlush stdout
+  hFlush stderr
+  action (readAvailable master)
+    `finally` do
+      hFlush stdout
+      hFlush stderr
+      _ <- dupTo savedOutput stdOutput
+      _ <- dupTo savedError stdError
+      closeFd savedOutput
+      closeFd savedError
+  where
+    readAvailable master = go []
+      where
+        go chunks = do
+          chunk <- try (PosixBS.fdRead master 4096) :: IO (Either IOException BS.ByteString)
+          case chunk of
+            Right bytes | not (BS.null bytes) -> go (BS8.unpack bytes : chunks)
+            _ -> pure (concat (reverse chunks))
 
 -- | Take a value, failing the test instead of hanging if it never arrives.
 awaitMVar :: String -> MVar a -> IO a

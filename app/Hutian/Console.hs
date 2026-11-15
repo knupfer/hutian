@@ -15,6 +15,7 @@ module Hutian.Console
   , consoleWrite
   , consoleWriteError
   , consoleWriteErrorLine
+  , consoleWriteGrayLine
   , consoleWriteJobEvent
   , consoleWriteLine
   , consoleWriteToolCommand
@@ -38,7 +39,8 @@ import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Hutian.Editor (PromptMode)
 import Hutian.Jobs (JobId)
 import Hutian.Output
-  ( jobEventText
+  ( grayOutputText
+  , jobEventText
   , jobOutputLabelText
   , jobsLabelText
   , outputLabelText
@@ -73,7 +75,8 @@ import System.IO
   )
 import System.IO.Error (isEOFError)
 import System.IO.Unsafe (unsafePerformIO)
-import System.Posix.IO (stdInput)
+import System.Posix.Files (deviceID, fileID, getFdStatus)
+import System.Posix.IO (stdError, stdInput, stdOutput)
 import System.Posix.Terminal
   ( TerminalAttributes
   , TerminalMode (..)
@@ -171,6 +174,15 @@ consoleWriteJobEvent message = do
   consoleWriteLine (jobEventText interactive message)
   consoleFlush
 
+-- | Show one line of command or job output in gray. Streamed and multi-line
+-- output goes through 'withGrayOutput'; a single line is written atomically so
+-- the terminal sees exactly one colour sequence and one reset.
+consoleWriteGrayLine :: String -> IO ()
+consoleWriteGrayLine message = do
+  interactive <- consoleIsInteractive
+  consoleWriteLine (grayOutputText interactive message)
+  consoleFlush
+
 -- | The label above the job table.
 printJobsLabel :: IO ()
 printJobsLabel = do
@@ -265,17 +277,36 @@ printOutputLabel mode = do
   consoleWriteLine (outputLabelText mode interactive)
   consoleFlush
 
--- | Print streamed output in gray, restoring the terminal afterwards.
+-- | Print streamed output in gray, restoring the terminal afterwards. When
+-- stdout and stderr are the same terminal, style it only through stdout:
+-- writing the sequence to both streams would duplicate it.
 withGrayOutput :: IO a -> IO a
 withGrayOutput action = do
-  stdoutIsTerminal <- consoleIsInteractive
+  styleStdout <- consoleIsInteractive
   stderrIsTerminal <- consoleIsErrorInteractive
-  let restore = do
-        when stdoutIsTerminal (consoleWrite reset >> consoleFlush)
-        when stderrIsTerminal (consoleWriteError reset >> consoleFlushError)
-  when stdoutIsTerminal (consoleWrite grayForeground >> consoleFlush)
-  when stderrIsTerminal (consoleWriteError grayForeground >> consoleFlushError)
+  styleStderr <-
+    if not stderrIsTerminal
+      then pure False
+      else
+        if styleStdout
+          then not <$> sameTerminal
+          else pure True
+  let writeSequence sequenceText = do
+        when styleStdout (consoleWrite sequenceText >> consoleFlush)
+        when styleStderr (consoleWriteError sequenceText >> consoleFlushError)
+      restore = writeSequence reset
+  writeSequence grayForeground
   action `finally` restore
+
+-- | Whether stdout and stderr refer to the same terminal device.
+sameTerminal :: IO Bool
+sameTerminal = do
+  outputStatus <- getFdStatus stdOutput
+  errorStatus <- getFdStatus stdError
+  pure
+    ( deviceID outputStatus == deviceID errorStatus
+        && fileID outputStatus == fileID errorStatus
+    )
 
 -- | Show a blinking teal cursor while the model streams an answer, then return
 -- to the pink user cursor. The blink is driven here because every streamed

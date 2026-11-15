@@ -24,6 +24,7 @@ import Hutian.Console
   , consoleWrite
   , consoleWriteError
   , consoleWriteErrorLine
+  , consoleWriteGrayLine
   , consoleWriteJobEvent
   , consoleWriteLine
   , consoleWriteToolCommand
@@ -313,7 +314,7 @@ runToolCall jobs policy conversation call =
           pure (False, appendToolResult (toolCallId call) message conversation)
         Right (job, wasRunning) -> do
           let message = jobKillResult wasRunning job
-          withGrayOutput (consoleWriteLine message)
+          consoleWriteGrayLine message
           pure (False, appendToolResult (toolCallId call) message conversation)
 
 -- | Run a command the model is already allowed to execute. The caller is
@@ -341,7 +342,7 @@ executeBackgroundTool jobs conversation call command = do
       consoleWriteErrorLine message
       pure (appendToolResult (toolCallId call) message conversation)
     Right job -> do
-      withGrayOutput (consoleWriteLine (jobStartedLine job))
+      consoleWriteGrayLine (jobStartedLine job)
       pure (appendToolResult (toolCallId call) (jobStartedLine job) conversation)
 
 runTerminalInput :: JobRuntime -> Conversation -> String -> IO Conversation
