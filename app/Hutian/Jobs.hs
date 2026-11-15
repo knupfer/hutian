@@ -22,7 +22,7 @@ import System.Exit (ExitCode (..))
 import Text.Read (readMaybe)
 
 -- | A job id is allocated per shell session and is always positive.
-newtype JobId = JobId { unJobId :: Int }
+newtype JobId = JobId Int
   deriving stock (Eq, Ord, Show)
 
 data JobStatus

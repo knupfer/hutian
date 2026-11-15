@@ -25,6 +25,7 @@ import Hutian.Conversation (ToolCall (..))
 import Hutian.Jobs
   ( JobId (..)
   , defaultJobOutputLines
+  , maxJobOutputLines
   )
 import Hutian.Policy (ModelShell (..))
 
@@ -105,7 +106,9 @@ jobOutputTool =
     ( "Read the end of a background job's log. The optional lines argument "
         ++ "controls how many lines are returned; it defaults to "
         ++ show defaultJobOutputLines
-        ++ " and is capped at 500."
+        ++ " and is capped at "
+        ++ show maxJobOutputLines
+        ++ "."
     )
     ( object
         [ "type" .= ("object" :: String)
@@ -202,17 +205,16 @@ planTool policy call =
         ModelShellAllowed -> allowed request
         ModelShellAsk -> asked request
   where
-    allowed RequestJobs = PlanListJobs
-    allowed (RequestJobOutput target lineCount) = PlanJobOutput target lineCount
-    allowed (RequestJobKill target) = PlanJobKill target
-    allowed (RequestShell command) = run Foreground command
-    allowed (RequestShellBackground command) = run Background command
+    allowed = resolve (run Foreground) (run Background)
+    asked = resolve (approve Foreground) (approve Background)
 
-    asked RequestJobs = PlanListJobs
-    asked (RequestJobOutput target lineCount) = PlanJobOutput target lineCount
-    asked (RequestJobKill target) = PlanJobKill target
-    asked (RequestShell command) = approve Foreground command
-    asked (RequestShellBackground command) = approve Background command
+    resolve shell background request =
+      case request of
+        RequestJobs -> PlanListJobs
+        RequestJobOutput target lineCount -> PlanJobOutput target lineCount
+        RequestJobKill target -> PlanJobKill target
+        RequestShell command -> shell command
+        RequestShellBackground command -> background command
 
     run mode command
       | all isSpace command = PlanRefuse "tool error: the shell command is empty"

@@ -45,15 +45,16 @@ jobEventText interactive text
 
 -- | The label above a list of jobs.
 jobsLabelText :: Bool -> String
-jobsLabelText interactive = label (dimTealForeground ++ "jobs:" ++ reset) "jobs:"
-  where
-    label styled plain = if interactive then styled else plain
+jobsLabelText interactive =
+  labelText interactive (dimTealForeground ++ "jobs:" ++ reset) "jobs:"
 
 -- | The label above one job's output.
 jobOutputLabelText :: JobId -> Bool -> String
 jobOutputLabelText target interactive =
-  label
+  labelText
+    interactive
     (dimTealForeground ++ "job " ++ jobIdText target ++ " output:" ++ reset)
     ("job " ++ jobIdText target ++ " output:")
-  where
-    label styled plain = if interactive then styled else plain
+
+labelText :: Bool -> String -> String -> String
+labelText interactive styled plain = if interactive then styled else plain

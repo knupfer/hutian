@@ -24,7 +24,7 @@ import Control.Exception (IOException, bracket, catch, onException, try)
 import Control.Monad (forM_)
 import qualified Data.ByteString as BS
 import Data.Either (fromRight)
-import Data.List (find, mapAccumL)
+import Data.List (find)
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
@@ -111,7 +111,10 @@ startJob runtime command = do
 -- | Jobs are listed in start order. Finished jobs stay available for output
 -- and status reporting until the shell exits.
 listJobs :: JobRuntime -> IO [Job]
-listJobs runtime = map runtimeInfo . stateJobs <$> readMVar (runtimeState runtime)
+listJobs runtime = map runtimeInfo <$> listRuntimeJobs runtime
+
+listRuntimeJobs :: JobRuntime -> IO [RuntimeJob]
+listRuntimeJobs runtime = stateJobs <$> readMVar (runtimeState runtime)
 
 -- | Read a bounded tail of a job's log. The job and whether the output was
 -- truncated are returned so both the terminal and the model can describe it.
@@ -119,7 +122,7 @@ readJobOutput :: JobRuntime -> JobId -> Int -> IO (Either String (Job, String, B
 readJobOutput runtime target requestedLines = do
   found <- findJob runtime target
   case found of
-    Nothing -> pure (Left ("no such job: " ++ jobIdText target))
+    Nothing -> pure (noSuchJob target)
     Just job -> do
       let lineCount = clamp 1 maxJobOutputLines requestedLines
       (output, truncated) <- readLogTail (jobLogPath job) lineCount
@@ -131,7 +134,7 @@ killJob :: JobRuntime -> JobId -> IO (Either String (Job, Bool))
 killJob runtime target = do
   found <- findRuntimeJob runtime target
   case found of
-    Nothing -> pure (Left ("no such job: " ++ jobIdText target))
+    Nothing -> pure (noSuchJob target)
     Just runtimeJob -> do
       let job = runtimeInfo runtimeJob
       if jobStatus job /= JobRunning
@@ -141,7 +144,7 @@ killJob runtime target = do
           waitForExit runtime target 50
           current <- findJob runtime target
           case current of
-            Nothing -> pure (Left ("no such job: " ++ jobIdText target))
+            Nothing -> pure (noSuchJob target)
             Just job'
               | jobStatus job' == JobRunning -> do
                   signalRuntimeJob runtimeJob sigKILL
@@ -158,8 +161,9 @@ tooManyJobs = "too many background jobs are already running; stop one first"
 
 runningCount :: JobState -> Int
 runningCount state = length (filter isRunning (stateJobs state))
-  where
-    isRunning runtimeJob = jobStatus (runtimeInfo runtimeJob) == JobRunning
+
+isRunning :: RuntimeJob -> Bool
+isRunning runtimeJob = jobStatus (runtimeInfo runtimeJob) == JobRunning
 
 spawnJob :: JobRuntime -> Int -> String -> IO (Either String RuntimeJob)
 spawnJob runtime nextId command = do
@@ -202,24 +206,26 @@ waitForJob runtime runtimeJob = do
 finishJob :: JobRuntime -> JobId -> ExitCode -> IO ()
 finishJob runtime target exitCode =
   modifyMVar_ (runtimeState runtime) $ \state ->
-    let (_, jobs') = mapAccumL update Nothing (stateJobs state)
-     in pure state { stateJobs = jobs' }
+    pure state { stateJobs = map finish (stateJobs state) }
   where
-    update found runtimeJob
-      | Nothing <- found
-      , jobId (runtimeInfo runtimeJob) == target
-      , JobRunning <- jobStatus (runtimeInfo runtimeJob) =
-          let job = (runtimeInfo runtimeJob) { jobStatus = JobExited exitCode }
-           in (Just job, runtimeJob { runtimeInfo = job })
-      | otherwise = (found, runtimeJob)
+    finish runtimeJob
+      | jobId info == target
+      , jobStatus info == JobRunning =
+          runtimeJob { runtimeInfo = info { jobStatus = JobExited exitCode } }
+      | otherwise = runtimeJob
+      where
+        info = runtimeInfo runtimeJob
 
 findJob :: JobRuntime -> JobId -> IO (Maybe Job)
 findJob runtime target = fmap runtimeInfo <$> findRuntimeJob runtime target
 
+noSuchJob :: JobId -> Either String a
+noSuchJob target = Left ("no such job: " ++ jobIdText target)
+
 findRuntimeJob :: JobRuntime -> JobId -> IO (Maybe RuntimeJob)
 findRuntimeJob runtime target =
-  find (\runtimeJob -> jobId (runtimeInfo runtimeJob) == target) . stateJobs
-    <$> readMVar (runtimeState runtime)
+  find (\runtimeJob -> jobId (runtimeInfo runtimeJob) == target)
+    <$> listRuntimeJobs runtime
 
 signalRuntimeJob :: RuntimeJob -> Signal -> IO ()
 signalRuntimeJob runtimeJob signal =
@@ -238,20 +244,14 @@ waitForExit runtime target attempts = do
 
 shutdownJobs :: JobRuntime -> IO ()
 shutdownJobs runtime = do
-  jobs <- listJobs runtime
-  let running = filter ((== JobRunning) . jobStatus) jobs
+  running <- filter isRunning <$> listRuntimeJobs runtime
   case running of
     [] -> pure ()
     _ -> do
-      forM_ running (signalJob sigTERM)
+      forM_ running (`signalRuntimeJob` sigTERM)
       threadDelay 200000
-      remaining <- filter ((== JobRunning) . jobStatus) <$> listJobs runtime
-      forM_ remaining (signalJob sigKILL)
-  where
-    signalJob signal job =
-      case jobPid job of
-        Just pid -> ignoreIO (signalProcessGroup signal (fromIntegral pid))
-        Nothing -> pure ()
+      remaining <- filter isRunning <$> listRuntimeJobs runtime
+      forM_ remaining (`signalRuntimeJob` sigKILL)
 
 -- | Read at most @lineLimit@ lines from the end of a file. At most 64 KiB is
 -- read, so a chatty job cannot make reading its output unbounded.

@@ -407,23 +407,17 @@ displayCommandResult result = do
   unless (null output || "\n" `isSuffixOf` output) (consoleWrite "\n")
   consoleFlush
 
--- | Print the job table in gray under its label. An empty table is a single
--- line so the common case does not spend a line on a header.
+-- | Print the job table in gray, omitting the label when the table is empty.
 printJobsList :: [Job] -> IO ()
-printJobsList [] = printJobRows []
 printJobsList current = do
-  printJobsLabel
+  unless (null current) printJobsLabel
   printJobRows current
 
 -- | Print job rows without a label. Used by the model-facing job tool after its
 -- @tool output:@ line.
 printJobRows :: [Job] -> IO ()
 printJobRows current =
-  withGrayOutput $
-    mapM_ consoleWriteLine $
-      case current of
-        [] -> ["no background jobs"]
-        _ -> lines (jobListResult current)
+  withGrayOutput (mapM_ consoleWriteLine (lines (jobListResult current)))
 
 -- | Print a job log tail. Empty output folds into the label line.
 printJobOutput :: JobId -> String -> Bool -> IO ()
