@@ -21,11 +21,12 @@ switch to term mode, where the input has a bold pink `shell:` line above it and
 submitted text runs through BusyBox `ash`, so shell builtins and redirection
 work as expected.
 
-The model's `shell` tool is controlled by the mandatory `model.shell` option,
+The model's shell tools are controlled by the mandatory `model.shell` option,
 which accepts `"deny"`, `"ask"`, or `"allow"`. Term mode is always available.
-With `"deny"` the model is never told that a shell tool exists and any tool call
-is refused. With `"ask"` the tool is advertised, but each requested command
-needs your approval before it runs. With `"allow"` model commands run
+With `"deny"` the model is never told that shell tools exist and any tool call
+is refused. With `"ask"` the tools are advertised, but each `shell` or
+`shell_background` command needs your approval before it runs; listing jobs and
+reading or stopping one do not. With `"allow"` model commands run
 automatically. In every case you can still press `Ctrl+X` and run commands
 yourself.
 
@@ -114,6 +115,12 @@ so `cd`, exported variables, and other shell state do not persist between
 calls. The requested command is shown under a bold teal `tool shell:` line,
 syntax-highlighted as shell, distinguishing it from commands typed by the user.
 
+For servers, watchers, and long builds, the model can call `shell_background`
+instead of `shell`. It receives a job id immediately and uses `jobs`,
+`job_output`, and `job_kill` to inspect and control the job. The requested
+command is still shown under a bold teal `tool shell_background:` line, and the
+start result follows under `tool output:` in gray.
+
 ```console
 Explain what a syscall is.
 <Ctrl+D>
@@ -123,8 +130,10 @@ Explain what a syscall is.
 
 Term mode shows a bold pink `shell:` line above the input and prints command
 output in gray under a dimmed pink `output:` line. Input is syntax-highlighted
-as shell while you type. `help` shows the builtin help; every other line is
-executed with `/bin/sh -c` in the sandbox working directory.
+as shell while you type. `help` shows the builtin help; `jobs`, `job`, and
+`job start` manage background jobs (see [Background jobs](#background-jobs)).
+Every other line is executed with `/bin/sh -c` in the sandbox working
+directory.
 
 Each term-mode command runs in a fresh shell, so `cd`, exported variables, and
 other shell state do not carry over between commands. Use absolute paths or
@@ -133,6 +142,32 @@ combine steps in one command, for example `cd sub && make`.
 `Ctrl+C` cancels the current input or command without terminating the shell.
 Term command history is stored in `/tmp/hutian-shell-history`, and LLM prompt
 history in `/tmp/hutian-llm-history`.
+
+## Background jobs
+
+Long-running commands can run as background jobs so they do not hold the prompt
+or an LLM turn open. The model starts one with `shell_background`; in term mode
+use `job start <cmd>`. A started command runs with `/bin/sh -c` in a new process
+group with stdin closed. Its stdout and stderr are appended to
+`/tmp/hutian-jobs/<id>.log` inside the sandbox; each job gets a fresh shell and
+starts in the sandbox working directory.
+
+`jobs` lists every job in the session with its status, pid while running, and
+command. `job <id> [lines]` prints the end of a log (50 lines by default, at most
+500, with an explicit truncation note). `job kill <id>` sends SIGTERM to the
+process group and then SIGKILL if it has not exited. The model has the same
+operations through the `jobs`, `job_output`, and `job_kill` tools.
+
+Up to eight jobs can run at once. Finished jobs stay listed until the shell
+exits, and exiting the shell stops any that are still running. Model job tool
+calls use the same layout as the foreground shell tool: a bold teal
+`tool <name>:` line, then `tool output:` with the result in gray. A background
+start therefore shows `job <id> started` as tool output. Term-mode job starts
+and stops are single dimmed teal notices, and term-mode `jobs` and `job <id>`
+use dimmed teal `jobs:` and `job <id> output:` labels. A start notice shows only
+the job id because the command is already visible on the request or input line.
+Job completion is not announced; run `jobs` or `job <id>` to check status and
+output.
 
 The flake requires explicit `sandbox` and `model` groups. `sandbox` must
 contain `packages`, `writable`, `nixDaemon`, and `network`; `model` must contain
@@ -265,11 +300,12 @@ Set `sandbox.network = false` to give the sandbox gVisor's `none` network mode.
 This is a hard gate: `GVISOR_NETWORK` cannot re-enable networking. The host
 relay still provides model traffic over its Unix socket.
 
-Set `model.shell = "deny"` to disable the model's `shell` tool. Term mode
-remains available for your own commands. Hutian omits the tool from every LLM
-request and also refuses to execute any tool call that arrives anyway. Use
-`"ask"` to keep the tool available with per-command approval, or `"allow"` to
-run model-requested commands automatically.
+Set `model.shell = "deny"` to disable the model's shell tools. Term mode
+remains available for your own commands, including background jobs. Hutian
+omits the tools from every LLM request and also refuses to execute any tool call
+that arrives anyway. Use `"ask"` to keep the tools available with per-command
+approval (job inspection stays free), or `"allow"` to run model-requested
+commands automatically.
 
 Then run `nix run .` from that project. Package versions come from the consumer
 flake's lock file. Every option is mandatory, and omitting one fails with an
@@ -352,7 +388,7 @@ Hutian separates sandbox capabilities from model-tool permissions:
 | `sandbox.writable` | sandbox | Allows writes to `/source`. `false` (the default) mounts it read-only. It protects integrity, not confidentiality. |
 | `sandbox.nixDaemon` | sandbox | Exposes the host `/nix/store` and Nix daemon socket. |
 | `sandbox.network` | sandbox | Controls direct gVisor networking. `true` uses `host` mode; `false` forces `none`. |
-| `model.shell` | model | `"deny"`, `"ask"`, or `"allow"` for the model's `shell` tool. |
+| `model.shell` | model | `"deny"`, `"ask"`, or `"allow"` for the model's shell and background-job tools. |
 | `model.apiKeyFile`, `model.apiKeyCommand` | host relay | Supply the upstream key without exposing it to the sandbox. |
 
 Important composition rules:
@@ -368,7 +404,7 @@ Important composition rules:
   `GVISOR_NETWORK` can narrow it to `none` but cannot widen
   `sandbox.network = false`.
 - `model.shell = "deny"` restricts only the model. Term mode can always run
-  commands in the sandbox.
+  commands in the sandbox, including background jobs.
 - Every process in the sandbox can connect to the relay socket. Shell commands
   can therefore use the configured model endpoint, but cannot choose a
   different upstream or read the key.
@@ -414,7 +450,11 @@ The code keeps pure logic separate from IO:
   by it.
 - `Hutian.Tool` turns a model tool call and the policy into a pure `ToolPlan`.
   `Main` only performs the terminal or shell IO that the plan requests, so
-  refusals, approvals, and commands can be tested without a terminal.
+  refusals, approvals, commands, and job actions can be tested without a
+  terminal.
+- `Hutian.Jobs` is the pure job model: ids, status, log paths, and the text
+  shared by the terminal and the model tools. `Hutian.Jobs.Runtime` owns the
+  process handles, bounded log tails, and process-group signalling.
 - `Hutian.Cli` is the shared strict option parser for the shell and relay. It
   rejects duplicate options, unknown options, bare positional arguments, and
   missing values instead of silently letting argument order decide.
@@ -426,6 +466,7 @@ The code keeps pure logic separate from IO:
   with `ansi-terminal`.
 - `Hutian.Render` turns a prompt into ANSI output and cursor movement, including
   the tool-call prefix style.
+- `Hutian.Output` renders output labels and job event text.
 - `Hutian.History`, `Hutian.Conversation`, and `Hutian.Paths` are pure models;
   `Hutian.Conversation` also represents tool calls and tool results.
 - `Hutian.History` owns the pure on-disk history codec.
@@ -468,6 +509,9 @@ app/Hutian/Cli.hs         Strict shared command-line option parser
 app/Hutian/Command.hs     Typed term-mode command parsing
 app/Hutian/Completion.hs  Pure completion selection
 app/Hutian/Console.hs     Single terminal IO boundary
+app/Hutian/Jobs.hs        Pure background-job model and text
+app/Hutian/Jobs/Runtime.hs  Job processes, logs, and signals
+app/Hutian/Output.hs      Output labels and job event styling
 app/Hutian/Policy.hs      Model shell-tool policy
 app/Hutian/Prompt.hs      Pure prompt reducer
 app/Hutian/Render.hs      Pure ANSI prompt rendering
@@ -490,8 +534,8 @@ The test suite combines HUnit tests with QuickCheck properties for the editor
 state machine, the pure prompt reducer, prompt layout and rendering, command
 parsing, completion selection, history codecs, conversation history, LLM
 requests, streaming tool calls, Markdown rendering, code highlighting, path and
-shell helpers, strict option parsing, tool-call plans, socket framing, and
-interrupt handling. It also includes integration tests for:
+shell helpers, strict option parsing, tool-call plans, the background-job model,
+socket framing, and interrupt handling. It also includes integration tests for:
 
 - streaming LLM responses through a local HTTP server, including bounded
   non-success error reporting
@@ -500,6 +544,8 @@ interrupt handling. It also includes integration tests for:
   and response streaming
 - history file persistence
 - shell command execution and command discovery
+- background jobs: output capture, status, bounded log tails, and stopping a
+  process group
 
 Run it through Nix:
 

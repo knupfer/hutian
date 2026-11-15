@@ -16,8 +16,6 @@ module Hutian.Llm.Protocol
   , apiFor
   , requestBodyFor
   , continuationBodyFor
-  , toolDefinitions
-  , toolCommand
   , StreamEvent (..)
   , ToolCallDelta (..)
   , parseStreamLine
@@ -78,6 +76,7 @@ import Hutian.Markdown
   )
 import Hutian.Policy (ModelShell (..), modelShellAdvertised, modelShellFromArgument)
 import Hutian.Render (boldTeal, dimTealForeground, grayForeground, reset)
+import Hutian.Tool (toolDefinitions)
 
 -- | Connection settings supplied by the launcher.
 data LlmSettings = LlmSettings
@@ -308,56 +307,6 @@ toolCallValue call =
           , "arguments" .= toolCallArguments call
           ]
     ]
-
--- | The single tool exposed to the model.
-toolDefinitions :: [Aeson.Value]
-toolDefinitions =
-  [ object
-      [ "type" .= ("function" :: String)
-      , "function" .=
-          object
-            [ "name" .= (shellToolName :: String)
-            , "description"
-                .= ( "Run a shell command with /bin/sh -c in the sandbox. "
-                       ++ "Use it to inspect files, run builds and tests, and modify "
-                       ++ "the workspace. Each command starts in the sandbox working "
-                       ++ "directory in a fresh shell, so cd and exported variables do "
-                       ++ "not persist between calls; use absolute paths or combine "
-                       ++ "steps such as cd dir && cmd in one command."
-                   )
-            , "parameters" .=
-                object
-                  [ "type" .= ("object" :: String)
-                  , "properties" .=
-                      object
-                        [ "command" .=
-                            object
-                              [ "type" .= ("string" :: String)
-                              , "description" .= ("The shell command to run." :: String)
-                              ]
-                        ]
-                  , "required" .= ["command" :: String]
-                  ]
-            ]
-      ]
-  ]
-
-shellToolName :: String
-shellToolName = "shell"
-
--- | Extract the shell command from a tool call. Unknown tools and malformed
--- arguments become a result string that is sent back to the model.
-toolCommand :: ToolCall -> Either String String
-toolCommand call
-  | toolCallName call /= shellToolName =
-      Left ("unknown tool: " ++ toolCallName call)
-  | otherwise =
-      case Aeson.eitherDecodeStrict' (TextEncoding.encodeUtf8 (Text.pack (toolCallArguments call))) of
-        Right (Object arguments) ->
-          case KeyMap.lookup "command" arguments of
-            Just (String command) -> Right (Text.unpack command)
-            _ -> Left "missing string argument: command"
-        _ -> Left "tool arguments are not a JSON object"
 
 -- | One streaming fragment of a tool call. The first fragment usually carries
 -- the id and function name; later fragments append to the arguments.

@@ -103,4 +103,4 @@ withBuiltins :: [String] -> [String]
 withBuiltins names = nub (builtinCommands ++ names)
 
 builtinCommands :: [String]
-builtinCommands = ["help"]
+builtinCommands = ["help", "jobs", "job"]

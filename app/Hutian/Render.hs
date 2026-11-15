@@ -2,6 +2,7 @@
 module Hutian.Render
   ( promptRenderText
   , toolPromptText
+  , toolLabelText
   , approvePromptText
   , approvalDecisionText
   , moveCursorText
@@ -106,6 +107,10 @@ toolPromptText toolName width command =
 -- line above the command.
 toolPrefix :: String -> String
 toolPrefix toolName = "tool " ++ toolName ++ ":\n"
+
+-- | A label for a tool call that has no command to show.
+toolLabelText :: String -> String
+toolLabelText toolName = boldTeal ++ "tool " ++ toolName ++ ":" ++ reset
 
 -- | The approval prompt shown while waiting for a key. The label uses the
 -- user's prompt colour; the choices stay in the terminal's default colour.

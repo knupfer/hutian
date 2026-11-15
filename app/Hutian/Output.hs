@@ -1,11 +1,20 @@
--- | Pure label and colour rendering for command output.
+-- | Pure label and colour rendering for command and job output.
 module Hutian.Output
   ( grayOutputText
   , outputLabelText
+  , jobEventText
+  , jobsLabelText
+  , jobOutputLabelText
   ) where
 
 import Hutian.Editor (PromptMode (..))
-import Hutian.Render (grayForeground, outputForeground, reset)
+import Hutian.Jobs (JobId, jobIdText)
+import Hutian.Render
+  ( dimTealForeground
+  , grayForeground
+  , outputForeground
+  , reset
+  )
 
 -- | Wrap captured output in gray when it is going to a terminal.
 grayOutputText :: Bool -> String -> String
@@ -26,3 +35,25 @@ outputLabelText mode interactive
 outputLabel :: PromptMode -> String
 outputLabel ToolMode = "tool output:"
 outputLabel _ = "output:"
+
+-- | Job lifecycle events are routine and stay in the same dimmed teal as the
+-- job labels, so they remain visible without competing with model answers.
+jobEventText :: Bool -> String -> String
+jobEventText interactive text
+  | interactive && not (null text) = dimTealForeground ++ text ++ reset
+  | otherwise = text
+
+-- | The label above a list of jobs.
+jobsLabelText :: Bool -> String
+jobsLabelText interactive = label (dimTealForeground ++ "jobs:" ++ reset) "jobs:"
+  where
+    label styled plain = if interactive then styled else plain
+
+-- | The label above one job's output.
+jobOutputLabelText :: JobId -> Bool -> String
+jobOutputLabelText target interactive =
+  label
+    (dimTealForeground ++ "job " ++ jobIdText target ++ " output:" ++ reset)
+    ("job " ++ jobIdText target ++ " output:")
+  where
+    label styled plain = if interactive then styled else plain

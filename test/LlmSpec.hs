@@ -6,7 +6,6 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
-import Data.Either (isLeft)
 import Data.List (isInfixOf)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
@@ -287,19 +286,13 @@ unitTests =
             KeyMap.lookup "stream" body @?= Just (Bool True)
             KeyMap.lookup "messages" body @?= Nothing
           other -> assertFailure ("unexpected request body: " ++ show other)
-    , testCase "chat request body advertises the shell tool when allowed" $
+    , testCase "chat request body advertises the shell and job tools when allowed" $
         case requestBodyFor ModelShellAllowed ChatApi (ModelName "test-model") (SystemPrompt "") emptyConversation "hello" of
           Object body ->
             case KeyMap.lookup "tools" body of
               Just (Array tools) ->
-                case Vector.toList tools of
-                  [Object tool] -> do
-                    KeyMap.lookup "type" tool @?= Just (String "function")
-                    case KeyMap.lookup "function" tool of
-                      Just (Object functionObject) ->
-                        KeyMap.lookup "name" functionObject @?= Just (String "shell")
-                      other -> assertFailure ("missing function: " ++ show other)
-                  other -> assertFailure ("unexpected tools: " ++ show other)
+                map toolName (Vector.toList tools)
+                  @?= ["shell", "shell_background", "jobs", "job_output", "job_kill"]
               other -> assertFailure ("missing tools: " ++ show other)
           other -> assertFailure ("unexpected request body: " ++ show other)
     , testCase "chat request body advertises the shell tool in ask mode" $
@@ -314,15 +307,6 @@ unitTests =
             KeyMap.lookup "tools" body @?= Nothing
             KeyMap.lookup "tool_choice" body @?= Nothing
           other -> assertFailure ("unexpected request body: " ++ show other)
-    , testCase "toolCommand parses the command argument" $ do
-        toolCommand (ToolCall "id" "shell" "{\"command\":\"ls -la\"}")
-          @?= Right "ls -la"
-        assertBool
-          "unknown tool should fail"
-          (isLeft (toolCommand (ToolCall "id" "other" "{}")))
-        assertBool
-          "malformed arguments should fail"
-          (isLeft (toolCommand (ToolCall "id" "shell" "not-json")))
     , testCase "extractToolCalls reads streamed fragments" $ do
         let line =
               "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"shell\",\"arguments\":\"{\\\"command\\\":\"}}]}}]}"
@@ -505,3 +489,13 @@ prop_requestBody model systemPrompt text =
           KeyMap.lookup "model" body === Just (String (Text.pack model))
             .&&. KeyMap.lookup "stream" body === Just (Bool True)
         _ -> counterexample "request body is not an object" False
+
+toolName :: Value -> Text.Text
+toolName (Object tool) =
+  case KeyMap.lookup "function" tool of
+    Just (Object functionObject) ->
+      case KeyMap.lookup "name" functionObject of
+        Just (String name) -> name
+        _ -> ""
+    _ -> ""
+toolName _ = ""

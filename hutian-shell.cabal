@@ -31,6 +31,7 @@ common defaults
       -Wredundant-record-wildcards
       -Wredundant-strictness-flags
       -Wunused-packages
+      -threaded
 
 common dependencies
   build-depends:
@@ -66,6 +67,8 @@ executable hutian-shell
       Hutian.Highlight
       Hutian.Http.Wire
       Hutian.Interrupt
+      Hutian.Jobs
+      Hutian.Jobs.Runtime
       Hutian.Key
       Hutian.Llm
       Hutian.Llm.Protocol
@@ -130,6 +133,8 @@ test-suite hutian-shell-test
       Hutian.Highlight
       Hutian.Http.Wire
       Hutian.Interrupt
+      Hutian.Jobs
+      Hutian.Jobs.Runtime
       Hutian.Key
       Hutian.Llm
       Hutian.Llm.Protocol
@@ -146,6 +151,7 @@ test-suite hutian-shell-test
       Hutian.Syntax
       Hutian.Tool
       InterruptSpec
+      JobsSpec
       LlmIntegrationSpec
       LlmProtocolSpec
       LlmSocketSpec

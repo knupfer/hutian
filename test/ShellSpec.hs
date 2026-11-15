@@ -73,11 +73,11 @@ tests =
             assertBool "builtin missing" ("help" `elem` commands)
     , testCase "withBuiltins removes duplicates and keeps builtins" $
         withBuiltins ["pwd", "ls", "ls"]
-          @?= ["help", "pwd", "ls"]
+          @?= ["help", "jobs", "job", "pwd", "ls"]
     , testCase "shellExitSuffix reports only failures" $ do
         shellExitSuffix ExitSuccess @?= ""
         shellExitSuffix (ExitFailure 3) @?= "\n[exit 3]\n"
-    , testProperty "withBuiltins is idempotent and keeps help first" prop_withBuiltins
+    , testProperty "withBuiltins is idempotent and keeps every builtin first" prop_withBuiltins
     ]
 
 prop_withBuiltins :: [String] -> Property
@@ -85,7 +85,7 @@ prop_withBuiltins names =
   counterexample (show (once, twice)) $
     once === twice
       .&&. property (nub once === once)
-      .&&. property ("help" `elem` once)
+      .&&. property (take 3 once === ["help", "jobs", "job"])
   where
     once = withBuiltins names
     twice = withBuiltins once
