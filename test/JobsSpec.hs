@@ -30,14 +30,7 @@ pureTests :: TestTree
 pureTests =
   testGroup
     "model"
-    [ testCase "parseJobId accepts only positive integers" $ do
-        parseJobId "1" @?= Just (JobId 1)
-        parseJobId "42" @?= Just (JobId 42)
-        parseJobId "0" @?= Nothing
-        parseJobId "-1" @?= Nothing
-        parseJobId "nope" @?= Nothing
-        parseJobId "" @?= Nothing
-    , testCase "status text distinguishes success, failure, and signals" $ do
+    [ testCase "status text distinguishes success, failure, and signals" $ do
         jobStatusText JobRunning @?= "running"
         jobStatusText (JobExited ExitSuccess) @?= "exit 0"
         jobStatusText (JobExited (ExitFailure 2)) @?= "exit 2"

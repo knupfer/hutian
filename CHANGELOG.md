@@ -16,20 +16,17 @@ All notable changes to Hutian are documented here. The format follows
   a model tool call into run, approve, or refuse. Main performs only the IO that
   the plan requests, so policy decisions are covered without a terminal.
 - A small first-class background-job API. The model gets `shell_background`,
-  `jobs`, `job_output`, and `job_kill`; term mode gets `job start <cmd>`,
-  `jobs`, `job <id> [lines]`, and `job kill <id>`. Jobs run in a new process
+  `jobs`, `job_output`, and `job_kill`. Jobs run in a new process
   group with stdin closed, and stdout and stderr are appended to
   `/tmp/hutian-jobs/<id>.log`. Up to eight run at once; finished jobs stay
   listed until the shell exits, and exiting stops the rest. Model job tools use
   the same `tool <name>:` and `tool output:` layout as the foreground shell
-  tool, with gray results; term-mode starts and stops are single dimmed teal
-  notices, and term-mode job lists and log tails keep their dimmed teal labels.
-  Completion is not announced; `jobs` and `job_output` report the current
-  status on request.
+  tool, with gray results. Completion is not announced; `jobs` and `job_output`
+  report the current status on request.
   `model.shell = "deny"` refuses every job tool; `"ask"` approves commands but
   not job inspection.
-- Tests for the pure job model, `job` command parsing, job-tool planning, and
-  the runtime's output capture, bounded tails, and process-group stop.
+- Tests for the pure job model, job-tool planning, and the runtime's output
+  capture, bounded tails, and process-group stop.
 - Tests for strict option parsing, tool-call planning, socket framing helpers,
   and LLM error responses.
 - Shell syntax highlighting with Skylighting for term-mode input and
@@ -130,6 +127,11 @@ All notable changes to Hutian are documented here. The format follows
 - Terminal IO now goes through a single `Hutian.Console` boundary. Prompt
   policy is a pure reducer in `Hutian.Prompt`, and `Hutian.Shell` returns
   captured command output as data instead of printing it.
+
+### Removed
+
+- The term-mode `help`, `jobs`, `job`, `job start`, and `job kill` builtins.
+  Background jobs are controlled only through the model's job tools.
 
 ### Fixed
 

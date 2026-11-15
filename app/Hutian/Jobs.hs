@@ -1,10 +1,9 @@
--- | Pure background-job model, identifiers, status, and text shared by the
--- terminal and the model-facing tools.
+-- | Pure background-job model, identifiers, status, and text used by the
+-- model-facing tools.
 module Hutian.Jobs
   ( JobId (..)
   , JobStatus (..)
   , Job (..)
-  , parseJobId
   , jobIdText
   , jobStatusText
   , jobSummaryLine
@@ -19,7 +18,6 @@ module Hutian.Jobs
 
 import Data.List (intercalate)
 import System.Exit (ExitCode (..))
-import Text.Read (readMaybe)
 
 -- | A job id is allocated per shell session and is always positive.
 newtype JobId = JobId Int
@@ -40,12 +38,6 @@ data Job = Job
   , jobStatus :: JobStatus
   }
   deriving stock (Eq, Show)
-
--- | Parse a positive job id from user or model text.
-parseJobId :: String -> Maybe JobId
-parseJobId text = do
-  value <- readMaybe text
-  if value > 0 then Just (JobId value) else Nothing
 
 jobIdText :: JobId -> String
 jobIdText (JobId value) = show value

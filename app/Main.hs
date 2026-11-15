@@ -10,8 +10,6 @@ import Hutian.Command
   ( Command (..)
   , TerminalInput (..)
   , classifyTerminalInput
-  , helpText
-  , jobUsageText
   , parseCommandLine
   )
 import Hutian.Console
@@ -25,12 +23,9 @@ import Hutian.Console
   , consoleWriteError
   , consoleWriteErrorLine
   , consoleWriteGrayLine
-  , consoleWriteJobEvent
   , consoleWriteLine
   , consoleWriteToolCommand
   , consoleWriteToolLabel
-  , printJobOutputLabel
-  , printJobsLabel
   , printOutputLabel
   , resetTerminal
   , withGrayOutput
@@ -69,7 +64,6 @@ import Hutian.Interrupt
   )
 import Hutian.Jobs
   ( Job
-  , JobId
   , jobKillResult
   , jobListResult
   , jobOutputResult
@@ -202,7 +196,7 @@ runInput :: JobRuntime -> LlmSettings -> InterruptFlag -> PromptMode -> String -
 runInput jobs settings interruptFlag mode text conversation =
   case mode of
     LlmMode -> runLlmInput jobs settings interruptFlag conversation text
-    TermMode -> runTerminalInput jobs conversation text
+    TermMode -> runTerminalInput conversation text
     ToolMode -> pure conversation
 
 -- | Run a prompt through the model, executing any shell tools it requests and
@@ -345,45 +339,17 @@ executeBackgroundTool jobs conversation call command = do
       consoleWriteGrayLine (jobStartedLine job)
       pure (appendToolResult (toolCallId call) (jobStartedLine job) conversation)
 
-runTerminalInput :: JobRuntime -> Conversation -> String -> IO Conversation
-runTerminalInput jobs conversation text =
+runTerminalInput :: Conversation -> String -> IO Conversation
+runTerminalInput conversation text =
   case classifyTerminalInput text of
     NoTerminalInput -> pure conversation
-    SingleLineInput line -> runTerminalLine jobs conversation line
+    SingleLineInput line -> runTerminalLine conversation line
     MultiLineInput script -> runTerminalScript conversation script script
 
-runTerminalLine :: JobRuntime -> Conversation -> String -> IO Conversation
-runTerminalLine jobs conversation line =
+runTerminalLine :: Conversation -> String -> IO Conversation
+runTerminalLine conversation line =
   case parseCommandLine line of
     CommandEmpty -> pure conversation
-    CommandHelp -> do
-      withGrayOutput (mapM_ consoleWriteLine helpText)
-      pure (appendTerminal line conversation)
-    CommandJobUsage -> do
-      withGrayOutput (mapM_ consoleWriteLine jobUsageText)
-      pure (appendTerminal line conversation)
-    CommandJobs -> do
-      current <- listJobs jobs
-      printJobsList current
-      pure (appendTerminal line conversation)
-    CommandJobOutput target lineCount -> do
-      result <- readJobOutput jobs target lineCount
-      case result of
-        Left message -> consoleWriteErrorLine message
-        Right (_, output, truncated) -> printJobOutput target output truncated
-      pure (appendTerminal line conversation)
-    CommandJobStart command -> do
-      result <- startJob jobs command
-      case result of
-        Left message -> consoleWriteErrorLine message
-        Right job -> consoleWriteJobEvent (jobStartedLine job)
-      pure (appendTerminal line conversation)
-    CommandJobKill target -> do
-      result <- killJob jobs target
-      case result of
-        Left message -> consoleWriteErrorLine message
-        Right (job, wasRunning) -> consoleWriteJobEvent (jobKillResult wasRunning job)
-      pure (appendTerminal line conversation)
     CommandShell commandLine -> runTerminalScript conversation line commandLine
 
 runTerminalScript :: Conversation -> String -> String -> IO Conversation
@@ -408,25 +374,10 @@ displayCommandResult result = do
   unless (null output || "\n" `isSuffixOf` output) (consoleWrite "\n")
   consoleFlush
 
--- | Print the job table in gray, omitting the label when the table is empty.
-printJobsList :: [Job] -> IO ()
-printJobsList current = do
-  unless (null current) printJobsLabel
-  printJobRows current
-
--- | Print job rows without a label. Used by the model-facing job tool after its
--- @tool output:@ line.
+-- | Print the job table in gray.
 printJobRows :: [Job] -> IO ()
 printJobRows current =
   withGrayOutput (mapM_ consoleWriteLine (lines (jobListResult current)))
-
--- | Print a job log tail. Empty output folds into the label line.
-printJobOutput :: JobId -> String -> Bool -> IO ()
-printJobOutput target output truncated
-  | null output && not truncated = printJobOutputLabel target " (no output)"
-  | otherwise = do
-      printJobOutputLabel target ""
-      displayJobOutput output truncated
 
 -- | Print a job log tail, marking a truncated window at the top.
 displayJobOutput :: String -> Bool -> IO ()

@@ -16,12 +16,9 @@ module Hutian.Console
   , consoleWriteError
   , consoleWriteErrorLine
   , consoleWriteGrayLine
-  , consoleWriteJobEvent
   , consoleWriteLine
   , consoleWriteToolCommand
   , consoleWriteToolLabel
-  , printJobOutputLabel
-  , printJobsLabel
   , printOutputLabel
   , resetTerminal
   , startPromptLine
@@ -37,12 +34,8 @@ import Control.Exception (IOException, catch, finally, try)
 import Control.Monad (when)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Hutian.Editor (PromptMode)
-import Hutian.Jobs (JobId)
 import Hutian.Output
   ( grayOutputText
-  , jobEventText
-  , jobOutputLabelText
-  , jobsLabelText
   , outputLabelText
   )
 import Hutian.Render
@@ -167,13 +160,6 @@ consoleWriteToolLabel toolName = do
       else "tool " ++ toolName ++ ":"
   consoleFlush
 
--- | Show a job lifecycle event in the dimmed teal job colour.
-consoleWriteJobEvent :: String -> IO ()
-consoleWriteJobEvent message = do
-  interactive <- consoleIsInteractive
-  consoleWriteLine (jobEventText interactive message)
-  consoleFlush
-
 -- | Show one line of command or job output in gray. Streamed and multi-line
 -- output goes through 'withGrayOutput'; a single line is written atomically so
 -- the terminal sees exactly one colour sequence and one reset.
@@ -181,21 +167,6 @@ consoleWriteGrayLine :: String -> IO ()
 consoleWriteGrayLine message = do
   interactive <- consoleIsInteractive
   consoleWriteLine (grayOutputText interactive message)
-  consoleFlush
-
--- | The label above the job table.
-printJobsLabel :: IO ()
-printJobsLabel = do
-  interactive <- consoleIsInteractive
-  consoleWriteLine (jobsLabelText interactive)
-  consoleFlush
-
--- | The label above one job's log tail. A suffix such as @ (no output)@ keeps
--- empty results on the same line instead of adding a second line.
-printJobOutputLabel :: JobId -> String -> IO ()
-printJobOutputLabel target suffix = do
-  interactive <- consoleIsInteractive
-  consoleWriteLine (jobOutputLabelText target interactive ++ suffix)
   consoleFlush
 
 -- | The user's decision about a model-requested command.

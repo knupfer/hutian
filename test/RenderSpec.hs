@@ -4,12 +4,8 @@ import Data.List (isInfixOf, isSuffixOf)
 import Hutian.Ansi (darkenColour, rgb)
 import qualified Hutian.Ansi as Ansi
 import Hutian.Editor (PromptMode (..), cursorPosition, initialPrompt, setPromptText)
-import Hutian.Jobs (JobId (..))
 import Hutian.Output
   ( grayOutputText
-  , jobEventText
-  , jobOutputLabelText
-  , jobsLabelText
   , outputLabelText
   )
 import Hutian.Render
@@ -158,17 +154,6 @@ tests =
     , testCase "output labels are plain when not interactive" $ do
         outputLabelText TermMode False @?= "output:"
         outputLabelText ToolMode False @?= "tool output:"
-    , testCase "job events and labels use the dimmed teal family" $ do
-        jobEventText True "job 1 started"
-          @?= dimTealForeground ++ "job 1 started" ++ reset
-        jobEventText True "job 1 stopped: signal 15"
-          @?= dimTealForeground ++ "job 1 stopped: signal 15" ++ reset
-        jobEventText False "job 1 started" @?= "job 1 started"
-        jobsLabelText True @?= dimTealForeground ++ "jobs:" ++ reset
-        jobsLabelText False @?= "jobs:"
-        jobOutputLabelText (JobId 3) True
-          @?= dimTealForeground ++ "job 3 output:" ++ reset
-        jobOutputLabelText (JobId 3) False @?= "job 3 output:"
     , testCase "grayOutputText wraps terminal output and resets" $
         grayOutputText True "hello"
           @?= grayForeground ++ "hello" ++ reset
