@@ -192,7 +192,12 @@ processSpec logHandle command =
     , std_out = UseHandle logHandle
     , std_err = UseHandle logHandle
     , create_group = True
-    , close_fds = True
+    -- Closing inherited descriptors walks every descriptor up to
+    -- RLIMIT_NOFILE in the child. The limit is large inside the sandbox, so the
+    -- loop delays the start notice by seconds. Foreground commands leave the
+    -- default of not closing descriptors as well; stdin is closed and stdio is
+    -- redirected here, and the sandbox already bounds what a job can reach.
+    , close_fds = False
     }
 
 logPath :: JobRuntime -> Int -> FilePath
