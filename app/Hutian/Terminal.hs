@@ -22,9 +22,9 @@ import Hutian.Console
   , withRawTerminal
   )
 import Hutian.Editor
-  ( Prompt
+  ( InputMode (..)
+  , Prompt
   , PromptBuffers
-  , PromptMode (..)
   , activePrompt
   , applyCompletionChoice
   , clearSuggestions
@@ -49,13 +49,12 @@ import Hutian.Prompt
   , promptMode
   , stepPrompt
   )
-import Hutian.Render (moveCursorText, prefixFor, promptRenderText, reset)
+import Hutian.Render (PromptKind (..), moveCursorText, prefixFor, promptRenderText, reset)
 import System.Directory (doesDirectoryExist, listDirectory)
 import System.IO.Error (isEOFError)
 
 data PromptContext = PromptContext
   { contextCommands :: [String]
-  , contextTermPrompt :: String
   , contextHistory :: History
   }
 
@@ -63,31 +62,29 @@ data PromptContext = PromptContext
 --
 -- Returns the mode that was active when the prompt finished, together with
 -- 'Nothing' when the user presses @Ctrl+D@ on empty input and 'Just' the
--- submitted text otherwise. @Ctrl+X@ toggles between 'LlmMode' and
--- 'TermMode'. In term mode, Enter executes the command, Up/Down browse
+-- submitted text otherwise. @Ctrl+X@ toggles between 'LlmInput' and
+-- 'TermInput'. In term mode, Enter executes the command, Up/Down browse
 -- history, and a trailing backslash continues the command on the next line.
 -- Ctrl+C clears the current input. Term mode is always available, even when
 -- the model's shell tool is disabled.
 promptForInput
   :: [String]
-  -> String
-  -> PromptMode
+  -> InputMode
   -> History
   -> PromptBuffers
-  -> IO (PromptMode, Maybe String, PromptBuffers)
-promptForInput commands termPrompt mode history buffers = do
+  -> IO (InputMode, Maybe String, PromptBuffers)
+promptForInput commands mode history buffers = do
   interactive <- consoleIsInteractive
   let context =
         PromptContext
           { contextCommands = commands
-          , contextTermPrompt = termPrompt
           , contextHistory = history
           }
   withRawTerminal $ do
     when interactive startPromptLine
     readPrompt interactive context (initialPromptState mode buffers)
 
-readPrompt :: Bool -> PromptContext -> PromptState -> IO (PromptMode, Maybe String, PromptBuffers)
+readPrompt :: Bool -> PromptContext -> PromptState -> IO (InputMode, Maybe String, PromptBuffers)
 readPrompt interactive context state = do
   position <- renderPrompt interactive context 0 state
   loop position state
@@ -105,7 +102,7 @@ readPrompt interactive context state = do
         StepRedraw next ->
           readNext displayedPosition logicalPosition True next
         StepMoveCursor prompt next -> do
-          nextPosition <- promptPosition (contextTermPrompt context) (promptMode next) prompt
+          nextPosition <- promptPosition (promptMode next) prompt
           readNext displayedPosition nextPosition redraw next
         StepComplete next -> do
           let current = activePrompt (promptMode next) (promptBuffers next)
@@ -133,10 +130,14 @@ readPrompt interactive context state = do
               when (logicalPosition /= displayedPosition) (writeCursorMove displayedPosition logicalPosition)
               loop logicalPosition currentState
 
-promptPosition :: String -> PromptMode -> Prompt -> IO (Int, Int)
-promptPosition termPrompt mode prompt = do
+promptPosition :: InputMode -> Prompt -> IO (Int, Int)
+promptPosition mode prompt = do
   width <- consoleWidth
-  pure (cursorPosition width (prefixFor termPrompt mode) prompt)
+  pure (cursorPosition width (prefixFor (promptKindFor mode)) prompt)
+
+promptKindFor :: InputMode -> PromptKind
+promptKindFor LlmInput = LlmPrompt
+promptKindFor TermInput = ShellPrompt
 
 writeCursorMove :: (Int, Int) -> (Int, Int) -> IO ()
 writeCursorMove oldPosition newPosition = do
@@ -203,30 +204,29 @@ readChar :: IO (Either IOException Char)
 readChar = try getChar
 
 renderPrompt :: Bool -> PromptContext -> Int -> PromptState -> IO (Int, Int)
-renderPrompt interactive context previousRow state =
+renderPrompt interactive _context previousRow state =
   renderFrame
     interactive
-    (contextTermPrompt context)
-    (promptMode state)
+    (promptKindFor (promptMode state))
     previousRow
     (activePrompt (promptMode state) (promptBuffers state))
 
-renderFrame :: Bool -> String -> PromptMode -> Int -> Prompt -> IO (Int, Int)
-renderFrame interactive termPrompt mode previousRow prompt
+renderFrame :: Bool -> PromptKind -> Int -> Prompt -> IO (Int, Int)
+renderFrame interactive kind previousRow prompt
   | not interactive = pure (0, 0)
   | otherwise = do
       width <- consoleWidth
-      let (output, position) = promptRenderText termPrompt mode previousRow width prompt
+      let (output, position) = promptRenderText kind previousRow width prompt
       consoleWrite (syncStart ++ output ++ syncEnd)
       consoleFlush
       pure position
 
-finishPrompt :: Bool -> PromptContext -> PromptMode -> Int -> Prompt -> IO ()
-finishPrompt interactive context mode previousRow prompt
+finishPrompt :: Bool -> PromptContext -> InputMode -> Int -> Prompt -> IO ()
+finishPrompt interactive _context mode previousRow prompt
   | not interactive = pure ()
   | otherwise = do
       let finished = cursorToEnd (clearSuggestions prompt)
-      _ <- renderFrame True (contextTermPrompt context) mode previousRow finished
+      _ <- renderFrame True (promptKindFor mode) previousRow finished
       consoleWrite reset
       unless (null (currentLine finished)) (consoleWrite "\n")
       consoleFlush

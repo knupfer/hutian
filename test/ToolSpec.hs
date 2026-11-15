@@ -4,9 +4,15 @@ module ToolSpec (tests) where
 
 import Data.Aeson (Value (..))
 import qualified Data.Aeson.KeyMap as KeyMap
+import Data.List (isInfixOf)
 import qualified Data.Text as Text
 import Hutian.Conversation (ToolCall (..))
-import Hutian.Jobs (JobId (..), defaultJobOutputLines)
+import Hutian.Jobs
+  ( JobId (..)
+  , defaultJobOutputLines
+  , lineCount
+  , maxJobOutputLines
+  )
 import Hutian.Policy (ModelShell (..))
 import Hutian.Tool
 import Test.Tasty
@@ -33,6 +39,8 @@ tests =
           @?= PlanRefuse "tool error: the model shell tools are disabled"
         planTool ModelShellDenied jobsCall
           @?= PlanRefuse "tool error: the model shell tools are disabled"
+        planTool ModelShellDenied (ToolCall "call-1" "other" "not-json")
+          @?= PlanRefuse "tool error: the model shell tools are disabled"
     , testCase "job inspection runs without approval in ask mode" $ do
         planTool ModelShellAsk jobsCall @?= PlanListJobs
         planTool ModelShellAsk (jobOutputCall 2 "{\"job_id\":2}")
@@ -43,7 +51,7 @@ tests =
         planTool
           ModelShellAllowed
           (jobOutputCall 2 "{\"job_id\":2,\"lines\":20}")
-          @?= PlanJobOutput (JobId 2) 20
+          @?= PlanJobOutput (JobId 2) (lineCount 20)
     , testCase "job ids must be positive integers" $ do
         planTool ModelShellAllowed (jobOutputCall 0 "{\"job_id\":0}")
           @?= PlanRefuse "tool error: job_id must be a positive integer"
@@ -54,11 +62,20 @@ tests =
     , testCase "a missing job id is refused" $
         planTool ModelShellAllowed (jobKillCall 1 "{}")
           @?= PlanRefuse "tool error: missing integer argument: job_id"
-    , testCase "an invalid line count is refused" $
+    , testCase "job output line counts are clamped" $ do
         planTool
           ModelShellAllowed
           (jobOutputCall 1 "{\"job_id\":1,\"lines\":0}")
-          @?= PlanRefuse "tool error: lines must be a positive integer"
+          @?= PlanJobOutput (JobId 1) (lineCount 0)
+        planTool
+          ModelShellAllowed
+          (jobOutputCall 1 ("{\"job_id\":1,\"lines\":" ++ show (maxJobOutputLines + 1) ++ "}"))
+          @?= PlanJobOutput (JobId 1) (lineCount maxJobOutputLines)
+    , testCase "a non-integer line count is refused" $
+        planTool
+          ModelShellAllowed
+          (jobOutputCall 1 "{\"job_id\":1,\"lines\":\"10\"}")
+          @?= PlanRefuse "tool error: lines must be an integer"
     , testCase "unknown tools are refused" $
         planTool
           ModelShellAllowed
@@ -86,6 +103,10 @@ tests =
     , testCase "tool definitions describe every advertised tool" $
         map toolNameOf toolDefinitions
           @?= ["shell", "shell_background", "jobs", "job_output", "job_kill"]
+    , testCase "the job output description states the applied line limits" $
+        assertBool
+          "expected the plain numeric limits"
+          ("defaults to 50 and is capped at 500" `isInfixOf` show toolDefinitions)
     ]
 
 shellCall :: ToolCall

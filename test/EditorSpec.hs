@@ -81,57 +81,51 @@ unitTests =
         let prompt = run (text "abc" ++ [KeyHome, KeyEnd])
         cursor prompt @?= (0, 3)
     , testCase "mode toggles both ways" $ do
-        toggleMode LlmMode @?= TermMode
-        toggleMode TermMode @?= LlmMode
-        toggleMode ToolMode @?= TermMode
-    , testCase "tool mode submits like term mode" $ do
-        promptAction ToolMode initialPrompt KeyEnter @?= PromptSubmit
-        promptAction ToolMode (runText "echo 'open") KeyEnter @?= PromptContinue
-        promptAction ToolMode initialPrompt KeySubmit @?= PromptEdit KeySubmit
+        toggleMode LlmInput @?= TermInput
+        toggleMode TermInput @?= LlmInput
     , testCase "each mode keeps an independent prompt buffer" $ do
         let llmDraft = setPromptText "llm draft" initialPrompt
             termDraft = setPromptText "term draft" initialPrompt
             buffers =
               storePrompt
-                TermMode
+                TermInput
                 termDraft
-                (storePrompt LlmMode llmDraft initialPromptBuffers)
-        promptText (activePrompt LlmMode buffers) @?= "llm draft\n"
-        promptText (activePrompt TermMode buffers) @?= "term draft\n"
+                (storePrompt LlmInput llmDraft initialPromptBuffers)
+        promptText (activePrompt LlmInput buffers) @?= "llm draft\n"
+        promptText (activePrompt TermInput buffers) @?= "term draft\n"
     , testCase "clearPrompt clears only the active mode" $ do
         let llmDraft = setPromptText "llm draft" initialPrompt
             termDraft = setPromptText "term draft" initialPrompt
             buffers =
               clearPrompt
-                TermMode
-                (storePrompt TermMode termDraft (storePrompt LlmMode llmDraft initialPromptBuffers))
-        promptText (activePrompt LlmMode buffers) @?= "llm draft\n"
-        promptText (activePrompt TermMode buffers) @?= "\n"
+                TermInput
+                (storePrompt TermInput termDraft (storePrompt LlmInput llmDraft initialPromptBuffers))
+        promptText (activePrompt LlmInput buffers) @?= "llm draft\n"
+        promptText (activePrompt TermInput buffers) @?= "\n"
     , testCase "Ctrl+D exits only on empty input" $ do
-        promptAction LlmMode initialPrompt KeySubmit @?= PromptExit
-        promptAction TermMode initialPrompt KeySubmit @?= PromptExit
-        promptAction LlmMode (run [KeyEnter]) KeySubmit @?= PromptExit
-        promptAction LlmMode (runText "hello") KeySubmit @?= PromptSubmit
-        promptAction TermMode (runText "ls") KeySubmit @?= PromptEdit KeySubmit
-        promptAction ToolMode initialPrompt KeySubmit @?= PromptEdit KeySubmit
+        promptAction LlmInput initialPrompt KeySubmit @?= PromptExit
+        promptAction TermInput initialPrompt KeySubmit @?= PromptExit
+        promptAction LlmInput (run [KeyEnter]) KeySubmit @?= PromptExit
+        promptAction LlmInput (runText "hello") KeySubmit @?= PromptSubmit
+        promptAction TermInput (runText "ls") KeySubmit @?= PromptEdit KeySubmit
     , testCase "promptAction routes editing, history, mode, and completion keys" $ do
         let lower = run (text "a" ++ [KeyEnter] ++ text "b")
             upper = run (text "a" ++ [KeyEnter] ++ text "b" ++ [KeyUp])
-        promptAction LlmMode (runText "hello") KeySubmit @?= PromptSubmit
-        promptAction TermMode (runText "ls") KeySubmit @?= PromptEdit KeySubmit
-        promptAction LlmMode initialPrompt KeyEnter @?= PromptEdit KeyEnter
-        promptAction TermMode initialPrompt KeyEnter @?= PromptSubmit
-        promptAction TermMode (runText "echo 'open") KeyEnter @?= PromptContinue
-        promptAction TermMode (runText "echo \\") KeyEnter @?= PromptContinue
-        promptAction LlmMode initialPrompt KeyCancel @?= PromptClear
-        promptAction LlmMode upper KeyUp @?= PromptHistoryUp
-        promptAction LlmMode lower KeyUp @?= PromptEdit KeyUp
-        promptAction LlmMode upper KeyDown @?= PromptEdit KeyDown
-        promptAction LlmMode lower KeyDown @?= PromptHistoryDown
-        promptAction LlmMode initialPrompt KeyToggleMode @?= PromptSwitchMode
-        promptAction TermMode initialPrompt KeyComplete @?= PromptComplete
-        promptAction LlmMode initialPrompt KeyComplete @?= PromptEdit KeyComplete
-        promptAction LlmMode initialPrompt (KeyChar 'x') @?= PromptEdit (KeyChar 'x')
+        promptAction LlmInput (runText "hello") KeySubmit @?= PromptSubmit
+        promptAction TermInput (runText "ls") KeySubmit @?= PromptEdit KeySubmit
+        promptAction LlmInput initialPrompt KeyEnter @?= PromptEdit KeyEnter
+        promptAction TermInput initialPrompt KeyEnter @?= PromptSubmit
+        promptAction TermInput (runText "echo 'open") KeyEnter @?= PromptContinue
+        promptAction TermInput (runText "echo \\") KeyEnter @?= PromptContinue
+        promptAction LlmInput initialPrompt KeyCancel @?= PromptClear
+        promptAction LlmInput upper KeyUp @?= PromptHistoryUp
+        promptAction LlmInput lower KeyUp @?= PromptEdit KeyUp
+        promptAction LlmInput upper KeyDown @?= PromptEdit KeyDown
+        promptAction LlmInput lower KeyDown @?= PromptHistoryDown
+        promptAction LlmInput initialPrompt KeyToggleMode @?= PromptSwitchMode
+        promptAction TermInput initialPrompt KeyComplete @?= PromptComplete
+        promptAction LlmInput initialPrompt KeyComplete @?= PromptEdit KeyComplete
+        promptAction LlmInput initialPrompt (KeyChar 'x') @?= PromptEdit (KeyChar 'x')
     , testCase "prompt text contains all lines" $ do
         let prompt = run (text "a" ++ [KeyEnter] ++ text "b")
         promptText prompt @?= "a\nb\n"
@@ -487,4 +481,4 @@ prop_toggleMode :: Bool -> Property
 prop_toggleMode llmMode =
   toggleMode (toggleMode mode) === mode
   where
-    mode = if llmMode then LlmMode else TermMode
+    mode = if llmMode then LlmInput else TermInput

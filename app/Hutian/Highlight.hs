@@ -2,6 +2,7 @@
 module Hutian.Highlight
   ( codeStyle
   , highlightLines
+  , highlightShellLine
   , sanitize
   , sanitizeChar
   ) where
@@ -45,6 +46,16 @@ highlightLines style language sourceLines = do
 
 formatOptions :: FormatOptions
 formatOptions = defaultFormatOpts {ansiColorLevel = ANSITrueColor}
+
+-- | Highlight one shell command row. The visible text is preserved; only ANSI
+-- styles are added. Control characters are neutralized so pasted escape
+-- sequences cannot reach the terminal.
+highlightShellLine :: String -> String
+highlightShellLine "" = ""
+highlightShellLine line =
+  case highlightLines codeStyle "bash" [line] of
+    Just [rendered] -> rendered
+    _ -> sanitize line
 
 -- | Replace control characters except tabs with spaces so terminal escape
 -- sequences cannot leak through.

@@ -41,6 +41,7 @@ import TestSupport
   , assertNotInfix
   , awaitMVar
   , captureStdout
+  , stdoutLlmOutput
   , withTemporaryDirectory
   )
 
@@ -106,7 +107,7 @@ socketTests =
           captured <-
             timeout 7000000 $
               captureStdout $
-                runLlm flag settings [UserEntry "prior"] "current"
+                runLlm stdoutLlmOutput flag settings [UserEntry "prior"] "current"
           (result, output) <-
             maybe (assertFailure "runLlm timed out" >> pure (Nothing, "")) pure captured
           result @?= Just "answer\n"
@@ -120,7 +121,7 @@ socketTests =
         captured <-
           timeout 3000000 $
             captureStdout $
-              runLlm flag (settingsForSocket "/nonexistent/hutian/llm.sock") [] "hello"
+              runLlm stdoutLlmOutput flag (settingsForSocket "/nonexistent/hutian/llm.sock") [] "hello"
         (result, _) <-
           maybe (assertFailure "missing socket test timed out" >> pure (Nothing, "")) pure captured
         result @?= Nothing

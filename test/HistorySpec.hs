@@ -3,7 +3,7 @@ module HistorySpec (tests) where
 import Hutian.Editor
   ( Column (unColumn)
   , Prompt
-  , PromptMode (..)
+  , InputMode (..)
   , Row (unRow)
   , initialPrompt
   , promptColumn
@@ -58,16 +58,14 @@ unitTests =
         promptText prompt4 @?= "draft\n"
     , testCase "history selection is mode specific" $ do
         let history = History ["term"] ["llm"]
-        historyForMode LlmMode history @?= ["llm"]
-        historyForMode TermMode history @?= ["term"]
-        historyForMode ToolMode history @?= ["term"]
+        historyForMode LlmInput history @?= ["llm"]
+        historyForMode TermInput history @?= ["term"]
     , testCase "input destinations follow mode and ignore blank input" $ do
-        inputDestination TermMode "" @?= Nothing
-        inputDestination TermMode "   " @?= Nothing
-        inputDestination TermMode "ls" @?= Just TermHistory
-        inputDestination ToolMode "ls" @?= Just TermHistory
-        inputDestination LlmMode "" @?= Nothing
-        inputDestination LlmMode "hello" @?= Just LlmHistory
+        inputDestination TermInput "" @?= Nothing
+        inputDestination TermInput "   " @?= Nothing
+        inputDestination TermInput "ls" @?= Just TermHistory
+        inputDestination LlmInput "" @?= Nothing
+        inputDestination LlmInput "hello" @?= Just LlmHistory
     , testCase "recordHistory appends to the selected history" $ do
         recordHistory TermHistory "ls" (History ["old"] ["llm"])
           @?= History ["old", "ls"] ["llm"]

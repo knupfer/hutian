@@ -22,11 +22,13 @@ import Hutian.Interrupt (newInterruptFlag)
 import Hutian.Llm (LlmSettings (..), LlmUrl (..), ModelName (..), SystemPrompt (..), runLlm)
 import Hutian.Policy (ModelShell (..))
 import Hutian.Relay
-  ( RelayRuntime
+  ( RelayAuth (..)
+  , RelayAuthPolicy (..)
+  , RelayRuntime
   , RelaySettings (..)
   , defaultRelayMaxBody
   , handleRelayConnection
-  , loadRelayKey
+  , loadRelayAuth
   , maxRelayKeyBytes
   , newRelayRuntime
   , parseRelaySettings
@@ -75,6 +77,7 @@ import TestSupport
   , assertNotInfix
   , awaitMVar
   , captureStdout
+  , stdoutLlmOutput
   , withTemporaryDirectory
   )
 import Text.Read (readMaybe)
@@ -110,7 +113,7 @@ settingsTests =
                 "/tmp/llm.sock"
                 "https://example.test/v1/chat/completions"
                 1024
-                False
+                RelayAuthRequired
             )
     , testCase "parseRelaySettings uses the default body limit" $
         parseRelaySettings
@@ -124,7 +127,7 @@ settingsTests =
                 "/run/hutian/llm.sock"
                 "http://127.0.0.1:8080/v1/chat/completions"
                 defaultRelayMaxBody
-                False
+                RelayAuthRequired
             )
     , testCase "parseRelaySettings rejects missing, empty, and invalid options" $ do
         assertLeftNames "--listen" (parseRelaySettings ["--upstream", "http://x"])
@@ -162,26 +165,26 @@ settingsTests =
                 "/run/hutian/llm.sock"
                 "http://127.0.0.1:8080/v1/chat/completions"
                 defaultRelayMaxBody
-                True
+                RelayAuthDisabled
             )
-    , testCase "loadRelayKey reads, trims, and rejects empty input" $
+    , testCase "loadRelayAuth reads, trims, and rejects empty input" $
         withTemporaryDirectory "hutian-relay-key" $ \directory -> do
           let path = directory ++ "/key"
           BS.writeFile path "  stdin-key\r\n"
           withFile path ReadMode $ \handle -> do
-            key <- loadRelayKey handle
-            key @?= Right "stdin-key"
+            key <- loadRelayAuth handle
+            key @?= Right (RelayAuthBearer "stdin-key")
           BS.writeFile path " \n\t"
           withFile path ReadMode $ \handle -> do
-            key <- loadRelayKey handle
+            key <- loadRelayAuth handle
             key @?= Left "hutian-llm-relay: the API key is empty"
           BS.writeFile path "abc\ndef"
           withFile path ReadMode $ \handle -> do
-            key <- loadRelayKey handle
+            key <- loadRelayAuth handle
             key @?= Left "hutian-llm-relay: the API key contains control characters"
           BS.writeFile path (BS.replicate (maxRelayKeyBytes + 1) 97)
           withFile path ReadMode $ \handle -> do
-            key <- loadRelayKey handle
+            key <- loadRelayAuth handle
             key @?= Left "hutian-llm-relay: the API key is too long"
     , testCase "trimKey removes surrounding whitespace but not interior bytes" $ do
         trimKey "  secret\r\n" @?= "secret"
@@ -295,9 +298,9 @@ wireTests =
                   "/unused.sock"
                   ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
                   defaultRelayMaxBody
-                  False
+                  RelayAuthRequired
               )
-              (Just "s3cret-key")
+              (RelayAuthBearer "s3cret-key")
           (client, server) <- socketPair AF_UNIX Stream defaultProtocol
           done <- newEmptyMVar
           _ <-
@@ -333,9 +336,9 @@ upstreamTests =
                   "/unused.sock"
                   ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions?stream=true")
                   defaultRelayMaxBody
-                  False
+                  RelayAuthRequired
               )
-              (Just "s3cret-key")
+              (RelayAuthBearer "s3cret-key")
           _ <- withRelaySession runtime (sendBody "{}")
           upstream <- awaitMVar "upstream did not receive a request" requests
           assertInfix "POST /v1/chat/completions?stream=true HTTP/1.1" upstream
@@ -380,9 +383,9 @@ endToEndTests =
                     socketPath
                     ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
                     defaultRelayMaxBody
-                    False
+                    RelayAuthRequired
                 )
-                (Just "s3cret-key")
+                (RelayAuthBearer "s3cret-key")
             withRelay runtime socketPath $ do
               permissions <- fileMode <$> getFileStatus socketPath
               permissions .&. 0o777 @?= 0o600
@@ -390,7 +393,7 @@ endToEndTests =
               captured <-
                 timeout 7000000 $
                   captureStdout $
-                    runLlm flag settings [UserEntry "prior"] "current prompt"
+                    runLlm stdoutLlmOutput flag settings [UserEntry "prior"] "current prompt"
               (result, output) <-
                 maybe (assertFailure "relay request timed out" >> pure (Nothing, "")) pure captured
               result @?= Just "answer\n"
@@ -409,9 +412,9 @@ endToEndTests =
                   socketPath
                   "http://127.0.0.1:1/v1/chat/completions"
                   defaultRelayMaxBody
-                  False
+                  RelayAuthRequired
               )
-              (Just "s3cret-key")
+              (RelayAuthBearer "s3cret-key")
           withRelay runtime socketPath (pure ())
           exists <- doesPathExist socketPath
           assertBool "the relay socket should be removed" (not exists)
@@ -478,9 +481,9 @@ runtimeFor port maxBody =
         "/unused.sock"
         ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
         maxBody
-        False
+        RelayAuthRequired
     )
-    (Just "s3cret-key")
+    (RelayAuthBearer "s3cret-key")
 
 runtimeForWithoutKey :: Int -> Int -> IO RelayRuntime
 runtimeForWithoutKey port maxBody =
@@ -490,9 +493,9 @@ runtimeForWithoutKey port maxBody =
         "/unused.sock"
         ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
         maxBody
-        True
+        RelayAuthDisabled
     )
-    Nothing
+    RelayAuthNone
 
 silentLogger :: String -> IO ()
 silentLogger _ = pure ()

@@ -3,11 +3,7 @@ module RenderSpec (tests) where
 import Data.List (isInfixOf, isSuffixOf)
 import Hutian.Ansi (darkenColour, rgb)
 import qualified Hutian.Ansi as Ansi
-import Hutian.Editor (PromptMode (..), cursorPosition, initialPrompt, setPromptText)
-import Hutian.Output
-  ( grayOutputText
-  , outputLabelText
-  )
+import Hutian.Editor (cursorPosition, initialPrompt, setPromptText)
 import Hutian.Render
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -19,7 +15,7 @@ tests =
     "render"
     [ testCase "term prompt puts the shell label on its own line" $ do
         let prompt = setPromptText "abc" initialPrompt
-            (output, position) = promptRenderText termLine TermMode 0 80 prompt
+            (output, position) = promptRenderText ShellPrompt 0 80 prompt
         assertBool "shell label colour matches ask" (boldVibrantPink `isInfixOf` output)
         assertBool "label text" ("shell:" `isInfixOf` output)
         assertBool "default colour resumes after the label" (resetSequence `isInfixOf` output)
@@ -28,7 +24,7 @@ tests =
         position @?= (1, 3)
     , testCase "llm prompt shows a bold pink ask label on its own line" $ do
         let prompt = setPromptText "hello" initialPrompt
-            (output, position) = promptRenderText termLine LlmMode 0 80 prompt
+            (output, position) = promptRenderText LlmPrompt 0 80 prompt
         assertBool "bold pink ask label" ((boldVibrantPink ++ "ask:") `isInfixOf` output)
         assertBool "no shell label" (not ("shell:" `isInfixOf` output))
         assertBool "label sits above the input" ("ask:\nhello" `isInfixOf` stripAnsi output)
@@ -37,7 +33,7 @@ tests =
     , testCase "llm prompt highlights markdown while typing" $ do
         let source = "# Heading\nUse **bold** and `code`.\n- item"
             prompt = setPromptText source initialPrompt
-            (output, position) = promptRenderText termLine LlmMode 0 80 prompt
+            (output, position) = promptRenderText LlmPrompt 0 80 prompt
             stripped = stripAnsi output
         assertBool "heading style" ("\ESC[1;38;2;137;180;250m" `isInfixOf` output)
         assertBool "bold style" ("\ESC[1;38;2;249;226;175m" `isInfixOf` output)
@@ -49,55 +45,55 @@ tests =
     , testCase "llm prompt highlights fenced code while typing" $ do
         let source = "```\nmain = putStrLn \"hi\"\n```"
             prompt = setPromptText source initialPrompt
-            (output, _) = promptRenderText termLine LlmMode 0 80 prompt
+            (output, _) = promptRenderText LlmPrompt 0 80 prompt
         assertBool "fence style" ("\ESC[38;2;166;227;161m" `isInfixOf` output)
         assertBool "code style" ("\ESC[38;2;166;227;161m" `isInfixOf` output)
         assertBool "preserves the markdown text" (all (`isInfixOf` stripAnsi output) (lines source))
     , testCase "term prompt does not apply markdown highlighting" $ do
         let prompt = setPromptText "# not markdown" initialPrompt
-            (output, _) = promptRenderText termLine TermMode 0 80 prompt
+            (output, _) = promptRenderText ShellPrompt 0 80 prompt
         assertBool "no heading style" (not ("\ESC[1;38;2;137;180;250m" `isInfixOf` output))
     , testCase "term prompt highlights shell input" $ do
         let prompt = setPromptText "if true; then echo \"hi\"; fi" initialPrompt
-            (output, _) = promptRenderText termLine TermMode 0 80 prompt
+            (output, _) = promptRenderText ShellPrompt 0 80 prompt
         assertBool "expected a shell syntax style" ("\ESC[38;2;" `isInfixOf` output)
         assertBool
           "shell input keeps its text below the label"
           ("shell:\nif true; then echo \"hi\"; fi" `isInfixOf` stripAnsi output)
     , testCase "tool prompt highlights shell input" $ do
         let prompt = setPromptText "if true; then echo \"hi\"; fi" initialPrompt
-            (output, _) = promptRenderText toolLine ToolMode 0 80 prompt
+            (output, _) = promptRenderText (ToolPrompt "shell") 0 80 prompt
         assertBool "expected a shell syntax style" ("\ESC[38;2;" `isInfixOf` output)
         assertBool
           "tool input keeps its text below the label"
           ("tool shell:\nif true; then echo \"hi\"; fi" `isInfixOf` stripAnsi output)
     , testCase "prompt rendering uses no background colors" $ do
         let termPrompt = setPromptText "abc" initialPrompt
-            (termOutput, _) = promptRenderText termLine TermMode 0 80 termPrompt
+            (termOutput, _) = promptRenderText ShellPrompt 0 80 termPrompt
             llmPrompt = setPromptText "abc" initialPrompt
-            (llmOutput, _) = promptRenderText termLine LlmMode 0 80 llmPrompt
+            (llmOutput, _) = promptRenderText LlmPrompt 0 80 llmPrompt
             toolPrompt = setPromptText "ls" initialPrompt
-            (toolOutput, _) = promptRenderText toolLine ToolMode 0 80 toolPrompt
+            (toolOutput, _) = promptRenderText (ToolPrompt "shell") 0 80 toolPrompt
         assertBool "term has no background" (not ("\ESC[48;" `isInfixOf` termOutput))
         assertBool "llm has no background" (not ("\ESC[48;" `isInfixOf` llmOutput))
         assertBool "tool has no background" (not ("\ESC[48;" `isInfixOf` toolOutput))
     , testCase "prompt rows are not padded with spaces" $ do
         let prompt = setPromptText "abc" initialPrompt
-            (output, _) = promptRenderText termLine TermMode 0 80 prompt
+            (output, _) = promptRenderText ShellPrompt 0 80 prompt
         assertBool "no trailing space padding" (not ("abc " `isInfixOf` stripAnsi output))
         assertBool "erases the rest of the line instead" ("\ESC[K" `isInfixOf` output)
     , testCase "llm prompt rows are not padded with spaces" $ do
         let prompt = setPromptText "hello" initialPrompt
-            (output, _) = promptRenderText termLine LlmMode 0 80 prompt
+            (output, _) = promptRenderText LlmPrompt 0 80 prompt
         assertBool "no trailing space padding" (not ("hello " `isInfixOf` output))
         assertBool "erases the rest of the line instead" ("hello\ESC[K" `isInfixOf` output)
     , testCase "prompt clears below the rendered rows" $ do
         let prompt = setPromptText "abc" initialPrompt
-            (output, _) = promptRenderText termLine TermMode 0 80 prompt
+            (output, _) = promptRenderText ShellPrompt 0 80 prompt
         assertBool "clears below the prompt" ("\ESC[0J" `isInfixOf` output)
     , testCase "rendering moves up by the previous cursor row" $ do
         let prompt = setPromptText "abc" initialPrompt
-            (output, _) = promptRenderText "" TermMode 2 80 prompt
+            (output, _) = promptRenderText ShellPrompt 2 80 prompt
         assertBool "cursor up sequence" ("\ESC[2A" `isInfixOf` output)
     , testCase "moveCursorText emits relative movement" $ do
         moveCursorText (3, 0) (1, 4) @?= "\ESC[2A\r\ESC[4C"
@@ -108,7 +104,7 @@ tests =
         startPromptText @?= "\ESC[K"
     , testCase "tool prompts use the answer teal on its own line" $ do
         let prompt = setPromptText "ls" initialPrompt
-            (output, position) = promptRenderText toolLine ToolMode 0 80 prompt
+            (output, position) = promptRenderText (ToolPrompt "shell") 0 80 prompt
         assertBool "teal prefix" ((boldTeal ++ "tool shell:") `isInfixOf` output)
         assertBool "label text" ("tool shell:" `isInfixOf` output)
         assertBool "label sits above the command" ("tool shell:\nls" `isInfixOf` stripAnsi output)
@@ -142,18 +138,18 @@ tests =
           "nothing after the final newline may change colors"
           (not ("\ESC" `isInfixOf` afterNewline))
     , testCase "output labels are dimmed versions of the mode colours" $ do
-        outputForeground TermMode @?= "\ESC[1;38;2;153;12;88m"
-        outputForeground ToolMode @?= "\ESC[1;38;2;0;153;120m"
-        outputLabelText TermMode True
-          @?= outputForeground TermMode ++ "output:" ++ reset
-        outputLabelText ToolMode True
-          @?= outputForeground ToolMode ++ "tool output:" ++ reset
+        outputForeground TermOutput @?= "\ESC[1;38;2;153;12;88m"
+        outputForeground ToolOutput @?= "\ESC[1;38;2;0;153;120m"
+        outputLabelText TermOutput True
+          @?= outputForeground TermOutput ++ "output:" ++ reset
+        outputLabelText ToolOutput True
+          @?= outputForeground ToolOutput ++ "tool output:" ++ reset
         assertBool
           "shell and tool labels differ"
-          (outputForeground TermMode /= outputForeground ToolMode)
+          (outputForeground TermOutput /= outputForeground ToolOutput)
     , testCase "output labels are plain when not interactive" $ do
-        outputLabelText TermMode False @?= "output:"
-        outputLabelText ToolMode False @?= "tool output:"
+        outputLabelText TermOutput False @?= "output:"
+        outputLabelText ToolOutput False @?= "tool output:"
     , testCase "grayOutputText wraps terminal output and resets" $
         grayOutputText True "hello"
           @?= grayForeground ++ "hello" ++ reset

@@ -24,14 +24,13 @@ import Control.Exception (IOException, bracket, catch, onException, try)
 import Control.Monad (forM_)
 import qualified Data.ByteString as BS
 import Data.Either (fromRight)
-import Data.List (find)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import qualified Data.Text.Encoding.Error as TextEncodingError
 import Hutian.Jobs
 import System.Directory (createDirectoryIfMissing)
-import System.Exit (ExitCode)
 import System.FilePath ((</>), (<.>))
 import System.IO
   ( Handle
@@ -43,6 +42,7 @@ import System.IO
   , openFile
   , withBinaryFile
   )
+import System.Posix.Files (setFileMode)
 import System.Posix.Signals (Signal, sigKILL, sigTERM, signalProcessGroup)
 import System.Process
   ( CreateProcess (..)
@@ -55,7 +55,8 @@ import System.Process
   , waitForProcess
   )
 
--- | The live job table for one shell session.
+-- | The live job table for one shell session. Jobs are keyed by id, which is
+-- also start order, so listing, lookup, and status updates all stay total.
 data JobRuntime = JobRuntime
   { runtimeDirectory :: FilePath
   , runtimeState :: MVar JobState
@@ -63,7 +64,7 @@ data JobRuntime = JobRuntime
 
 data JobState = JobState
   { stateNextId :: Int
-  , stateJobs :: [RuntimeJob]
+  , stateJobs :: Map.Map JobId RuntimeJob
   }
 
 data RuntimeJob = RuntimeJob
@@ -79,7 +80,7 @@ withJobRuntime directory = bracket (newJobRuntime directory) shutdownJobs
 
 newJobRuntime :: FilePath -> IO JobRuntime
 newJobRuntime directory = do
-  state <- newMVar (JobState 1 [])
+  state <- newMVar (JobState 1 Map.empty)
   pure (JobRuntime directory state)
 
 -- | Start a command in the background. The command runs in a new process group
@@ -87,7 +88,7 @@ newJobRuntime directory = do
 -- process is started; a waiter thread records the exit status.
 startJob :: JobRuntime -> String -> IO (Either String Job)
 startJob runtime command = do
-  createDirectoryIfMissing True (runtimeDirectory runtime)
+  prepareJobDirectory (runtimeDirectory runtime)
   result <- modifyMVar (runtimeState runtime) $ \state ->
     if runningCount state >= maxRunningJobs
       then pure (state, Left tooManyJobs)
@@ -96,10 +97,11 @@ startJob runtime command = do
         pure $ case spawned of
           Left message -> (state, Left message)
           Right runtimeJob ->
-            let state' =
+            let info = runtimeInfo runtimeJob
+                state' =
                   state
                     { stateNextId = stateNextId state + 1
-                    , stateJobs = stateJobs state ++ [runtimeJob]
+                    , stateJobs = Map.insert (jobId info) runtimeJob (stateJobs state)
                     }
              in (state', Right runtimeJob)
   case result of
@@ -114,18 +116,17 @@ listJobs :: JobRuntime -> IO [Job]
 listJobs runtime = map runtimeInfo <$> listRuntimeJobs runtime
 
 listRuntimeJobs :: JobRuntime -> IO [RuntimeJob]
-listRuntimeJobs runtime = stateJobs <$> readMVar (runtimeState runtime)
+listRuntimeJobs runtime = Map.elems . stateJobs <$> readMVar (runtimeState runtime)
 
 -- | Read a bounded tail of a job's log. The job and whether the output was
 -- truncated are returned so both the terminal and the model can describe it.
-readJobOutput :: JobRuntime -> JobId -> Int -> IO (Either String (Job, String, Bool))
+readJobOutput :: JobRuntime -> JobId -> LineCount -> IO (Either String (Job, String, Bool))
 readJobOutput runtime target requestedLines = do
   found <- findJob runtime target
   case found of
     Nothing -> pure (noSuchJob target)
     Just job -> do
-      let lineCount = clamp 1 maxJobOutputLines requestedLines
-      (output, truncated) <- readLogTail (jobLogPath job) lineCount
+      (output, truncated) <- readLogTail (jobLogPath job) (lineCountValue requestedLines)
       pure (Right (job, output, truncated))
 
 -- | Ask a job to stop, then force it if it does not exit. The final job and
@@ -160,15 +161,23 @@ tooManyJobs :: String
 tooManyJobs = "too many background jobs are already running; stop one first"
 
 runningCount :: JobState -> Int
-runningCount state = length (filter isRunning (stateJobs state))
+runningCount state = length (filter isRunning (Map.elems (stateJobs state)))
 
 isRunning :: RuntimeJob -> Bool
 isRunning runtimeJob = jobStatus (runtimeInfo runtimeJob) == JobRunning
+
+-- | Job logs are readable only by the sandbox user. The directory is private
+-- to the session as well, so another sandbox process cannot list the table.
+prepareJobDirectory :: FilePath -> IO ()
+prepareJobDirectory directory = do
+  createDirectoryIfMissing True directory
+  ignoreIO (setFileMode directory 0o700)
 
 spawnJob :: JobRuntime -> Int -> String -> IO (Either String RuntimeJob)
 spawnJob runtime nextId command = do
   let path = logPath runtime nextId
   logHandle <- openFile path AppendMode
+  ignoreIO (setFileMode path 0o600)
   let closeHandle = ignoreIO (hClose logHandle)
   ( do
       (_, _, _, handle) <- createProcess_ "hutian-job" (processSpec logHandle command)
@@ -206,17 +215,15 @@ logPath runtime nextId = runtimeDirectory runtime </> show nextId <.> "log"
 waitForJob :: JobRuntime -> RuntimeJob -> IO ()
 waitForJob runtime runtimeJob = do
   exitCode <- waitForProcess (runtimeHandle runtimeJob)
-  finishJob runtime (jobId (runtimeInfo runtimeJob)) exitCode
+  finishJob runtime (jobId (runtimeInfo runtimeJob)) (jobStatusFromExit exitCode)
 
-finishJob :: JobRuntime -> JobId -> ExitCode -> IO ()
-finishJob runtime target exitCode =
+finishJob :: JobRuntime -> JobId -> JobStatus -> IO ()
+finishJob runtime target status =
   modifyMVar_ (runtimeState runtime) $ \state ->
-    pure state { stateJobs = map finish (stateJobs state) }
+    pure state { stateJobs = Map.adjust finish target (stateJobs state) }
   where
     finish runtimeJob
-      | jobId info == target
-      , jobStatus info == JobRunning =
-          runtimeJob { runtimeInfo = info { jobStatus = JobExited exitCode } }
+      | jobStatus info == JobRunning = runtimeJob { runtimeInfo = info { jobStatus = status } }
       | otherwise = runtimeJob
       where
         info = runtimeInfo runtimeJob
@@ -229,8 +236,7 @@ noSuchJob target = Left ("no such job: " ++ jobIdText target)
 
 findRuntimeJob :: JobRuntime -> JobId -> IO (Maybe RuntimeJob)
 findRuntimeJob runtime target =
-  find (\runtimeJob -> jobId (runtimeInfo runtimeJob) == target)
-    <$> listRuntimeJobs runtime
+  Map.lookup target . stateJobs <$> readMVar (runtimeState runtime)
 
 signalRuntimeJob :: RuntimeJob -> Signal -> IO ()
 signalRuntimeJob runtimeJob signal =
@@ -284,9 +290,6 @@ readLogTail path lineLimit = do
       case break (== '\n') value of
         (_, []) -> ""
         (_, _ : rest) -> rest
-
-clamp :: Int -> Int -> Int -> Int
-clamp lower upper = min upper . max lower
 
 ignoreIO :: IO () -> IO ()
 ignoreIO action = action `catch` \(_ :: IOException) -> pure ()

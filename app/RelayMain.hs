@@ -5,11 +5,13 @@ module Main (main) where
 
 import Control.Exception (SomeException, try)
 import Hutian.Relay
-  ( RelayRuntime
-  , loadRelayKey
+  ( RelayAuth (..)
+  , RelayAuthPolicy (..)
+  , RelayRuntime
+  , loadRelayAuth
   , newRelayRuntime
   , parseRelaySettings
-  , relayNoAuth
+  , relayAuthPolicy
   , runRelay
   , stderrLogger
   )
@@ -28,15 +30,15 @@ main = do
   case parseRelaySettings arguments of
     Left message -> failWith message
     Right settings -> do
-      keyResult <-
-        if relayNoAuth settings
-          then pure (Right Nothing)
-          else fmap (fmap Just) (loadRelayKey stdin)
-      case keyResult of
+      authResult <-
+        case relayAuthPolicy settings of
+          RelayAuthDisabled -> pure (Right RelayAuthNone)
+          RelayAuthRequired -> loadRelayAuth stdin
+      case authResult of
         Left message -> failWith message
-        Right key -> do
+        Right auth -> do
           runtimeResult <-
-            try (newRelayRuntime stderrLogger settings key)
+            try (newRelayRuntime stderrLogger settings auth)
               :: IO (Either SomeException RelayRuntime)
           case runtimeResult of
             Left _ -> failWith "hutian-llm-relay: invalid upstream URL"

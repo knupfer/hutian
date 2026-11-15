@@ -5,6 +5,43 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Prompt state now separates input ownership (`LlmInput`/`TermInput`) from
+  render-only prompt and output kinds, so mode confusion is a type error rather
+  than a runtime convention.
+- `Hutian.Output` was folded into `Hutian.Render`, and `Hutian.Syntax` into
+  `Hutian.Highlight`. Prompt-to-ANSI rendering, output labels, and pure approval
+  decisions now share one module.
+- `Hutian.Tool.Exec` owns terminal-side tool execution, keeping `Hutian.Tool`
+  and its plans pure.
+- `Hutian.Command` now only classifies submitted term-mode text; the unused
+  command parser and its shell-builtin completion entries were removed.
+- Job status is explicit: `JobRunning`, `JobExited`, or `JobSignalled`, instead
+  of a negative `ExitFailure` used to represent signals.
+- Job output line counts are clamped into a bounded `LineCount`, and jobs are
+  stored by `JobId`.
+- `Hutian.Llm` writes through a small `LlmOutput` sink instead of importing
+  `Hutian.Console`, so the LLM layer no longer depends on the terminal.
+- Model URLs are validated for scheme, host, and path when settings are parsed,
+  and the API path matches `/v1/chat/completions` exactly after stripping any
+  query or fragment.
+- Relay authentication is a sum type, `RelayAuthNone` or
+  `RelayAuthBearer key`, with a redacted `Show` instance. The relay socket is
+  restricted to `0600` before it starts listening.
+
+### Fixed
+
+- Denied shell policy is refused before tool arguments are inspected.
+- Relay sockets and job logs are no longer exposed through permissive file
+  modes.
+
+### Removed
+
+- Stale `help`, `jobs`, and `job` shell completion entries.
+- The `PromptMode`, `ToolMode`, and `SyntaxSpec` types and modules superseded by
+  the refactor above.
+
 ## [0.5.0.0] - 2026-11-15
 
 ### Added

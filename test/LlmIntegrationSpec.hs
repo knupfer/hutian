@@ -42,7 +42,7 @@ import Network.Socket.ByteString (recv, sendAll)
 import System.Timeout (timeout)
 import Test.Tasty
 import Test.Tasty.HUnit
-import TestSupport (captureStderr, captureStdout)
+import TestSupport (captureStderr, captureStdout, stdoutLlmOutput)
 
 tests :: TestTree
 tests =
@@ -55,6 +55,7 @@ tests =
           timeout 7000000 $
             captureStdout $
               runLlm
+                stdoutLlmOutput
                 flag
                 (settingsFor port)
                 [UserEntry "prior", AssistantEntry "previous"]
@@ -79,7 +80,7 @@ tests =
         captured <-
           timeout 7000000 $
             captureStdout $
-              runLlmWithTools flag (settingsFor port) [UserEntry "prior"] "run ls"
+              runLlmWithTools stdoutLlmOutput flag (settingsFor port) [UserEntry "prior"] "run ls"
         (result, _) <-
           maybe (assertFailure "runLlmWithTools timed out" >> pure (emptyResult, "")) pure captured
         llmToolCalls result
@@ -91,7 +92,7 @@ tests =
         captured <-
           timeout 7000000 $
             captureStderr $
-              runLlm flag (settingsFor port) [] "hello"
+              runLlm stdoutLlmOutput flag (settingsFor port) [] "hello"
         (result, output) <-
           maybe (assertFailure "error response test timed out" >> pure (Nothing, "")) pure captured
         result @?= Nothing

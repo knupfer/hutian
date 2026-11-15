@@ -1,6 +1,6 @@
 module ShellSpec (tests) where
 
-import Data.List (isInfixOf, nub)
+import Data.List (isInfixOf)
 import Hutian.Shell
   ( CommandResult (..)
   , commandResultText
@@ -8,7 +8,6 @@ import Hutian.Shell
   , runShellCommand
   , runShellCommandOutput
   , shellExitSuffix
-  , withBuiltins
   )
 import System.Directory
   ( Permissions (..)
@@ -19,10 +18,8 @@ import System.Directory
   )
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
-import Test.QuickCheck (Property, (.&&.), (===), counterexample, property)
 import Test.Tasty
 import Test.Tasty.HUnit
-import Test.Tasty.QuickCheck (testProperty)
 import TestSupport (temporaryFilePath, withEnv, withTemporaryDirectory)
 
 tests :: TestTree
@@ -61,7 +58,7 @@ tests =
             Left message -> assertFailure message
             Right result -> commandResultText result @?= ""
           changed @?= original
-    , testCase "executableCommands includes PATH entries and builtins" $
+    , testCase "executableCommands includes PATH entries without duplicates" $
         withTemporaryDirectory "hutian-shell-path" $ \directory -> do
           let script = directory </> "test-command"
           writeFile script "#!/bin/sh\n"
@@ -70,25 +67,11 @@ tests =
           withEnv "PATH" directory $ do
             commands <- executableCommands
             assertBool "custom command missing" ("test-command" `elem` commands)
-            assertBool "builtin missing" ("help" `elem` commands)
-    , testCase "withBuiltins removes duplicates and keeps builtins" $
-        withBuiltins ["pwd", "ls", "ls"]
-          @?= ["help", "jobs", "job", "pwd", "ls"]
+            commands @?= ["test-command"]
     , testCase "shellExitSuffix reports only failures" $ do
         shellExitSuffix ExitSuccess @?= ""
         shellExitSuffix (ExitFailure 3) @?= "\n[exit 3]\n"
-    , testProperty "withBuiltins is idempotent and keeps every builtin first" prop_withBuiltins
     ]
-
-prop_withBuiltins :: [String] -> Property
-prop_withBuiltins names =
-  counterexample (show (once, twice)) $
-    once === twice
-      .&&. property (nub once === once)
-      .&&. property (take 3 once === ["help", "jobs", "job"])
-  where
-    once = withBuiltins names
-    twice = withBuiltins once
 
 shellQuote :: String -> String
 shellQuote value =

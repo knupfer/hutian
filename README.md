@@ -436,15 +436,15 @@ Important composition rules:
 
 The code keeps pure logic separate from IO:
 
-- `Hutian.Command` parses term-mode input into a typed `Command` and classifies
-  single-line versus multi-line input.
+- `Hutian.Command` classifies submitted term-mode text as blank, single-line,
+  or multi-line.
 - `Hutian.Policy` defines the model's shell-tool policy (`deny`, `ask`, or
   `allow`) used by the LLM protocol and the tool loop. Term mode is not gated
   by it.
 - `Hutian.Tool` turns a model tool call and the policy into a pure `ToolPlan`.
-  `Main` only performs the terminal or shell IO that the plan requests, so
-  refusals, approvals, commands, and job actions can be tested without a
-  terminal.
+  `Hutian.Tool.Exec` performs only the terminal or shell IO that the plan
+  requests, so refusals, approvals, commands, and job actions can be tested
+  without a terminal.
 - `Hutian.Jobs` is the pure job model: ids, status, log paths, and the text
   used by the model tools. `Hutian.Jobs.Runtime` owns the process handles,
   bounded log tails, and process-group signalling.
@@ -457,18 +457,17 @@ The code keeps pure logic separate from IO:
 - `Hutian.Completion` selects command and path completions.
 - `Hutian.Ansi` represents RGB colours and text styles as data and encodes them
   with `ansi-terminal`.
-- `Hutian.Render` turns a prompt into ANSI output and cursor movement, including
-  the tool-call prefix style.
-- `Hutian.Output` renders output labels.
+- `Hutian.Render` turns prompts and output labels into ANSI output, and holds
+  the pure approval decisions shared with the console.
 - `Hutian.History`, `Hutian.Conversation`, and `Hutian.Paths` are pure models;
   `Hutian.Conversation` also represents tool calls and tool results.
 - `Hutian.History` owns the pure on-disk history codec.
 - `Hutian.Markdown` is a pure streaming renderer for Markdown and ANSI styles.
-- `Hutian.Highlight` wraps Skylighting for fenced code and shell input.
-- `Hutian.Syntax` highlights shell input for term mode and model-requested
-  commands with Skylighting.
+- `Hutian.Highlight` wraps Skylighting for fenced code and shell input, used by
+  both term-mode input and model-requested commands.
 - `Hutian.Llm` keeps SSE parsing, tool-call accumulation, request building, and
-  settings parsing pure, with IO limited to HTTP and bounded error bodies.
+  settings parsing pure, with IO limited to HTTP, bounded error bodies, and a
+  caller-supplied output sink.
 - `Hutian.Http.Wire` contains the shared socket framing helpers used by both
   the relay and the sandbox-side client.
 - `Hutian.Llm.UnixSocket` is the sandbox-side client for the host relay socket.
@@ -499,16 +498,17 @@ nix/lint.nix              Shared lint and LiquidHaskell checks
 app/                      Haskell shell source
 app/Hutian/Ansi.hs        Typed terminal colours and styles
 app/Hutian/Cli.hs         Strict shared command-line option parser
-app/Hutian/Command.hs     Typed term-mode command parsing
+app/Hutian/Command.hs     Term-mode input classification
 app/Hutian/Completion.hs  Pure completion selection
 app/Hutian/Console.hs     Single terminal IO boundary
+app/Hutian/Highlight.hs   Skylighting for fenced code and shell input
 app/Hutian/Jobs.hs        Pure background-job model and text
 app/Hutian/Jobs/Runtime.hs  Job processes, logs, and signals
-app/Hutian/Output.hs      Output labels
 app/Hutian/Policy.hs      Model shell-tool policy
 app/Hutian/Prompt.hs      Pure prompt reducer
-app/Hutian/Render.hs      Pure ANSI prompt rendering
+app/Hutian/Render.hs      Pure ANSI rendering and approval decisions
 app/Hutian/Tool.hs        Pure tool-call planning
+app/Hutian/Tool/Exec.hs   Terminal execution of tool-call plans
 app/Hutian/Relay.hs       Host-side LLM relay
 app/Hutian/Relay/Protocol.hs  Relay status framing
 app/Hutian/Llm/UnixSocket.hs  Relay client over a Unix socket

@@ -43,7 +43,8 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.Key (Key)
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
-import Data.List (isInfixOf, nub)
+import Data.Char (isControl, isSpace)
+import Data.List (isPrefixOf, isSuffixOf, nub)
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe, mapMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
@@ -202,14 +203,52 @@ llmOptionSpec =
   , ("--model-shell", OptionValue)
   ]
 
--- | Reject empty URLs, model names, and socket paths; an empty system prompt
--- is allowed.
+-- | Reject malformed URLs, empty model names, and empty socket paths; an empty
+-- system prompt is allowed.
 settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Maybe FilePath -> ModelShell -> Either String LlmSettings
-settingsFrom url model systemPrompt socket policy
-  | null (unLlmUrl url) = Left ("empty value for --llama-url\n" ++ llmUsage)
-  | null (unModelName model) = Left ("empty value for --model\n" ++ llmUsage)
-  | maybe False null socket = Left ("empty value for --llama-socket\n" ++ llmUsage)
-  | otherwise = Right (LlmSettings url model systemPrompt socket policy)
+settingsFrom url model systemPrompt socket policy = do
+  validateLlmUrl url
+  validateNonEmpty "--model" (unModelName model)
+  maybe (Right ()) (validateNonEmpty "--llama-socket") socket
+  pure (LlmSettings url model systemPrompt socket policy)
+  where
+    validateNonEmpty name value
+      | null value = Left ("empty value for " ++ name ++ "\n" ++ llmUsage)
+      | otherwise = Right ()
+
+-- | A URL must use http or https, name a host, and, if it has a path, start
+-- that path with a slash. Validation happens before any request is attempted.
+validateLlmUrl :: LlmUrl -> Either String ()
+validateLlmUrl (LlmUrl url)
+  | null url = invalid "empty value for --llama-url"
+  | any invalidChar url = invalid "invalid character in --llama-url"
+  | otherwise =
+      case stripScheme url of
+        Nothing -> invalid "invalid value for --llama-url: expected an http:// or https:// URL"
+        Just rest
+          | null (authorityOf rest) ->
+              invalid "invalid value for --llama-url: missing host"
+          | not (null path) && take 1 path /= "/" ->
+              invalid "invalid value for --llama-url: the path must start with /"
+          | otherwise -> Right ()
+  where
+    invalid message = Left (message ++ "\n" ++ llmUsage)
+    invalidChar character = isSpace character || isControl character
+    path = pathOf url
+
+stripScheme :: String -> Maybe String
+stripScheme text
+  | "http://" `isPrefixOf` text = Just (drop (length ("http://" :: String)) text)
+  | "https://" `isPrefixOf` text = Just (drop (length ("https://" :: String)) text)
+  | otherwise = Nothing
+
+-- | The authority part of a URL after its scheme.
+authorityOf :: String -> String
+authorityOf = takeWhile (`notElem` ['/', '?', '#'])
+
+-- | The path of a URL without its query or fragment.
+pathOf :: String -> String
+pathOf = takeWhile (`notElem` ['?', '#']) . dropWhile (`notElem` ['/', '?', '#'])
 
 missingMessage :: [String] -> String
 missingMessage missing =
@@ -233,7 +272,7 @@ data Api
 
 apiFor :: LlmUrl -> Api
 apiFor (LlmUrl url)
-  | "/v1/chat/completions" `isInfixOf` url = ChatApi
+  | "/v1/chat/completions" `isSuffixOf` pathOf url = ChatApi
   | otherwise = CompletionApi
 
 requestBodyFor :: ModelShell -> Api -> ModelName -> SystemPrompt -> Conversation -> String -> Aeson.Value

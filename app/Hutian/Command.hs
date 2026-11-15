@@ -1,23 +1,10 @@
--- | Pure parsing of term-mode input.
+-- | Pure classification of submitted term-mode input.
 module Hutian.Command
-  ( Command (..)
-  , parseCommandLine
-  , TerminalInput (..)
+  ( TerminalInput (..)
   , classifyTerminalInput
   ) where
 
--- | A parsed line of user input in term mode. Every non-empty line is passed to
--- the shell unchanged.
-data Command
-  = CommandEmpty
-  | CommandShell String
-  deriving stock (Eq, Show)
-
-parseCommandLine :: String -> Command
-parseCommandLine line =
-  case words line of
-    [] -> CommandEmpty
-    _ -> CommandShell line
+import Data.Char (isSpace)
 
 -- | The shape of submitted term-mode text.
 data TerminalInput
@@ -26,9 +13,13 @@ data TerminalInput
   | MultiLineInput String
   deriving stock (Eq, Show)
 
+-- | Classify submitted text. Blank input is ignored; a single line is
+-- recorded without its trailing newline, while multi-line input is recorded
+-- exactly as submitted.
 classifyTerminalInput :: String -> TerminalInput
-classifyTerminalInput text =
-  case lines text of
-    [] -> NoTerminalInput
-    [line] -> SingleLineInput line
-    _ -> MultiLineInput text
+classifyTerminalInput text
+  | all isSpace text = NoTerminalInput
+  | otherwise =
+      case lines text of
+        [line] -> SingleLineInput line
+        _ -> MultiLineInput text

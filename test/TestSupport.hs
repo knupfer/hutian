@@ -4,6 +4,7 @@ module TestSupport
   , temporaryFilePath
   , withTemporaryDirectory
   , withPseudoTerminalOutput
+  , stdoutLlmOutput
   , stripAnsi
   , captureStdout
   , captureStderr
@@ -16,6 +17,7 @@ import Control.Concurrent.MVar (MVar, takeMVar)
 import Control.Exception (IOException, finally, try)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import Hutian.Llm (LlmOutput (..))
 import System.Directory
   ( createDirectory
   , getTemporaryDirectory
@@ -23,7 +25,7 @@ import System.Directory
   , removeFile
   )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
-import System.IO (Handle, hClose, hFlush, openTempFile, stderr, stdout)
+import System.IO (Handle, hClose, hFlush, hPutStrLn, openTempFile, stderr, stdout)
 import System.Posix.IO
   ( FdOption (..)
   , closeFd
@@ -70,6 +72,15 @@ stripAnsi ('\ESC' : '[' : rest) = stripAnsi (dropSequence rest)
       | character >= '@' && character <= '~' = characters
       | otherwise = dropSequence characters
 stripAnsi (character : rest) = character : stripAnsi rest
+
+-- | Stream LLM output to the test process's own stdout and stderr, so the
+-- capture helpers can observe it.
+stdoutLlmOutput :: LlmOutput
+stdoutLlmOutput =
+  LlmOutput
+    { llmOutputWrite = putStr
+    , llmOutputErrorLine = hPutStrLn stderr
+    }
 
 -- | Capture everything written to stdout while an action runs. Used by the LLM
 -- streaming tests because the shell renders model output directly.

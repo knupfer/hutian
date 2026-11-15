@@ -12,10 +12,10 @@ module Hutian.Prompt
   ) where
 
 import Hutian.Editor
-  ( Prompt
+  ( InputMode (..)
+  , Prompt
   , PromptBuffers
   , PromptAction (..)
-  , PromptMode (..)
   , activePrompt
   , applyKey
   , clearPrompt
@@ -54,19 +54,19 @@ data PromptOutcome
 -- | Everything the prompt carries between key presses. The cursor position is
 -- kept by the driver because it is derived from terminal width.
 {-@ data PromptState = PromptState
-      { promptMode :: PromptMode
+      { promptMode :: InputMode
       , promptHistoryState :: HistoryState
       , promptBuffers :: PromptBuffers
       } @-}
 data PromptState = PromptState
-  { promptMode :: PromptMode
+  { promptMode :: InputMode
   , promptHistoryState :: HistoryState
   , promptBuffers :: PromptBuffers
   }
 
-{-@ initialPromptState :: mode:PromptMode -> PromptBuffers ->
+{-@ initialPromptState :: mode:InputMode -> PromptBuffers ->
       {v:PromptState | promptMode v == mode} @-}
-initialPromptState :: PromptMode -> PromptBuffers -> PromptState
+initialPromptState :: InputMode -> PromptBuffers -> PromptState
 initialPromptState mode buffers =
   PromptState
     { promptMode = mode

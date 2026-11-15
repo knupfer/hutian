@@ -6,7 +6,7 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, isSuffixOf)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
@@ -175,6 +175,11 @@ unitTests =
         case parseLlmSettings ["--llama-url", "http://example.test", "--model", "", "--system-prompt", ""] of
           Left message -> assertBool "empty model should be named" ("--model" `isInfixOf` message)
           Right _ -> assertFailure "an empty model should fail"
+    , testCase "parseLlmSettings rejects malformed URLs" $ do
+        assertUrlRejected "not-a-url"
+        assertUrlRejected "ftp://example.test/completion"
+        assertUrlRejected "http:///v1/chat/completions"
+        assertUrlRejected "http://example.test/a path"
     , testCase "parseLlmSettings reports missing options, missing values, and unknown arguments" $ do
         case parseLlmSettings [] of
           Left message -> do
@@ -226,6 +231,9 @@ unitTests =
         apiFor (LlmUrl "http://127.0.0.1:8080/v1/chat/completions") @?= ChatApi
         apiFor (LlmUrl "http://127.0.0.1:8080/completion") @?= CompletionApi
         apiFor (LlmUrl "https://example.test/v1/chat/completions?stream=true") @?= ChatApi
+        apiFor (LlmUrl "https://example.test/api/v1/chat/completions") @?= ChatApi
+        apiFor (LlmUrl "https://example.test/v1/chat/completions-extra") @?= CompletionApi
+        apiFor (LlmUrl "https://example.test/v1/chat/completions/") @?= CompletionApi
     , testCase "chat request body has system and user messages" $
         case requestBodyFor ModelShellDenied ChatApi (ModelName "test-model") (SystemPrompt "system rules") emptyConversation "hello" of
           Object body -> do
@@ -416,11 +424,13 @@ prop_apiFor url =
   apiFor (LlmUrl url) === expected
   where
     expected
-      | "/v1/chat/completions" `isInfixOf` url = ChatApi
+      | "/v1/chat/completions" `isSuffixOf` requestPath url = ChatApi
       | otherwise = CompletionApi
+    requestPath =
+      takeWhile (`notElem` ['?', '#']) . dropWhile (`notElem` ['/', '?', '#'])
 
-prop_parseSettings :: NonEmptyList Char -> NonEmptyList Char -> String -> Property
-prop_parseSettings url model systemPrompt =
+prop_parseSettings :: NonEmptyList Char -> String -> Property
+prop_parseSettings model systemPrompt =
   parseLlmSettings
     [ "--llama-url"
     , urlText
@@ -438,11 +448,11 @@ prop_parseSettings url model systemPrompt =
           ModelShellDenied
       )
   where
-    urlText = getNonEmpty url
+    urlText = "http://example.test/v1/chat/completions"
     modelText = getNonEmpty model
 
-prop_parseSettingsWithSocket :: NonEmptyList Char -> NonEmptyList Char -> String -> NonEmptyList Char -> Property
-prop_parseSettingsWithSocket url model systemPrompt socket =
+prop_parseSettingsWithSocket :: NonEmptyList Char -> String -> NonEmptyList Char -> Property
+prop_parseSettingsWithSocket model systemPrompt socket =
   parseLlmSettings
     [ "--llama-url"
     , urlText
@@ -462,7 +472,7 @@ prop_parseSettingsWithSocket url model systemPrompt socket =
           ModelShellDenied
       )
   where
-    urlText = getNonEmpty url
+    urlText = "http://example.test/v1/chat/completions"
     modelText = getNonEmpty model
     socketText = getNonEmpty socket
 
@@ -479,6 +489,12 @@ prop_extractError text =
 containsText :: String -> Value -> Bool
 containsText needle (String text) = Text.pack needle `Text.isInfixOf` text
 containsText _ _ = False
+
+assertUrlRejected :: String -> IO ()
+assertUrlRejected url =
+  case parseLlmSettings ["--llama-url", url, "--model", "m", "--system-prompt", ""] of
+    Left message -> assertBool ("URL should be named in: " ++ message) ("--llama-url" `isInfixOf` message)
+    Right _ -> assertFailure ("malformed URL should fail: " ++ url)
 
 prop_requestBody :: String -> String -> String -> Property
 prop_requestBody model systemPrompt text =

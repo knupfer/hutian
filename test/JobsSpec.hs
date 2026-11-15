@@ -11,8 +11,7 @@ import Hutian.Jobs.Runtime
   , startJob
   , withJobRuntime
   )
-import Hutian.Output (grayOutputText)
-import Hutian.Render (grayForeground, reset)
+import Hutian.Render (grayForeground, grayOutputText, reset)
 import System.Exit (ExitCode (..))
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -32,9 +31,19 @@ pureTests =
     "model"
     [ testCase "status text distinguishes success, failure, and signals" $ do
         jobStatusText JobRunning @?= "running"
-        jobStatusText (JobExited ExitSuccess) @?= "exit 0"
-        jobStatusText (JobExited (ExitFailure 2)) @?= "exit 2"
-        jobStatusText (JobExited (ExitFailure (-15))) @?= "signal 15"
+        jobStatusText (JobExited 0) @?= "exit 0"
+        jobStatusText (JobExited 2) @?= "exit 2"
+        jobStatusText (JobSignalled 15) @?= "signal 15"
+    , testCase "exit codes map to explicit job statuses" $ do
+        jobStatusFromExit ExitSuccess @?= JobExited 0
+        jobStatusFromExit (ExitFailure 2) @?= JobExited 2
+        jobStatusFromExit (ExitFailure (-15)) @?= JobSignalled 15
+    , testCase "output line counts are clamped to the supported range" $ do
+        lineCountValue (lineCount 0) @?= 1
+        lineCountValue (lineCount (-1)) @?= 1
+        lineCountValue (lineCount 1) @?= 1
+        lineCountValue (lineCount maxJobOutputLines) @?= maxJobOutputLines
+        lineCountValue (lineCount (maxJobOutputLines + 1)) @?= maxJobOutputLines
     , testCase "a summary line shows status, pid, and command" $ do
         jobSummaryLine runningJob @?= "job 1  running  pid 1234  sleep 10"
         jobSummaryLine finishedJob @?= "job 1  signal 15  sleep 10"
@@ -61,7 +70,7 @@ pureTests =
         jobKillResult True finishedJob @?= "job 1 stopped: signal 15"
         jobKillResult True runningJob @?= "job 1 is still running"
     , testCase "output defaults and limits are stable" $ do
-        defaultJobOutputLines @?= 50
+        lineCountValue defaultJobOutputLines @?= 50
         maxJobOutputLines @?= 500
     ]
 
@@ -76,8 +85,8 @@ runtimeTests =
             job <- startedJob started
             awaitFinished runtime (jobId job)
             current <- findJob runtime (jobId job)
-            jobStatus current @?= JobExited ExitSuccess
-            output <- readJobOutput runtime (jobId job) 10
+            jobStatus current @?= JobExited 0
+            output <- readJobOutput runtime (jobId job) (lineCount 10)
             case output of
               Left message -> assertFailure message
               Right (_, text, truncated) -> do
@@ -89,7 +98,7 @@ runtimeTests =
             started <- startJob runtime "printf 'a\\nb\\nc\\n'"
             job <- startedJob started
             awaitFinished runtime (jobId job)
-            output <- readJobOutput runtime (jobId job) 1
+            output <- readJobOutput runtime (jobId job) (lineCount 1)
             case output of
               Left message -> assertFailure message
               Right (_, text, truncated) -> do
@@ -116,7 +125,7 @@ finishedJob :: Job
 finishedJob =
   runningJob
     { jobPid = Nothing
-    , jobStatus = JobExited (ExitFailure (-15))
+    , jobStatus = JobSignalled 15
     }
 
 startedJob :: Either String Job -> IO Job

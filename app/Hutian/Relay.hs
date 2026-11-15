@@ -18,7 +18,9 @@
 -- A sandboxed client can therefore spend tokens, but it cannot choose the
 -- host, path, headers, or credentials of the upstream request.
 module Hutian.Relay
-  ( RelaySettings (..)
+  ( RelayAuth (..)
+  , RelayAuthPolicy (..)
+  , RelaySettings (..)
   , parseRelaySettings
   , defaultRelayMaxBody
   , maxRelayKeyBytes
@@ -26,7 +28,7 @@ module Hutian.Relay
   , stderrLogger
   , RelayRuntime
   , newRelayRuntime
-  , loadRelayKey
+  , loadRelayAuth
   , trimKey
   , redactKey
   , runRelay
@@ -73,13 +75,30 @@ import System.Directory (doesPathExist, removeFile)
 import System.IO (Handle, hPutStrLn, stderr)
 import System.Posix.Files (getFileStatus, isSocket, setFileMode)
 
+-- | Whether the relay requires a key. The key itself arrives separately so it
+-- never becomes part of parsed settings.
+data RelayAuthPolicy
+  = RelayAuthRequired
+  | RelayAuthDisabled
+  deriving stock (Eq, Show)
+
+-- | The credential used for upstream requests. 'Show' never reveals the key.
+data RelayAuth
+  = RelayAuthNone
+  | RelayAuthBearer BS.ByteString
+  deriving stock (Eq)
+
+instance Show RelayAuth where
+  show RelayAuthNone = "RelayAuthNone"
+  show (RelayAuthBearer _) = "RelayAuthBearer <redacted>"
+
 -- | Everything the relay needs at startup. The key is deliberately not part of
 -- the settings: it is read from standard input so it never appears in argv.
 data RelaySettings = RelaySettings
   { relayListenPath :: FilePath
   , relayUpstream :: String
   , relayMaxBody :: Int
-  , relayNoAuth :: Bool
+  , relayAuthPolicy :: RelayAuthPolicy
   }
   deriving stock (Eq, Show)
 
@@ -107,7 +126,10 @@ parseRelaySettings arguments = do
           { relayListenPath = listenPath
           , relayUpstream = upstream
           , relayMaxBody = maxBody
-          , relayNoAuth = flagPresent "--no-auth" options
+          , relayAuthPolicy =
+              if flagPresent "--no-auth" options
+                then RelayAuthDisabled
+                else RelayAuthRequired
           }
     missing -> Left (missingMessage missing)
   where
@@ -161,8 +183,8 @@ maxRelayKeyBytes = 64 * 1024
 -- | Read the key from the given handle. The launcher pipes it from the
 -- configured file or command into standard input, so the key never appears in
 -- an argument list or environment.
-loadRelayKey :: Handle -> IO (Either String BS.ByteString)
-loadRelayKey handle = validateKey <$> BS.hGet handle (maxRelayKeyBytes + 1)
+loadRelayAuth :: Handle -> IO (Either String RelayAuth)
+loadRelayAuth handle = fmap (fmap RelayAuthBearer . validateKey) (BS.hGet handle (maxRelayKeyBytes + 1))
 
 validateKey :: BS.ByteString -> Either String BS.ByteString
 validateKey raw
@@ -198,7 +220,7 @@ redactKey key message
 data RelayRuntime = RelayRuntime
   { runtimeListenPath :: FilePath
   , runtimeMaxBody :: Int
-  , runtimeKey :: Maybe BS.ByteString
+  , runtimeAuth :: RelayAuth
   , runtimeManager :: Manager
   , runtimeUpstream :: Request
   , runtimeLogger :: RelayLogger
@@ -210,15 +232,15 @@ type RelayLogger = String -> IO ()
 stderrLogger :: RelayLogger
 stderrLogger message = hPutStrLn stderr ("hutian-llm-relay: " ++ message)
 
-newRelayRuntime :: RelayLogger -> RelaySettings -> Maybe BS.ByteString -> IO RelayRuntime
-newRelayRuntime logger settings key = do
+newRelayRuntime :: RelayLogger -> RelaySettings -> RelayAuth -> IO RelayRuntime
+newRelayRuntime logger settings auth = do
   upstream <- parseRequest (relayUpstream settings)
   manager <- newManager tlsManagerSettings
   pure
     RelayRuntime
       { runtimeListenPath = relayListenPath settings
       , runtimeMaxBody = relayMaxBody settings
-      , runtimeKey = key
+      , runtimeAuth = auth
       , runtimeManager = manager
       , runtimeUpstream = upstream
       , runtimeLogger = logger
@@ -243,8 +265,9 @@ listenUnix path = do
   removeStaleSocket path
   sock <- socket AF_UNIX Stream defaultProtocol
   bind sock (SockAddrUnix path)
-  listen sock 16
+  -- Restrict the socket before anyone can connect.
   setFileMode path 0o600
+  listen sock 16
   pure sock
 
 removeStaleSocket :: FilePath -> IO ()
@@ -291,15 +314,15 @@ relayRequest runtime body =
         [ ("Content-Type", "application/json")
         , ("Accept", "text/event-stream")
         ]
-          ++ maybe
-            []
-            (\key -> [("Authorization", "Bearer " <> key)])
-            (runtimeKey runtime)
+          ++ authHeaders (runtimeAuth runtime)
     , requestBody = RequestBodyLBS (BL.fromStrict body)
     , responseTimeout = responseTimeoutNone
     , redirectCount = 0
     , checkResponse = \_ _ -> pure ()
     }
+  where
+    authHeaders RelayAuthNone = []
+    authHeaders (RelayAuthBearer key) = [("Authorization", "Bearer " <> key)]
 
 forward :: RelayRuntime -> Socket -> BS.ByteString -> IO ()
 forward runtime connection body = do
@@ -342,5 +365,6 @@ sendError connection code message =
 
 logRelay :: RelayRuntime -> String -> IO ()
 logRelay runtime message =
-  runtimeLogger runtime $
-    maybe message (`redactKey` message) (runtimeKey runtime)
+  runtimeLogger runtime $ case runtimeAuth runtime of
+    RelayAuthNone -> message
+    RelayAuthBearer key -> redactKey key message

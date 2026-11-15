@@ -40,6 +40,7 @@ common dependencies
     , base >=4.14 && <5
     , bytestring
     , colour
+    , containers
     , directory
     , filepath
     , http-client
@@ -74,16 +75,15 @@ executable hutian-shell
       Hutian.Llm.Protocol
       Hutian.Llm.UnixSocket
       Hutian.Markdown
-      Hutian.Output
       Hutian.Paths
       Hutian.Policy
       Hutian.Prompt
       Hutian.Relay.Protocol
       Hutian.Render
       Hutian.Shell
-      Hutian.Syntax
       Hutian.Terminal
       Hutian.Tool
+      Hutian.Tool.Exec
   hs-source-dirs:   app
   build-depends:
       network
@@ -140,7 +140,6 @@ test-suite hutian-shell-test
       Hutian.Llm.Protocol
       Hutian.Llm.UnixSocket
       Hutian.Markdown
-      Hutian.Output
       Hutian.Paths
       Hutian.Policy
       Hutian.Prompt
@@ -148,8 +147,8 @@ test-suite hutian-shell-test
       Hutian.Relay.Protocol
       Hutian.Render
       Hutian.Shell
-      Hutian.Syntax
       Hutian.Tool
+      Hutian.Tool.Exec
       InterruptSpec
       JobsSpec
       LlmIntegrationSpec
@@ -163,7 +162,7 @@ test-suite hutian-shell-test
       RelaySpec
       RenderSpec
       ShellSpec
-      SyntaxSpec
+      HighlightSpec
       TestSupport
       ToolSpec
       WireSpec

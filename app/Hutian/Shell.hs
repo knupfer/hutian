@@ -9,7 +9,6 @@ module Hutian.Shell
   , runShellCommand
   , runShellCommandOutput
   , shellExitSuffix
-  , withBuiltins
   ) where
 
 import Control.Exception (IOException, catch)
@@ -83,7 +82,7 @@ shellExitSuffix ExitSuccess = ""
 shellExitSuffix (ExitFailure code) = "\n[exit " ++ show code ++ "]\n"
 
 executableCommands :: IO [String]
-executableCommands = withBuiltins . concat <$> (getSearchPath >>= mapM commandsIn)
+executableCommands = nub . concat <$> (getSearchPath >>= mapM commandsIn)
   where
     commandsIn dir = do
       entries <- listDirectory dir `catch` \(_ :: IOException) -> pure []
@@ -97,10 +96,3 @@ executableCommands = withBuiltins . concat <$> (getSearchPath >>= mapM commandsI
         if not isDirectory && executable permissions
           then Just entry
           else Nothing
-
--- | Add builtins and remove duplicate command names.
-withBuiltins :: [String] -> [String]
-withBuiltins names = nub (builtinCommands ++ names)
-
-builtinCommands :: [String]
-builtinCommands = ["help", "jobs", "job"]

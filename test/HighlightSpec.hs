@@ -1,7 +1,7 @@
-module SyntaxSpec (tests) where
+module HighlightSpec (tests) where
 
 import Data.List (isInfixOf)
-import Hutian.Syntax (highlightShellLine)
+import Hutian.Highlight (highlightShellLine)
 import Test.Tasty
 import Test.Tasty.HUnit
 import TestSupport (stripAnsi)
@@ -9,7 +9,7 @@ import TestSupport (stripAnsi)
 tests :: TestTree
 tests =
   testGroup
-    "syntax"
+    "highlight"
     [ testCase "shell commands gain ANSI styles without changing their text" $ do
         let rendered = highlightShellLine "if true; then echo \"hi\"; fi"
         assertBool "expected a syntax style" ("\ESC[38;2;" `isInfixOf` rendered)

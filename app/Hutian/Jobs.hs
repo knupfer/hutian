@@ -3,6 +3,7 @@
 module Hutian.Jobs
   ( JobId (..)
   , JobStatus (..)
+  , jobStatusFromExit
   , Job (..)
   , jobIdText
   , jobStatusText
@@ -12,6 +13,9 @@ module Hutian.Jobs
   , jobOutputResult
   , jobOutputTruncationNote
   , jobKillResult
+  , LineCount
+  , lineCount
+  , lineCountValue
   , defaultJobOutputLines
   , maxJobOutputLines
   ) where
@@ -23,10 +27,22 @@ import System.Exit (ExitCode (..))
 newtype JobId = JobId Int
   deriving stock (Eq, Ord, Show)
 
+-- | A job either runs or has stopped with an explicit outcome. Keeping the
+-- exit number and the signal number separate avoids the @ExitFailure (-n)@
+-- convention leaking into presentation code.
 data JobStatus
   = JobRunning
-  | JobExited ExitCode
+  | JobExited Int
+  | JobSignalled Int
   deriving stock (Eq, Show)
+
+-- | Convert the process library's exit code to a job status. A negative
+-- failure code means the process was terminated by a signal.
+jobStatusFromExit :: ExitCode -> JobStatus
+jobStatusFromExit ExitSuccess = JobExited 0
+jobStatusFromExit (ExitFailure code)
+  | code < 0 = JobSignalled (negate code)
+  | otherwise = JobExited code
 
 -- | The stable information retained for a background job. The process handle
 -- lives in the runtime so this value can be inspected and rendered purely.
@@ -42,14 +58,12 @@ data Job = Job
 jobIdText :: JobId -> String
 jobIdText (JobId value) = show value
 
--- | A short, human-readable status. A negative exit code means the process was
--- terminated by a signal, which the process library reports as @-signum@.
+-- | A short, human-readable status.
 jobStatusText :: JobStatus -> String
 jobStatusText JobRunning = "running"
-jobStatusText (JobExited ExitSuccess) = "exit 0"
-jobStatusText (JobExited (ExitFailure code))
-  | code < 0 = "signal " ++ show (negate code)
-  | otherwise = "exit " ++ show code
+jobStatusText (JobExited 0) = "exit 0"
+jobStatusText (JobExited code) = "exit " ++ show code
+jobStatusText (JobSignalled signal) = "signal " ++ show signal
 
 -- | One line for the @jobs@ list.
 jobSummaryLine :: Job -> String
@@ -65,7 +79,7 @@ jobSummaryLine job =
     pidSuffix =
       case jobStatus job of
         JobRunning -> maybe "" (\pid -> "  pid " ++ show pid) (jobPid job)
-        JobExited _ -> ""
+        _ -> ""
 
 -- | The line shown when a job starts. The command and process details are
 -- already visible in the request or the @jobs@ list, so the notice stays to a
@@ -110,8 +124,22 @@ jobKillResult wasRunning job
         ++ " already finished: "
         ++ jobStatusText (jobStatus job)
 
-defaultJobOutputLines :: Int
-defaultJobOutputLines = 50
+-- | A bounded, positive number of log lines. Constructing one is the only way
+-- to request a tail size, so runtime code never needs to clamp a raw 'Int'.
+newtype LineCount = LineCount Int
+  deriving stock (Eq, Ord, Show)
+
+-- | Clamp a requested tail size into the supported range. Constructing one is
+-- the only way to request a tail size, so runtime code never sees a raw 'Int'
+-- and callers do not need their own bounds handling.
+lineCount :: Int -> LineCount
+lineCount = LineCount . max 1 . min maxJobOutputLines
+
+lineCountValue :: LineCount -> Int
+lineCountValue (LineCount value) = value
+
+defaultJobOutputLines :: LineCount
+defaultJobOutputLines = LineCount 50
 
 maxJobOutputLines :: Int
 maxJobOutputLines = 500

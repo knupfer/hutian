@@ -1,14 +1,23 @@
--- | Pure ANSI rendering for the interactive prompt.
+-- | Pure ANSI rendering for prompts, output labels, and terminal chrome.
+--
+-- Rendering is expressed as data and strings only. The single IO boundary that
+-- writes these strings lives in "Hutian.Console".
 module Hutian.Render
-  ( promptRenderText
+  ( PromptKind (..)
+  , OutputKind (..)
+  , promptRenderText
   , toolPromptText
   , toolLabelText
-  , approvePromptText
-  , approvalDecisionText
-  , moveCursorText
-  , startPromptText
   , prefixFor
   , outputForeground
+  , outputLabelText
+  , grayOutputText
+  , ToolApproval (..)
+  , approvalForKey
+  , approvalDecisionText
+  , approvePromptText
+  , moveCursorText
+  , startPromptText
   , grayForeground
   , boldVibrantPink
   , boldTeal
@@ -27,7 +36,6 @@ import Numeric (showHex)
 import qualified Hutian.Ansi as Ansi
 import Hutian.Editor
   ( Prompt
-  , PromptMode (..)
   , cursorPosition
   , initialPrompt
   , physicalRows
@@ -36,7 +44,7 @@ import Hutian.Editor
   , suggestionRowCount
   )
 import Hutian.Markdown (renderMarkdownRows)
-import Hutian.Syntax (highlightShellLine)
+import Hutian.Highlight (highlightShellLine)
 import System.Console.ANSI
   ( clearFromCursorToScreenEndCode
   , cursorDownCode
@@ -46,9 +54,24 @@ import System.Console.ANSI
   , showCursorCode
   )
 
+-- | What is being rendered above an input or command. User LLM prompts are
+-- Markdown; user term input and model commands are shell text. Model commands
+-- carry their tool name so the label cannot drift from the call.
+data PromptKind
+  = LlmPrompt
+  | ShellPrompt
+  | ToolPrompt String
+  deriving stock (Eq, Show)
+
+-- | Which label and palette to use for captured output.
+data OutputKind
+  = TermOutput
+  | ToolOutput
+  deriving stock (Eq, Show)
+
 -- | Render a prompt and return the text to write plus the cursor position.
-promptRenderText :: String -> PromptMode -> Int -> Int -> Prompt -> (String, (Int, Int))
-promptRenderText termPrompt mode previousRow width prompt =
+promptRenderText :: PromptKind -> Int -> Int -> Prompt -> (String, (Int, Int))
+promptRenderText kind previousRow width prompt =
   ( moveUp
       ++ "\r"
       ++ reset
@@ -60,16 +83,15 @@ promptRenderText termPrompt mode previousRow width prompt =
   , (cursorRow, cursorColumn)
   )
   where
-    prefix = prefixFor termPrompt mode
+    prefix = prefixFor kind
     plainRows = physicalRows width prefix prompt
     (cursorRow, cursorColumn) = cursorPosition width prefix prompt
     total = length plainRows
     suggestionCount = suggestionRowCount width prompt
     inputRowCount = total - suggestionCount
+    markdownRows = kind == LlmPrompt
     rows
-      | mode == LlmMode =
-          renderMarkdownRows (take inputRowCount plainRows)
-            ++ drop inputRowCount plainRows
+      | markdownRows = renderMarkdownRows (take inputRowCount plainRows) ++ drop inputRowCount plainRows
       | otherwise = plainRows
     prefixCounts = prefixCharacterCounts width prefix plainRows
     moveUp = cursorUpCode previousRow
@@ -80,10 +102,10 @@ promptRenderText termPrompt mode previousRow width prompt =
     renderRow (index, row, prefixCount) =
       let (prefixPart, rest) = splitAt prefixCount row
           prefixOutput
-            | prefixCount > 0 = prefixForegroundFor mode ++ prefixPart ++ reset
+            | prefixCount > 0 = prefixForegroundFor kind ++ prefixPart ++ reset
             | otherwise = ""
           restRendered
-            | mode == LlmMode = rest
+            | markdownRows = rest
             | index < inputRowCount = highlightShellLine rest
             | otherwise = rest
           styleReset
@@ -99,18 +121,41 @@ promptRenderText termPrompt mode previousRow width prompt =
 -- user-entered commands.
 toolPromptText :: String -> Int -> String -> String
 toolPromptText toolName width command =
-  fst (promptRenderText (toolPrefix toolName) ToolMode 0 width (setPromptText command initialPrompt))
+  fst (promptRenderText (ToolPrompt toolName) 0 width (setPromptText command initialPrompt))
     ++ reset
     ++ "\n"
-
--- | The prefix shown before a tool call. Like every prompt it occupies its own
--- line above the command.
-toolPrefix :: String -> String
-toolPrefix toolName = "tool " ++ toolName ++ ":\n"
 
 -- | A label for a tool call that has no command to show.
 toolLabelText :: String -> String
 toolLabelText toolName = boldTeal ++ "tool " ++ toolName ++ ":" ++ reset
+
+-- | The prefix shown above a prompt. Every prompt label occupies its own line.
+prefixFor :: PromptKind -> String
+prefixFor LlmPrompt = "ask:\n"
+prefixFor ShellPrompt = "shell:\n"
+prefixFor (ToolPrompt toolName) = "tool " ++ toolName ++ ":\n"
+
+prefixForegroundFor :: PromptKind -> String
+prefixForegroundFor (ToolPrompt _) = boldTeal
+prefixForegroundFor _ = boldVibrantPink
+
+-- | The user's decision about a model-requested command. Only an explicit
+-- @y@ or @n@ decides; @Ctrl+C@ aborts the whole LLM turn.
+data ToolApproval
+  = ToolApproved
+  | ToolDenied
+  | ToolAborted
+  deriving stock (Eq, Show)
+
+-- | Map a raw terminal key to an approval decision. Unrecognised keys are
+-- ignored so a stray key cannot approve a command.
+approvalForKey :: Char -> Maybe ToolApproval
+approvalForKey 'y' = Just ToolApproved
+approvalForKey 'Y' = Just ToolApproved
+approvalForKey 'n' = Just ToolDenied
+approvalForKey 'N' = Just ToolDenied
+approvalForKey '\ETX' = Just ToolAborted
+approvalForKey _ = Nothing
 
 -- | The approval prompt shown while waiting for a key. The label uses the
 -- user's prompt colour; the choices stay in the terminal's default colour.
@@ -144,13 +189,27 @@ moveCursorText (oldRow, _) (newRow, newColumn) =
 startPromptText :: String
 startPromptText = clearLine
 
-prefixFor :: String -> PromptMode -> String
-prefixFor _ LlmMode = "ask:\n"
-prefixFor termPrompt _ = termPrompt
+-- | Foreground for the label printed before command output. The colour is the
+-- command's mode colour, dimmed like a thinking block.
+outputForeground :: OutputKind -> String
+outputForeground TermOutput = dimPinkForeground
+outputForeground ToolOutput = dimTealForeground
 
-prefixForegroundFor :: PromptMode -> String
-prefixForegroundFor ToolMode = boldTeal
-prefixForegroundFor _ = boldVibrantPink
+-- | The label printed above captured output, coloured when interactive.
+outputLabelText :: OutputKind -> Bool -> String
+outputLabelText kind interactive
+  | interactive = outputForeground kind ++ label ++ reset
+  | otherwise = label
+  where
+    label
+      | kind == ToolOutput = "tool output:"
+      | otherwise = "output:"
+
+-- | Wrap captured output in gray when it is going to a terminal.
+grayOutputText :: Bool -> String -> String
+grayOutputText interactive text
+  | interactive && not (null text) = grayForeground ++ text ++ reset
+  | otherwise = text
 
 -- | How the terminal cursor should look for a given activity.
 data CursorStyle
@@ -170,13 +229,6 @@ cursorStyleText RespondingCursor = tealCursorColor ++ steadyBlockCursor
 -- cursor is visible.
 resetCursorText :: String
 resetCursorText = showCursorText ++ resetCursorColor ++ defaultCursorShape
-
--- | Foreground for the 'output:' label printed before command output. The
--- colour is the command's mode colour, dimmed like a thinking block.
-outputForeground :: PromptMode -> String
-outputForeground TermMode = dimPinkForeground
-outputForeground ToolMode = dimTealForeground
-outputForeground LlmMode = grayForeground
 
 boldVibrantPink,
   boldTeal,

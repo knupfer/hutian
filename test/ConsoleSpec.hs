@@ -2,14 +2,14 @@ module ConsoleSpec (tests) where
 
 import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
 import Hutian.Console
-  ( ToolApproval (..)
-  , approvalForKey
-  , consoleWriteGrayLine
+  ( consoleWriteGrayLine
   , consoleWriteLine
   , withGrayOutput
   )
 import Hutian.Render
-  ( approvalDecisionText
+  ( ToolApproval (..)
+  , approvalDecisionText
+  , approvalForKey
   , approvePromptText
   , boldVibrantPink
   , grayForeground

@@ -1,7 +1,7 @@
 module PromptSpec (tests) where
 
 import Hutian.Editor
-  ( PromptMode (..)
+  ( InputMode (..)
   , activePrompt
   , initialPrompt
   , initialPromptBuffers
@@ -25,101 +25,101 @@ tests =
         case stepPrompt history KeySubmit llmState of
           StepFinish PromptSubmitted prompt next -> do
             promptText prompt @?= "hello\n"
-            promptMode next @?= LlmMode
-            bufferText LlmMode next @?= "\n"
+            promptMode next @?= LlmInput
+            bufferText LlmInput next @?= "\n"
           _ -> assertFailure "expected a submitted prompt"
     , testCase "submitting term input clears only the term buffer" $ do
         let state =
               initialPromptState
-                TermMode
+                TermInput
                 ( storePrompt
-                    TermMode
+                    TermInput
                     (setPromptText "ls" initialPrompt)
-                    (storePrompt LlmMode (setPromptText "hello" initialPrompt) initialPromptBuffers)
+                    (storePrompt LlmInput (setPromptText "hello" initialPrompt) initialPromptBuffers)
                 )
         case stepPrompt history KeyEnter state of
           StepFinish PromptSubmitted prompt next -> do
             promptText prompt @?= "ls\n"
-            promptMode next @?= TermMode
-            bufferText TermMode next @?= "\n"
-            bufferText LlmMode next @?= "hello\n"
+            promptMode next @?= TermInput
+            bufferText TermInput next @?= "\n"
+            bufferText LlmInput next @?= "hello\n"
           _ -> assertFailure "expected a submitted prompt"
     , testCase "Ctrl+D exits on an empty prompt" $ do
-        assertExit LlmMode
-        assertExit TermMode
+        assertExit LlmInput
+        assertExit TermInput
     , testCase "Ctrl+C clears only the active buffer" $ do
         let state =
               initialPromptState
-                TermMode
+                TermInput
                 ( storePrompt
-                    TermMode
+                    TermInput
                     (setPromptText "rm -rf" initialPrompt)
-                    (storePrompt LlmMode (setPromptText "hello" initialPrompt) initialPromptBuffers)
+                    (storePrompt LlmInput (setPromptText "hello" initialPrompt) initialPromptBuffers)
                 )
         next <- stepRedraw history KeyCancel state
-        promptMode next @?= TermMode
-        bufferText TermMode next @?= "\n"
-        bufferText LlmMode next @?= "hello\n"
+        promptMode next @?= TermInput
+        bufferText TermInput next @?= "\n"
+        bufferText LlmInput next @?= "hello\n"
     , testCase "typing redraws and stores the updated text" $ do
         next <- stepRedraw history (KeyChar '!') llmState
-        promptMode next @?= LlmMode
-        bufferText LlmMode next @?= "hello!\n"
+        promptMode next @?= LlmInput
+        bufferText LlmInput next @?= "hello!\n"
     , testCase "cursor movement moves without redrawing" $
         case stepPrompt history KeyLeft llmState of
           StepMoveCursor prompt next -> do
             unColumn (promptColumn prompt) @?= 4
-            promptMode next @?= LlmMode
-            bufferText LlmMode next @?= "hello\n"
+            promptMode next @?= LlmInput
+            bufferText LlmInput next @?= "hello\n"
           _ -> assertFailure "expected a cursor move"
     , testCase "multi-line term input continues instead of submitting" $ do
-        next <- stepRedraw history KeyEnter (stateWith TermMode "echo 'open")
-        promptMode next @?= TermMode
-        bufferText TermMode next @?= "echo 'open\n\n"
+        next <- stepRedraw history KeyEnter (stateWith TermInput "echo 'open")
+        promptMode next @?= TermInput
+        bufferText TermInput next @?= "echo 'open\n\n"
     , testCase "history up recalls the active mode's newest entry" $ do
         next <- stepRedraw history KeyUp llmState
-        bufferText LlmMode next @?= "llm\n"
+        bufferText LlmInput next @?= "llm\n"
     , testCase "history down restores the draft" $ do
         up <- stepRedraw history KeyUp llmState
         down <- stepRedraw history KeyDown up
-        bufferText LlmMode down @?= "hello\n"
+        bufferText LlmInput down @?= "hello\n"
     , testCase "history down moves toward the newest entry" $ do
         newest <- stepRedraw historyWithTwo KeyUp llmState
         older <- stepRedraw historyWithTwo KeyUp newest
         down <- stepRedraw historyWithTwo KeyDown older
-        bufferText LlmMode newest @?= "llm-2\n"
-        bufferText LlmMode older @?= "llm-1\n"
-        bufferText LlmMode down @?= "llm-2\n"
+        bufferText LlmInput newest @?= "llm-2\n"
+        bufferText LlmInput older @?= "llm-1\n"
+        bufferText LlmInput down @?= "llm-2\n"
     , testCase "history navigation with no entries continues" $ do
         assertContinue KeyUp
         assertContinue KeyDown
     , testCase "editing resets history navigation" $ do
         newest <- stepRedraw historyWithTwo KeyUp llmState
         older <- stepRedraw historyWithTwo KeyUp newest
-        bufferText LlmMode older @?= "llm-1\n"
+        bufferText LlmInput older @?= "llm-1\n"
         edited <- stepRedraw historyWithTwo (KeyChar 'x') older
-        bufferText LlmMode edited @?= "llm-1x\n"
+        bufferText LlmInput edited @?= "llm-1x\n"
         newest' <- stepRedraw historyWithTwo KeyUp edited
-        bufferText LlmMode newest' @?= "llm-2\n"
+        bufferText LlmInput newest' @?= "llm-2\n"
     , testCase "switching modes resets history navigation" $ do
         recalled <- stepRedraw historyWithTwo KeyUp llmState
         switched <- stepRedraw historyWithTwo KeyToggleMode recalled
-        promptMode switched @?= TermMode
-        bufferText LlmMode switched @?= "llm-2\n"
+        promptMode switched @?= TermInput
+        bufferText LlmInput switched @?= "llm-2\n"
         newest <- stepRedraw historyWithTwo KeyUp switched
-        bufferText TermMode newest @?= "term-2\n"
+        bufferText TermInput newest @?= "term-2\n"
     , testCase "completion is requested in term mode" $
-        case stepPrompt history KeyComplete (stateWith TermMode "ls") of
+        case stepPrompt history KeyComplete (stateWith TermInput "ls") of
           StepComplete next -> do
-            promptMode next @?= TermMode
-            bufferText TermMode next @?= "ls\n"
+            promptMode next @?= TermInput
+            bufferText TermInput next @?= "ls\n"
           _ -> assertFailure "expected a completion request"
     , testCase "accepting a completion stores it and resets history" $ do
         recalled <- stepRedraw historyWithTwo KeyUp llmState
         let completed = setPromptText "echo" initialPrompt
             next = acceptCompletion completed recalled
-        bufferText LlmMode next @?= "echo\n"
+        bufferText LlmInput next @?= "echo\n"
         newest <- stepRedraw historyWithTwo KeyUp next
-        bufferText LlmMode newest @?= "llm-2\n"
+        bufferText LlmInput newest @?= "llm-2\n"
     ]
 
 history :: History
@@ -129,15 +129,15 @@ historyWithTwo :: History
 historyWithTwo = History ["term-1", "term-2"] ["llm-1", "llm-2"]
 
 llmState :: PromptState
-llmState = stateWith LlmMode "hello"
+llmState = stateWith LlmInput "hello"
 
-stateWith :: PromptMode -> String -> PromptState
+stateWith :: InputMode -> String -> PromptState
 stateWith mode text =
   initialPromptState
     mode
     (storePrompt mode (setPromptText text initialPrompt) initialPromptBuffers)
 
-bufferText :: PromptMode -> PromptState -> String
+bufferText :: InputMode -> PromptState -> String
 bufferText mode = promptText . activePrompt mode . promptBuffers
 
 stepRedraw :: History -> Key -> PromptState -> IO PromptState
@@ -146,7 +146,7 @@ stepRedraw hist key state =
     StepRedraw next -> pure next
     _ -> assertFailure "expected a redraw" >> pure state
 
-assertExit :: PromptMode -> Assertion
+assertExit :: InputMode -> Assertion
 assertExit mode =
   case stepPrompt history KeySubmit (initialPromptState mode initialPromptBuffers) of
     StepFinish PromptExited prompt next -> do
@@ -158,5 +158,5 @@ assertExit mode =
 assertContinue :: Key -> Assertion
 assertContinue key =
   case stepPrompt (History [] []) key llmState of
-    StepContinue next -> bufferText LlmMode next @?= "hello\n"
+    StepContinue next -> bufferText LlmInput next @?= "hello\n"
     _ -> assertFailure "expected history navigation to continue"

@@ -24,7 +24,10 @@ import qualified Data.Text.Encoding as TextEncoding
 import Hutian.Conversation (ToolCall (..))
 import Hutian.Jobs
   ( JobId (..)
+  , LineCount
   , defaultJobOutputLines
+  , lineCount
+  , lineCountValue
   , maxJobOutputLines
   )
 import Hutian.Policy (ModelShell (..))
@@ -41,7 +44,7 @@ data ToolRequest
   = RequestShell String
   | RequestShellBackground String
   | RequestJobs
-  | RequestJobOutput JobId Int
+  | RequestJobOutput JobId LineCount
   | RequestJobKill JobId
   deriving stock (Eq, Show)
 
@@ -56,7 +59,7 @@ data ToolPlan
   | -- | List the session's background jobs.
     PlanListJobs
   | -- | Read the end of a job log.
-    PlanJobOutput JobId Int
+    PlanJobOutput JobId LineCount
   | -- | Stop a background job.
     PlanJobKill JobId
   deriving stock (Eq, Show)
@@ -105,7 +108,7 @@ jobOutputTool =
     "job_output"
     ( "Read the end of a background job's log. The optional lines argument "
         ++ "controls how many lines are returned; it defaults to "
-        ++ show defaultJobOutputLines
+        ++ show (lineCountValue defaultJobOutputLines)
         ++ " and is capped at "
         ++ show maxJobOutputLines
         ++ "."
@@ -197,21 +200,22 @@ toolRequest call =
 -- In ask mode, only commands need approval; reading job state does not.
 planTool :: ModelShell -> ToolCall -> ToolPlan
 planTool policy call =
-  case toolRequest call of
-    Left message -> PlanRefuse ("tool error: " ++ message)
-    Right request ->
-      case policy of
-        ModelShellDenied -> PlanRefuse "tool error: the model shell tools are disabled"
-        ModelShellAllowed -> allowed request
-        ModelShellAsk -> asked request
+  case policy of
+    -- Refuse before inspecting the call, so a denied model cannot probe which
+    -- tool names or argument shapes exist.
+    ModelShellDenied -> PlanRefuse "tool error: the model shell tools are disabled"
+    ModelShellAllowed -> planned (run Foreground) (run Background)
+    ModelShellAsk -> planned (approve Foreground) (approve Background)
   where
-    allowed = resolve (run Foreground) (run Background)
-    asked = resolve (approve Foreground) (approve Background)
+    planned shellCommand background =
+      case toolRequest call of
+        Left message -> PlanRefuse ("tool error: " ++ message)
+        Right request -> resolve shellCommand background request
 
     resolve shell background request =
       case request of
         RequestJobs -> PlanListJobs
-        RequestJobOutput target lineCount -> PlanJobOutput target lineCount
+        RequestJobOutput target requestedLines -> PlanJobOutput target requestedLines
         RequestJobKill target -> PlanJobKill target
         RequestShell command -> shell command
         RequestShellBackground command -> background command
@@ -247,12 +251,11 @@ jobIdFrom arguments =
           | identifier > 0 -> Right (JobId identifier)
         _ -> Left "job_id must be a positive integer"
 
-linesFrom :: KeyMap Value -> Either String Int
+linesFrom :: KeyMap Value -> Either String LineCount
 linesFrom arguments =
   case KeyMap.lookup "lines" arguments of
     Nothing -> Right defaultJobOutputLines
     Just value ->
       case (Aeson.fromJSON value :: Result Int) of
-        Success lineCount
-          | lineCount > 0 -> Right lineCount
-        _ -> Left "lines must be a positive integer"
+        Success requested -> Right (lineCount requested)
+        _ -> Left "lines must be an integer"

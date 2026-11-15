@@ -7,6 +7,7 @@ import qualified ConsoleSpec
 import qualified ConversationSpec
 import qualified EditorSpec
 import qualified HistorySpec
+import qualified HighlightSpec
 import qualified InterruptSpec
 import qualified JobsSpec
 import qualified LlmIntegrationSpec
@@ -20,7 +21,6 @@ import qualified PromptSpec
 import qualified RelaySpec
 import qualified RenderSpec
 import qualified ShellSpec
-import qualified SyntaxSpec
 import qualified ToolSpec
 import qualified WireSpec
 import Test.Tasty
@@ -39,6 +39,7 @@ main =
         , ConversationSpec.tests
         , EditorSpec.tests
         , HistorySpec.tests
+        , HighlightSpec.tests
         , JobsSpec.tests
         , LlmSpec.tests
         , LlmIntegrationSpec.tests
@@ -51,7 +52,6 @@ main =
         , RelaySpec.tests
         , RenderSpec.tests
         , ShellSpec.tests
-        , SyntaxSpec.tests
         , ToolSpec.tests
         , WireSpec.tests
         , InterruptSpec.tests

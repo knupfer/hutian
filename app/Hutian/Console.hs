@@ -3,9 +3,7 @@
 -- | The single boundary for terminal IO: writes, attributes, cursor styling,
 -- and size. Other modules build strings and call these functions.
 module Hutian.Console
-  ( ToolApproval (..)
-  , approvalForKey
-  , configureConsole
+  ( configureConsole
   , confirmToolCommand
   , consoleFlush
   , consoleInputReady
@@ -33,18 +31,18 @@ import Control.Concurrent.MVar (MVar, newMVar, withMVar)
 import Control.Exception (IOException, catch, finally, try)
 import Control.Monad (when)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
-import Hutian.Editor (PromptMode)
-import Hutian.Output
-  ( grayOutputText
-  , outputLabelText
-  )
 import Hutian.Render
   ( CursorStyle (..)
+  , OutputKind
+  , ToolApproval (..)
   , approvalDecisionText
+  , approvalForKey
   , approvePromptText
   , cursorStyleText
   , grayForeground
+  , grayOutputText
   , hideCursorText
+  , outputLabelText
   , reset
   , resetCursorText
   , showCursorText
@@ -169,24 +167,6 @@ consoleWriteGrayLine message = do
   consoleWriteLine (grayOutputText interactive message)
   consoleFlush
 
--- | The user's decision about a model-requested command.
-data ToolApproval
-  = ToolApproved
-  | ToolDenied
-  | ToolAborted
-  deriving stock (Eq, Show)
-
--- | Map a raw terminal key to an approval decision. Unrecognised keys are
--- ignored so only an explicit @y@ or @n@ decides the prompt. @Ctrl+C@ aborts
--- the whole LLM turn rather than counting as a denial.
-approvalForKey :: Char -> Maybe ToolApproval
-approvalForKey 'y' = Just ToolApproved
-approvalForKey 'Y' = Just ToolApproved
-approvalForKey 'n' = Just ToolDenied
-approvalForKey 'N' = Just ToolDenied
-approvalForKey '\ETX' = Just ToolAborted
-approvalForKey _ = Nothing
-
 -- | The result line shown after the options are removed.
 approvalResult :: ToolApproval -> String
 approvalResult ToolApproved = "Yes"
@@ -242,10 +222,10 @@ drainPendingInput = do
       Right _ -> drainPendingInput
 
 -- | Print the label shown on its own line before shell or tool output.
-printOutputLabel :: PromptMode -> IO ()
-printOutputLabel mode = do
+printOutputLabel :: OutputKind -> IO ()
+printOutputLabel kind = do
   interactive <- consoleIsInteractive
-  consoleWriteLine (outputLabelText mode interactive)
+  consoleWriteLine (outputLabelText kind interactive)
   consoleFlush
 
 -- | Print streamed output in gray, restoring the terminal afterwards. When

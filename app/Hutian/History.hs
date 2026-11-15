@@ -17,7 +17,7 @@ module Hutian.History
 
 import Data.Char (isSpace)
 import Data.Maybe (fromMaybe)
-import Hutian.Editor (Prompt, PromptMode (..), atMay, promptText, setPromptText)
+import Hutian.Editor (InputMode (..), Prompt, atMay, promptText, setPromptText)
 
 -- | Term and LLM history kept together, so callers cannot mix them up.
 {-@ data History = History
@@ -36,13 +36,12 @@ data HistoryTarget
   | LlmHistory
   deriving stock (Eq, Show)
 
--- | The history list that a prompt mode reads and writes.
-historyTargetFor :: PromptMode -> HistoryTarget
-historyTargetFor LlmMode = LlmHistory
-historyTargetFor TermMode = TermHistory
-historyTargetFor ToolMode = TermHistory
+-- | The history list that an input mode reads and writes.
+historyTargetFor :: InputMode -> HistoryTarget
+historyTargetFor LlmInput = LlmHistory
+historyTargetFor TermInput = TermHistory
 
-historyForMode :: PromptMode -> History -> [String]
+historyForMode :: InputMode -> History -> [String]
 historyForMode mode (History term llm) =
   case historyTargetFor mode of
     TermHistory -> term
@@ -57,7 +56,7 @@ data HistoryState = HistoryState
 initialHistoryState :: HistoryState
 initialHistoryState = HistoryState Nothing ""
 
-inputDestination :: PromptMode -> String -> Maybe HistoryTarget
+inputDestination :: InputMode -> String -> Maybe HistoryTarget
 inputDestination mode text
   | all isSpace text = Nothing
   | otherwise = Just (historyTargetFor mode)

@@ -2,7 +2,7 @@
 
 -- | Pure editor state, key semantics, and layout used by the interactive prompt.
 module Hutian.Editor
-  ( PromptMode (..)
+  ( InputMode (..)
   , Row (unRow)
   , Column (unColumn)
   , GoalColumn (unGoalColumn)
@@ -59,12 +59,12 @@ layoutWidth width
   | width <= 0 = 1
   | otherwise = width
 
--- | The input modes. 'ToolMode' is used only to display commands requested by
--- the model; user input is still edited in 'LlmMode' or 'TermMode'.
-data PromptMode
-  = LlmMode
-  | TermMode
-  | ToolMode
+-- | The two modes in which the user can edit and submit input. Commands
+-- requested by the model are displayed separately and are never edited, so
+-- they no longer need a fake input mode.
+data InputMode
+  = LlmInput
+  | TermInput
   deriving stock (Eq, Show)
 
 newtype Row = Row { unRow :: Int }
@@ -103,17 +103,15 @@ data PromptBuffers = PromptBuffers
 initialPromptBuffers :: PromptBuffers
 initialPromptBuffers = PromptBuffers initialPrompt initialPrompt
 
-activePrompt :: PromptMode -> PromptBuffers -> Prompt
-activePrompt LlmMode = llmBuffer
-activePrompt TermMode = termBuffer
-activePrompt ToolMode = termBuffer
+activePrompt :: InputMode -> PromptBuffers -> Prompt
+activePrompt LlmInput = llmBuffer
+activePrompt TermInput = termBuffer
 
-storePrompt :: PromptMode -> Prompt -> PromptBuffers -> PromptBuffers
-storePrompt LlmMode prompt buffers = buffers { llmBuffer = prompt }
-storePrompt TermMode prompt buffers = buffers { termBuffer = prompt }
-storePrompt ToolMode prompt buffers = buffers { termBuffer = prompt }
+storePrompt :: InputMode -> Prompt -> PromptBuffers -> PromptBuffers
+storePrompt LlmInput prompt buffers = buffers { llmBuffer = prompt }
+storePrompt TermInput prompt buffers = buffers { termBuffer = prompt }
 
-clearPrompt :: PromptMode -> PromptBuffers -> PromptBuffers
+clearPrompt :: InputMode -> PromptBuffers -> PromptBuffers
 clearPrompt mode = storePrompt mode initialPrompt
 
 -- | What the terminal loop should do in response to a key press.
@@ -129,32 +127,29 @@ data PromptAction
   | PromptComplete
   deriving stock (Eq, Show)
 
-promptAction :: PromptMode -> Prompt -> Key -> PromptAction
-promptAction LlmMode prompt KeySubmit
+promptAction :: InputMode -> Prompt -> Key -> PromptAction
+promptAction LlmInput prompt KeySubmit
   | isEmptyPrompt prompt = PromptExit
   | otherwise = PromptSubmit
-promptAction TermMode prompt KeySubmit
+promptAction TermInput prompt KeySubmit
   | isEmptyPrompt prompt = PromptExit
   | otherwise = PromptEdit KeySubmit
-promptAction TermMode prompt KeyEnter
-  | needsContinuation prompt = PromptContinue
-  | otherwise = PromptSubmit
-promptAction ToolMode prompt KeyEnter
+promptAction TermInput prompt KeyEnter
   | needsContinuation prompt = PromptContinue
   | otherwise = PromptSubmit
 promptAction mode prompt key =
   case key of
     KeyCancel -> PromptClear
     KeyUp
-      | mode == LlmMode && unRow (promptRow prompt) > 0 -> PromptEdit KeyUp
+      | mode == LlmInput && unRow (promptRow prompt) > 0 -> PromptEdit KeyUp
       | otherwise -> PromptHistoryUp
     KeyDown
-      | mode == LlmMode && unRow (promptRow prompt) < length (promptLines prompt) - 1 ->
+      | mode == LlmInput && unRow (promptRow prompt) < length (promptLines prompt) - 1 ->
           PromptEdit KeyDown
       | otherwise -> PromptHistoryDown
     KeyToggleMode -> PromptSwitchMode
     KeyComplete
-      | mode == TermMode -> PromptComplete
+      | mode == TermInput -> PromptComplete
     _ -> PromptEdit key
 
 applyKey :: Key -> Prompt -> Prompt
@@ -181,10 +176,9 @@ applyKey key prompt =
       | key == KeyComplete = updated
       | otherwise = clearSuggestions updated
 
-toggleMode :: PromptMode -> PromptMode
-toggleMode LlmMode = TermMode
-toggleMode TermMode = LlmMode
-toggleMode ToolMode = TermMode
+toggleMode :: InputMode -> InputMode
+toggleMode LlmInput = TermInput
+toggleMode TermInput = LlmInput
 
 insertChar :: Char -> Prompt -> Prompt
 insertChar char prompt =

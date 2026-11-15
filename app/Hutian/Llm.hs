@@ -6,6 +6,7 @@
 -- network and terminal IO.
 module Hutian.Llm
   ( module Hutian.Llm.Protocol
+  , LlmOutput (..)
   , loadLlmSettings
   , runLlm
   , runLlmWithTools
@@ -21,7 +22,6 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Char (isSpace)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
-import Hutian.Console (consoleFlush, consoleWrite, consoleWriteErrorLine)
 import Hutian.Conversation (Conversation)
 import Hutian.Interrupt (InterruptFlag, isInterrupted)
 import Hutian.Llm.Protocol
@@ -30,6 +30,13 @@ import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (statusCode)
 import System.Directory (removeFile)
+
+-- | Where streamed output and diagnostics go. The caller owns the terminal and
+-- can flush or capture each write.
+data LlmOutput = LlmOutput
+  { llmOutputWrite :: String -> IO ()
+  , llmOutputErrorLine :: String -> IO ()
+  }
 
 -- | Load settings, including file-backed model and system-prompt values. The
 -- files are removed before parsing succeeds so they are gone before the shell
@@ -63,15 +70,15 @@ loadLlmSettings arguments =
         _ <- evaluate (Text.length text)
         pure text
 
-runLlm :: InterruptFlag -> LlmSettings -> Conversation -> String -> IO (Maybe String)
-runLlm interruptFlag settings conversation prompt =
-  llmResponseText <$> runLlmWithTools interruptFlag settings conversation prompt
+runLlm :: LlmOutput -> InterruptFlag -> LlmSettings -> Conversation -> String -> IO (Maybe String)
+runLlm output interruptFlag settings conversation prompt =
+  llmResponseText <$> runLlmWithTools output interruptFlag settings conversation prompt
 
-runLlmWithTools :: InterruptFlag -> LlmSettings -> Conversation -> String -> IO LlmResult
-runLlmWithTools interruptFlag settings conversation prompt
+runLlmWithTools :: LlmOutput -> InterruptFlag -> LlmSettings -> Conversation -> String -> IO LlmResult
+runLlmWithTools output interruptFlag settings conversation prompt
   | all isSpace prompt = pure emptyLlmResult
   | otherwise =
-      runRequest interruptFlag settings $
+      runRequest output interruptFlag settings $
         requestBodyFor
           (settingModelShell settings)
           (apiFor (settingUrl settings))
@@ -81,9 +88,9 @@ runLlmWithTools interruptFlag settings conversation prompt
           prompt
 
 -- | Continue a conversation after tool results have been appended.
-runLlmContinuation :: InterruptFlag -> LlmSettings -> Conversation -> IO LlmResult
-runLlmContinuation interruptFlag settings conversation =
-  runRequest interruptFlag settings $
+runLlmContinuation :: LlmOutput -> InterruptFlag -> LlmSettings -> Conversation -> IO LlmResult
+runLlmContinuation output interruptFlag settings conversation =
+  runRequest output interruptFlag settings $
     continuationBodyFor
       (settingModelShell settings)
       (apiFor (settingUrl settings))
@@ -91,27 +98,27 @@ runLlmContinuation interruptFlag settings conversation =
       (settingSystemPrompt settings)
       conversation
 
-runRequest :: InterruptFlag -> LlmSettings -> Value -> IO LlmResult
-runRequest interruptFlag settings body = do
+runRequest :: LlmOutput -> InterruptFlag -> LlmSettings -> Value -> IO LlmResult
+runRequest output interruptFlag settings body = do
   result <-
     try
-      (streamCompletion interruptFlag settings body)
+      (streamCompletion output interruptFlag settings body)
       :: IO (Either SomeException LlmResult)
   case result of
     Left exception -> do
-      consoleWriteErrorLine ("llm: " ++ show exception)
+      llmOutputErrorLine output ("llm: " ++ show exception)
       pure emptyLlmResult
     Right response -> pure response
 
-streamCompletion :: InterruptFlag -> LlmSettings -> Value -> IO LlmResult
-streamCompletion interruptFlag settings body =
+streamCompletion :: LlmOutput -> InterruptFlag -> LlmSettings -> Value -> IO LlmResult
+streamCompletion output interruptFlag settings body =
   case settingSocket settings of
     Just socket ->
-      streamCompletionUnix interruptFlag settings socket (BL.toStrict (Aeson.encode body))
-    Nothing -> streamCompletionTcp interruptFlag settings body
+      streamCompletionUnix output interruptFlag settings socket (BL.toStrict (Aeson.encode body))
+    Nothing -> streamCompletionTcp output interruptFlag settings body
 
-streamCompletionTcp :: InterruptFlag -> LlmSettings -> Value -> IO LlmResult
-streamCompletionTcp interruptFlag settings body = do
+streamCompletionTcp :: LlmOutput -> InterruptFlag -> LlmSettings -> Value -> IO LlmResult
+streamCompletionTcp output interruptFlag settings body = do
   manager <- newManager tlsManagerSettings
   initialRequest <- parseRequest (unLlmUrl (settingUrl settings))
   let request =
@@ -125,6 +132,7 @@ streamCompletionTcp interruptFlag settings body = do
           }
   withResponse request manager $ \response ->
     handleStreamResponse
+      output
       interruptFlag
       (statusCode (responseStatus response))
       (brRead (responseBody response))
@@ -133,83 +141,83 @@ streamCompletionTcp interruptFlag settings body = do
 -- cross into the sandbox are the request body and the relay host's name; the
 -- API key stays on the host.
 streamCompletionUnix
-  :: InterruptFlag
+  :: LlmOutput
+  -> InterruptFlag
   -> LlmSettings
   -> FilePath
   -> BS.ByteString
   -> IO LlmResult
-streamCompletionUnix interruptFlag _settings socket body =
+streamCompletionUnix output interruptFlag _settings socket body =
   postUnixStream socket body $ \code reader ->
-    handleStreamResponse interruptFlag code reader
+    handleStreamResponse output interruptFlag code reader
 
 handleStreamResponse
-  :: InterruptFlag
+  :: LlmOutput
+  -> InterruptFlag
   -> Int
   -> IO BS.ByteString
   -> IO LlmResult
-handleStreamResponse interruptFlag code reader
+handleStreamResponse output interruptFlag code reader
   | code < 200 || code >= 300 = do
       responseBody <- readBodyAtMost errorBodyLimit reader []
       let message = Text.unpack (Text.strip (decode responseBody))
-      consoleWriteErrorLine ("llm: llama.cpp returned HTTP " ++ show code ++ errorSuffix message)
+      llmOutputErrorLine output ("llm: llama.cpp returned HTTP " ++ show code ++ errorSuffix message)
       pure emptyLlmResult
   | otherwise = do
       finalState <-
         consumeResponse
+          output
           interruptFlag
           reader
           BS.empty
           initialStreamState
       let (endState, finalOutput) = finishStream finalState
-      _ <- emitStreamOutput (endState, finalOutput)
+      _ <- emitStreamOutput output (endState, finalOutput)
       unless (streamSawData endState) $
-        consoleWriteErrorLine "llm: no response content received"
+        llmOutputErrorLine output "llm: no response content received"
       pure (resultFromState endState)
 
 consumeResponse
-  :: InterruptFlag
+  :: LlmOutput
+  -> InterruptFlag
   -> IO BS.ByteString
   -> BS.ByteString
   -> StreamState
   -> IO StreamState
-consumeResponse interruptFlag reader buffered state = do
+consumeResponse output interruptFlag reader buffered state = do
   interrupted <- isInterrupted interruptFlag
   if interrupted
     then pure state
     else do
       chunk <- reader
       if BS.null chunk
-        then processLines (fst (splitLines buffered)) state
+        then processLines output (fst (splitLines buffered)) state
         else do
           let (lineChunks, rest) = splitLines (buffered <> chunk)
-          state' <- processLines lineChunks state
+          state' <- processLines output lineChunks state
           if streamDone state'
             then pure state'
-            else consumeResponse interruptFlag reader rest state'
+            else consumeResponse output interruptFlag reader rest state'
 
-processLines :: [BS.ByteString] -> StreamState -> IO StreamState
-processLines [] state = pure state
-processLines (line : rest) state
+processLines :: LlmOutput -> [BS.ByteString] -> StreamState -> IO StreamState
+processLines _ [] state = pure state
+processLines output (line : rest) state
   | streamDone state = pure state
-  | otherwise = processLine line state >>= processLines rest
+  | otherwise = processLine output line state >>= processLines output rest
 
-processLine :: BS.ByteString -> StreamState -> IO StreamState
-processLine rawLine state =
+processLine :: LlmOutput -> BS.ByteString -> StreamState -> IO StreamState
+processLine output rawLine state =
   case parseStreamLine rawLine of
     Nothing -> pure state
-    Just event -> emitStreamOutput (applyStreamEvent event state)
+    Just event -> emitStreamOutput output (applyStreamEvent event state)
 
-emitStreamOutput :: (StreamState, StreamOutput) -> IO StreamState
-emitStreamOutput (state, output) = do
-  emit (outputText output)
-  maybe (pure ()) (consoleWriteErrorLine . ("llm: " ++) . Text.unpack) (outputError output)
+emitStreamOutput :: LlmOutput -> (StreamState, StreamOutput) -> IO StreamState
+emitStreamOutput llmOutput (state, streamOutput) = do
+  emit (outputText streamOutput)
+  maybe (pure ()) (llmOutputErrorLine llmOutput . ("llm: " ++) . Text.unpack) (outputError streamOutput)
   pure state
-
-emit :: String -> IO ()
-emit output =
-  unless (null output) $ do
-    consoleWrite output
-    consoleFlush
+  where
+    emit text = unless (null text) (llmOutputWrite llmOutput text)
 
 -- | Error responses are diagnostics, not data. Read a bounded prefix so a
 -- misbehaving upstream cannot make the shell buffer an arbitrary body.
