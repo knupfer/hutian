@@ -248,6 +248,14 @@ let
       nixVolumes=()
       nixRunscArgs=()
 
+      # gVisor never revalidates cached directory entries against host changes.
+      # Both /source and, with the host daemon, /nix/store can change outside
+      # the sandbox while it runs. Without this, files created by the user's
+      # editor stay invisible and writes to those names fail with ENOENT,
+      # while paths built by the host daemon cannot be executed. Disable the
+      # dentry cache so lookups always go back to the host.
+      nixRunscArgs+=(--dcache=0)
+
       config_volumes=()
       relay_runsc_args=()
       llm_args=()

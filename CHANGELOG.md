@@ -40,6 +40,13 @@ All notable changes to Hutian are documented here. The format follows
   entry pins `nixpkgs` to the nixpkgs input of the flake that configured
   Hutian. This makes `nix run nixpkgs#...` and locked local builds work offline
   when their store paths are present.
+- The sandbox now disables the gVisor dentry cache in every mode. Store paths
+  built or substituted by the host daemon after startup stay visible even if
+  the sandbox has already listed `/nix/store`, and files created or changed on
+  the host appear in `/source`.
+- The interactive shell no longer keeps its own working directory inside
+  `/source`. gVisor pins a directory listing while a process is in it, so the
+  shell now enters `/source` once per command instead of for the whole session.
 
 ### Removed
 

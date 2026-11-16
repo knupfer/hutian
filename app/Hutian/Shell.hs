@@ -25,7 +25,7 @@ import System.Directory
 import System.Exit (ExitCode (..))
 import System.FilePath (getSearchPath, (</>))
 import System.Process
-  ( CreateProcess
+  ( CreateProcess (..)
   , createProcess
   , delegate_ctlc
   , proc
@@ -43,12 +43,12 @@ data CommandResult = CommandResult
 
 -- | Run a command with inherited stdio. Returns an error message only when the
 -- process could not be started.
-runShellCommand :: String -> IO (Either String ())
-runShellCommand line =
+runShellCommand :: FilePath -> String -> IO (Either String ())
+runShellCommand workingDirectory line =
   ( do
       (_, _, _, processHandle) <-
         createProcess
-          (shellProcess line)
+          (shellProcess workingDirectory line)
             { delegate_ctlc = False
             }
       void (waitForProcess processHandle)
@@ -57,17 +57,23 @@ runShellCommand line =
     `catch` \(err :: IOException) -> pure (Left ("sh: " ++ show err))
 
 -- | Run a command and capture its output for the model.
-runShellCommandOutput :: String -> IO (Either String CommandResult)
-runShellCommandOutput line =
+runShellCommandOutput :: FilePath -> String -> IO (Either String CommandResult)
+runShellCommandOutput workingDirectory line =
   ( do
       (exitCode, output, errors) <-
-        readCreateProcessWithExitCode (shellProcess line) ""
+        readCreateProcessWithExitCode (shellProcess workingDirectory line) ""
       pure (Right (CommandResult exitCode output errors))
   )
     `catch` \(err :: IOException) -> pure (Left ("sh: " ++ show err))
 
-shellProcess :: String -> CreateProcess
-shellProcess line = proc "/bin/sh" ["-c", line]
+-- | Commands start in the session directory, but the long-lived shell must not
+-- keep its own working directory there. gVisor caches the directory listing of
+-- a mount while a process is inside it, even with the dentry cache disabled, so
+-- a shell that stayed in @/source@ would hide files created on the host after
+-- startup. Each command gets its own fresh lookup instead.
+shellProcess :: FilePath -> String -> CreateProcess
+shellProcess workingDirectory line =
+  (proc "/bin/sh" ["-c", line]) { cwd = Just workingDirectory }
 
 -- | The text sent back to the model for a captured command.
 commandResultText :: CommandResult -> String

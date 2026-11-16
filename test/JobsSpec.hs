@@ -13,6 +13,7 @@ import Hutian.Jobs.Runtime
   )
 import Hutian.Render (grayForeground, grayOutputText, reset)
 import System.Exit (ExitCode (..))
+import System.FilePath ((</>))
 import Test.Tasty
 import Test.Tasty.HUnit
 import TestSupport (stripAnsi, withTemporaryDirectory)
@@ -80,7 +81,7 @@ runtimeTests =
     "runtime"
     [ testCase "a job captures output and reports its exit" $
         withTemporaryDirectory "hutian-jobs" $ \directory ->
-          withJobRuntime directory $ \runtime -> do
+          withJobRuntime directory directory $ \runtime -> do
             started <- startJob runtime "printf hello"
             job <- startedJob started
             awaitFinished runtime (jobId job)
@@ -92,9 +93,18 @@ runtimeTests =
               Right (_, text, truncated) -> do
                 text @?= "hello\n"
                 truncated @?= False
+    , testCase "a job runs in the runtime working directory" $
+        withTemporaryDirectory "hutian-jobs" $ \directory ->
+          withTemporaryDirectory "hutian-jobs-cwd" $ \workingDirectory ->
+            withJobRuntime directory workingDirectory $ \runtime -> do
+              started <- startJob runtime "pwd > job-wd"
+              job <- startedJob started
+              awaitFinished runtime (jobId job)
+              contents <- readFile (workingDirectory </> "job-wd")
+              contents @?= workingDirectory ++ "\n"
     , testCase "an output tail is bounded and marked as truncated" $
         withTemporaryDirectory "hutian-jobs" $ \directory ->
-          withJobRuntime directory $ \runtime -> do
+          withJobRuntime directory directory $ \runtime -> do
             started <- startJob runtime "printf 'a\\nb\\nc\\n'"
             job <- startedJob started
             awaitFinished runtime (jobId job)
@@ -106,7 +116,7 @@ runtimeTests =
                 truncated @?= True
     , testCase "killing a stopped job escalates to SIGKILL" $
         withTemporaryDirectory "hutian-jobs" $ \directory ->
-          withJobRuntime directory $ \runtime -> do
+          withJobRuntime directory directory $ \runtime -> do
             started <- startJob runtime "kill -STOP $$"
             job <- startedJob started
             threadDelay 100000

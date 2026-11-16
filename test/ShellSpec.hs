@@ -28,22 +28,30 @@ tests =
     "shell"
     [ testCase "runShellCommand executes through /bin/sh" $ do
         path <- temporaryFilePath "hutian-shell-output"
-        failure <- runShellCommand ("printf hello > " ++ shellQuote path)
+        failure <- runShellCommand "/" ("printf hello > " ++ shellQuote path)
         failure @?= Right ()
         contents <- readFile path
         contents @?= "hello"
         removeFile path
     , testCase "runShellCommandOutput captures output and exit status" $ do
-        hello <- runShellCommandOutput "printf hello"
+        hello <- runShellCommandOutput "/" "printf hello"
         case hello of
           Left message -> assertFailure message
           Right output -> commandResultText output @?= "hello"
-        failed <- runShellCommandOutput "printf bad >&2; exit 3"
+        failed <- runShellCommandOutput "/" "printf bad >&2; exit 3"
         case failed of
           Left message -> assertFailure message
           Right output -> do
             assertBool "stderr should be captured" ("bad" `isInfixOf` commandResultText output)
             assertBool "exit status should be reported" ("[exit 3]" `isInfixOf` commandResultText output)
+    , testCase "commands run in the requested working directory" $
+        withTemporaryDirectory "hutian-shell-cwd" $ \directory -> do
+          path <- temporaryFilePath "hutian-shell-pwd"
+          failure <- runShellCommand directory ("pwd > " ++ shellQuote path)
+          failure @?= Right ()
+          contents <- readFile path
+          contents @?= directory ++ "\n"
+          removeFile path
     , testCase "commandResultText appends stderr and exit status in order" $ do
         commandResultText (CommandResult ExitSuccess "out" "err") @?= "outerr"
         commandResultText (CommandResult (ExitFailure 3) "out" "err")
@@ -51,8 +59,8 @@ tests =
     , testCase "commands cannot change the parent working directory" $
         withTemporaryDirectory "hutian-shell-cd" $ \directory -> do
           original <- getCurrentDirectory
-          _ <- runShellCommand ("cd " ++ directory)
-          output <- runShellCommandOutput ("cd " ++ directory)
+          _ <- runShellCommand original ("cd " ++ directory)
+          output <- runShellCommandOutput original ("cd " ++ directory)
           changed <- getCurrentDirectory
           case output of
             Left message -> assertFailure message

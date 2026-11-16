@@ -59,6 +59,7 @@ import System.Process
 -- also start order, so listing, lookup, and status updates all stay total.
 data JobRuntime = JobRuntime
   { runtimeDirectory :: FilePath
+  , runtimeWorkingDirectory :: FilePath
   , runtimeState :: MVar JobState
   }
 
@@ -74,14 +75,16 @@ data RuntimeJob = RuntimeJob
 
 -- | Create a job runtime for one shell session and stop every remaining job
 -- when the action finishes. Like the sandbox itself, jobs do not survive the
--- shell that owns them.
-withJobRuntime :: FilePath -> (JobRuntime -> IO a) -> IO a
-withJobRuntime directory = bracket (newJobRuntime directory) shutdownJobs
+-- shell that owns them. Jobs run in the given working directory without making
+-- the long-lived shell enter it.
+withJobRuntime :: FilePath -> FilePath -> (JobRuntime -> IO a) -> IO a
+withJobRuntime directory workingDirectory =
+  bracket (newJobRuntime directory workingDirectory) shutdownJobs
 
-newJobRuntime :: FilePath -> IO JobRuntime
-newJobRuntime directory = do
+newJobRuntime :: FilePath -> FilePath -> IO JobRuntime
+newJobRuntime directory workingDirectory = do
   state <- newMVar (JobState 1 Map.empty)
-  pure (JobRuntime directory state)
+  pure (JobRuntime directory workingDirectory state)
 
 -- | Start a command in the background. The command runs in a new process group
 -- with stdin closed and stdout/stderr written to a log. Returns as soon as the
@@ -180,7 +183,8 @@ spawnJob runtime nextId command = do
   ignoreIO (setFileMode path 0o600)
   let closeHandle = ignoreIO (hClose logHandle)
   ( do
-      (_, _, _, handle) <- createProcess_ "hutian-job" (processSpec logHandle command)
+      (_, _, _, handle) <-
+        createProcess_ "hutian-job" (processSpec (runtimeWorkingDirectory runtime) logHandle command)
       pid <- getPid handle
       ignoreIO (hClose logHandle)
       pure . Right $
@@ -194,10 +198,11 @@ spawnJob runtime nextId command = do
 
 -- | stdout and stderr share one append handle so the child writes to a single
 -- open file description and the interleaving stays in process order.
-processSpec :: Handle -> String -> CreateProcess
-processSpec logHandle command =
+processSpec :: FilePath -> Handle -> String -> CreateProcess
+processSpec workingDirectory logHandle command =
   (proc "/bin/sh" ["-c", command])
-    { std_in = NoStream
+    { cwd = Just workingDirectory
+    , std_in = NoStream
     , std_out = UseHandle logHandle
     , std_err = UseHandle logHandle
     , create_group = True

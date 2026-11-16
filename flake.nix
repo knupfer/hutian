@@ -470,6 +470,11 @@
             fi
             ${pkgs.coreutils}/bin/touch $out
           '';
+          dentry-cache = pkgs.runCommand "hutian-dentry-cache-check" { } ''
+            ${pkgs.gnugrep}/bin/grep -F -- '--dcache=0' ${probeLauncher}
+            ${pkgs.gnugrep}/bin/grep -F -- '--dcache=0' ${nixDaemonLauncher}
+            ${pkgs.coreutils}/bin/touch $out
+          '';
           model-shell-option = pkgs.runCommand "hutian-model-shell-option-check" { } ''
             ${pkgs.gnugrep}/bin/grep -F -- '--model-shell allow' ${allowedModelShellLauncher}
             ${pkgs.gnugrep}/bin/grep -F -- '--model-shell ask' ${askModelShellLauncher}

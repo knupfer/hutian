@@ -368,6 +368,20 @@ without fetching the registry or the nixpkgs flake. Locked local builds work
 offline as long as their inputs are already in the store; pass `--offline` if
 you want Nix to fail instead of trying a substituter for a missing path.
 
+gVisor normally caches directory entries for the life of the sandbox. That
+hides changes made on the host after startup: a file added to the working
+directory stays invisible and writes to its name fail with `ENOENT`, and a
+store path the host daemon creates after `/nix/store` was listed cannot be
+executed. The launcher therefore disables the gVisor dentry cache
+(`--dcache=0`) in every mode, so lookups go back to the host.
+
+The interactive shell also avoids keeping its own working directory inside the
+shared working directory, because gVisor keeps a directory listing cached while
+a process is in it. Each command enters the working directory for its own
+lifetime, so files created or changed outside the sandbox appear in the next
+command. A long-running process that stays in the working directory keeps the
+view it had when it started.
+
 The sandbox still uses gVisor's network mode, but the host Nix store is visible
 in full while `sandbox.nixDaemon = true`. Set it to `false` when you only need the
 configured package closures.
@@ -399,7 +413,14 @@ Important composition rules:
 
 - `sandbox.network = false` removes direct sandbox networking only. The relay
   socket can still reach the fixed model upstream, and `sandbox.nixDaemon = true`
-  still lets the host Nix daemon fetch and build.
+  still lets the host Nix daemon fetch and build. Because the daemon runs on the
+  host, a fixed-output derivation can also send anything the sandbox can read
+  to any URL the host network reaches; treat `network = false` as advisory in
+  that mode.
+- `sandbox.writable = true` writes through to the host working directory.
+  Files created or changed on the host appear in the next sandbox command; a
+  command that keeps its own working directory there sees the view from when it
+  started.
 - `sandbox.writable = false` does not prevent the model from reading `/source`
   and sending what it reads upstream. Set `model.shell = "deny"` or use a local
   model endpoint if confidentiality matters.

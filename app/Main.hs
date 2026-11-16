@@ -63,6 +63,7 @@ import Hutian.Render (OutputKind (..))
 import Hutian.Shell (executableCommands, runShellCommand)
 import Hutian.Terminal (promptForInput)
 import Hutian.Tool.Exec (runToolCalls)
+import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
 
@@ -76,6 +77,7 @@ data ShellState = ShellState
   , shellBuffers :: PromptBuffers
   , shellConversation :: Conversation
   , shellJobs :: JobRuntime
+  , shellWorkingDirectory :: FilePath
   }
 
 main :: IO ()
@@ -88,12 +90,17 @@ main = do
       consoleWriteErrorLine message
       exitWith (ExitFailure 2)
     Right settings -> do
+      -- The launcher starts the shell in /source. Leave it before the session
+      -- begins so the long-lived process does not pin that mount in gVisor;
+      -- each command enters the working directory for its own lifetime.
+      workingDirectory <- getCurrentDirectory
+      setCurrentDirectory "/"
       commands <- executableCommands
       termHistory <- loadHistoryFile termHistoryFile
       llmHistory <- loadHistoryFile llmHistoryFile
       interruptFlag <- newInterruptFlag
       installInterruptHandler interruptFlag
-      withJobRuntime jobDirectory $ \jobs -> do
+      withJobRuntime jobDirectory workingDirectory $ \jobs -> do
         let state =
               ShellState
                 { shellSettings = settings
@@ -104,6 +111,7 @@ main = do
                 , shellBuffers = initialPromptBuffers
                 , shellConversation = emptyConversation
                 , shellJobs = jobs
+                , shellWorkingDirectory = workingDirectory
                 }
         shellLoop state `finally` resetTerminal
 
@@ -111,6 +119,7 @@ shellLoop :: ShellState -> IO ()
 shellLoop state = do
   (nextMode, input, nextBuffers) <-
     promptForInput
+      (shellWorkingDirectory state)
       (shellCommands state)
       (shellMode state)
       (shellHistory state)
@@ -127,6 +136,7 @@ shellLoop state = do
       clearInterrupt (shellInterrupt state)
       conversation <-
         runInput
+          (shellWorkingDirectory state)
           (shellJobs state)
           (shellSettings state)
           (shellInterrupt state)
@@ -151,32 +161,34 @@ historyFileFor :: HistoryTarget -> HistoryFile
 historyFileFor TermHistory = termHistoryFile
 historyFileFor LlmHistory = llmHistoryFile
 
-runInput :: JobRuntime -> LlmSettings -> InterruptFlag -> InputMode -> String -> Conversation -> IO Conversation
-runInput jobs settings interruptFlag mode text conversation =
+runInput :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> InputMode -> String -> Conversation -> IO Conversation
+runInput workingDirectory jobs settings interruptFlag mode text conversation =
   case mode of
-    LlmInput -> runLlmInput jobs settings interruptFlag conversation text
-    TermInput -> runTerminalInput conversation text
+    LlmInput -> runLlmInput workingDirectory jobs settings interruptFlag conversation text
+    TermInput -> runTerminalInput workingDirectory conversation text
 
 -- | Run a prompt through the model, executing any shell tools it requests and
 -- feeding the results back until it produces a final answer.
-runLlmInput :: JobRuntime -> LlmSettings -> InterruptFlag -> Conversation -> String -> IO Conversation
-runLlmInput jobs settings interruptFlag conversation prompt =
+runLlmInput :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> Conversation -> String -> IO Conversation
+runLlmInput workingDirectory jobs settings interruptFlag conversation prompt =
   withoutEcho $ withRespondingCursor $ do
     result <- runLlmWithTools consoleLlmOutput interruptFlag settings conversation prompt
     continueLlm
+      workingDirectory
       jobs
       settings
       interruptFlag
       (appendResult (Just prompt) (llmResponseText result) (llmToolCalls result) conversation)
       result
 
-continueLlm :: JobRuntime -> LlmSettings -> InterruptFlag -> Conversation -> LlmResult -> IO Conversation
-continueLlm jobs settings interruptFlag conversation result
+continueLlm :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> Conversation -> LlmResult -> IO Conversation
+continueLlm workingDirectory jobs settings interruptFlag conversation result
   | null (llmToolCalls result) = pure conversation
   | otherwise = do
       (aborted, conversation') <-
         runToolCalls
           jobs
+          workingDirectory
           (settingModelShell settings)
           conversation
           (llmToolCalls result)
@@ -185,6 +197,7 @@ continueLlm jobs settings interruptFlag conversation result
         else do
           next <- runLlmContinuation consoleLlmOutput interruptFlag settings conversation'
           continueLlm
+            workingDirectory
             jobs
             settings
             interruptFlag
@@ -200,22 +213,22 @@ consoleLlmOutput =
     , llmOutputErrorLine = consoleWriteErrorLine
     }
 
-runTerminalInput :: Conversation -> String -> IO Conversation
-runTerminalInput conversation text =
+runTerminalInput :: FilePath -> Conversation -> String -> IO Conversation
+runTerminalInput workingDirectory conversation text =
   case classifyTerminalInput text of
     NoTerminalInput -> pure conversation
-    SingleLineInput line -> runTerminalScript conversation line
-    MultiLineInput script -> runTerminalScript conversation script
+    SingleLineInput line -> runTerminalScript workingDirectory conversation line
+    MultiLineInput script -> runTerminalScript workingDirectory conversation script
 
-runTerminalScript :: Conversation -> String -> IO Conversation
-runTerminalScript conversation command = do
+runTerminalScript :: FilePath -> Conversation -> String -> IO Conversation
+runTerminalScript workingDirectory conversation command = do
   printOutputLabel TermOutput
-  withGrayOutput (runStreamingCommand command)
+  withGrayOutput (runStreamingCommand workingDirectory command)
   pure (appendTerminal command conversation)
 
-runStreamingCommand :: String -> IO ()
-runStreamingCommand command =
-  runShellCommand command >>= either consoleWriteErrorLine pure
+runStreamingCommand :: FilePath -> String -> IO ()
+runStreamingCommand workingDirectory command =
+  runShellCommand workingDirectory command >>= either consoleWriteErrorLine pure
 
 jobDirectory :: FilePath
 jobDirectory = "/tmp/hutian-jobs"

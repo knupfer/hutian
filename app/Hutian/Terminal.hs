@@ -51,6 +51,7 @@ import Hutian.Prompt
   )
 import Hutian.Render (PromptKind (..), moveCursorText, prefixFor, promptRenderText, reset)
 import System.Directory (doesDirectoryExist, listDirectory)
+import System.FilePath ((</>))
 import System.IO.Error (isEOFError)
 
 data PromptContext = PromptContext
@@ -68,12 +69,13 @@ data PromptContext = PromptContext
 -- Ctrl+C clears the current input. Term mode is always available, even when
 -- the model's shell tool is disabled.
 promptForInput
-  :: [String]
+  :: FilePath
+  -> [String]
   -> InputMode
   -> History
   -> PromptBuffers
   -> IO (InputMode, Maybe String, PromptBuffers)
-promptForInput commands mode history buffers = do
+promptForInput workingDirectory commands mode history buffers = do
   interactive <- consoleIsInteractive
   let context =
         PromptContext
@@ -82,10 +84,10 @@ promptForInput commands mode history buffers = do
           }
   withRawTerminal $ do
     when interactive startPromptLine
-    readPrompt interactive context (initialPromptState mode buffers)
+    readPrompt workingDirectory interactive context (initialPromptState mode buffers)
 
-readPrompt :: Bool -> PromptContext -> PromptState -> IO (InputMode, Maybe String, PromptBuffers)
-readPrompt interactive context state = do
+readPrompt :: FilePath -> Bool -> PromptContext -> PromptState -> IO (InputMode, Maybe String, PromptBuffers)
+readPrompt workingDirectory interactive context state = do
   position <- renderPrompt interactive context 0 state
   loop position state
   where
@@ -106,7 +108,7 @@ readPrompt interactive context state = do
           readNext displayedPosition nextPosition redraw next
         StepComplete next -> do
           let current = activePrompt (promptMode next) (promptBuffers next)
-          completed <- completeInput (contextCommands context) current
+          completed <- completeInput workingDirectory (contextCommands context) current
           readNext displayedPosition logicalPosition True (acceptCompletion completed next)
         StepFinish outcome prompt next -> do
           finishPrompt interactive context (promptMode next) (fst displayedPosition) prompt
@@ -144,28 +146,29 @@ writeCursorMove oldPosition newPosition = do
   consoleWrite (moveCursorText oldPosition newPosition)
   consoleFlush
 
-completeInput :: [String] -> Prompt -> IO Prompt
-completeInput commands prompt =
+completeInput :: FilePath -> [String] -> Prompt -> IO Prompt
+completeInput workingDirectory commands prompt =
   case commandCompletionTarget prompt of
     Just (_, word)
       | '/' `notElem` word -> pure (completeCommand commands prompt)
-    _ -> completePath prompt
+    _ -> completePath workingDirectory prompt
 
-completePath :: Prompt -> IO Prompt
-completePath prompt = do
+completePath :: FilePath -> Prompt -> IO Prompt
+completePath workingDirectory prompt = do
   let (start, word) = completionTarget prompt
       (directoryPart, base) = splitPathWord word
-      directory = if null directoryPart then "." else directoryPart
+      directory = if null directoryPart then workingDirectory else workingDirectory </> directoryPart
   entries <- listDirectory directory `catch` \(_ :: IOException) -> pure []
-  completions <- mapM (completeEntry directoryPart) (filter (base `isPrefixOf`) entries)
+  completions <- mapM (completeEntry workingDirectory directoryPart) (filter (base `isPrefixOf`) entries)
   let afterCursor = drop (start + length word) (currentLine prompt)
       completion = chooseCompletion PathCompletion word afterCursor completions
   pure (applyCompletionChoice start word completion prompt)
 
-completeEntry :: FilePath -> FilePath -> IO FilePath
-completeEntry directoryPart entry = do
+completeEntry :: FilePath -> FilePath -> FilePath -> IO FilePath
+completeEntry workingDirectory directoryPart entry = do
   let candidate = directoryPart ++ entry
-  isDirectory <- doesDirectoryExist candidate
+      path = workingDirectory </> candidate
+  isDirectory <- doesDirectoryExist path
   pure (formatCompletion candidate isDirectory)
 
 readKey :: IO Key

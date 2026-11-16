@@ -53,21 +53,21 @@ import Hutian.Tool (CommandMode (..), ToolPlan (..), planTool)
 
 -- | Run each requested call in order. Once a call aborts the turn, the
 -- remaining calls get an error result instead of running.
-runToolCalls :: JobRuntime -> ModelShell -> Conversation -> [ToolCall] -> IO (Bool, Conversation)
-runToolCalls jobs policy = go False
+runToolCalls :: JobRuntime -> FilePath -> ModelShell -> Conversation -> [ToolCall] -> IO (Bool, Conversation)
+runToolCalls jobs workingDirectory policy = go False
   where
     go aborted conversation [] = pure (aborted, conversation)
     go True conversation (call : rest) =
       go True (appendToolResult (toolCallId call) abortedToolMessage conversation) rest
     go False conversation (call : rest) = do
-      (callAborted, conversation') <- runToolCall jobs policy conversation call
+      (callAborted, conversation') <- runToolCall jobs workingDirectory policy conversation call
       go callAborted conversation' rest
 
 abortedToolMessage :: String
 abortedToolMessage = "tool error: the user aborted the LLM turn"
 
-runToolCall :: JobRuntime -> ModelShell -> Conversation -> ToolCall -> IO (Bool, Conversation)
-runToolCall jobs policy conversation call =
+runToolCall :: JobRuntime -> FilePath -> ModelShell -> Conversation -> ToolCall -> IO (Bool, Conversation)
+runToolCall jobs workingDirectory policy conversation call =
   case planTool policy call of
     PlanRefuse message -> refuse message
     PlanRun mode command -> do
@@ -90,7 +90,7 @@ runToolCall jobs policy conversation call =
     runPlanned mode command =
       case mode of
         Foreground -> do
-          conversation' <- executeShellTool conversation call command
+          conversation' <- executeShellTool workingDirectory conversation call command
           pure (False, conversation')
         Background -> do
           conversation' <- executeBackgroundTool jobs conversation call command
@@ -133,10 +133,10 @@ runToolCall jobs policy conversation call =
 
 -- | Run a command the model is already allowed to execute. The caller is
 -- responsible for showing the command first.
-executeShellTool :: Conversation -> ToolCall -> String -> IO Conversation
-executeShellTool conversation call command = do
+executeShellTool :: FilePath -> Conversation -> ToolCall -> String -> IO Conversation
+executeShellTool workingDirectory conversation call command = do
   printOutputLabel ToolOutput
-  result <- runShellCommandOutput command
+  result <- runShellCommandOutput workingDirectory command
   case result of
     Left message -> do
       consoleWriteErrorLine message
