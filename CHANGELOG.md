@@ -35,6 +35,11 @@ All notable changes to Hutian are documented here. The format follows
 - Denied shell policy is refused before tool arguments are inspected.
 - Relay sockets and job logs are no longer exposed through permissive file
   modes.
+- `sandbox.nixDaemon = true` now supplies a single local flake registry instead
+  of downloading the global one or exposing the host's registries. Its only
+  entry pins `nixpkgs` to the nixpkgs input of the flake that configured
+  Hutian. This makes `nix run nixpkgs#...` and locked local builds work offline
+  when their store paths are present.
 
 ### Removed
 

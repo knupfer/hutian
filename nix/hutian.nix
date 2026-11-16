@@ -134,6 +134,30 @@ let
 
   stateDir = "${dirOf storeDir}/var/nix";
 
+  # Nix normally downloads the global flake registry before resolving an
+  # indirect reference such as `nixpkgs#...`. Point it at a local registry
+  # instead, so an offline sandbox can still resolve the flake. The registry
+  # contains only `nixpkgs`, mapped to the nixpkgs input configured here; the
+  # host's system and user registries are not exposed.
+  nixRegistry = pkgs.writeText "hutian-flake-registry.json" (
+    builtins.toJSON {
+      version = 2;
+      flakes = [
+        {
+          exact = true;
+          from = {
+            type = "indirect";
+            id = "nixpkgs";
+          };
+          to = {
+            type = "path";
+            path = toString pkgs.path;
+          };
+        }
+      ];
+    }
+  );
+
   rootfs = pkgs.runCommand "hutian-rootfs" { } ''
     mkdir -p "$out/bin" "$out/source" "$out/etc" "$out${storeDir}"
     cp -a ${pkgs.busybox-sandbox-shell}/bin/. "$out/bin/"
@@ -167,6 +191,13 @@ let
     ${optionalString nixDaemon ''
       # Mountpoint for the host Nix daemon socket.
       mkdir -p "$out${stateDir}/daemon-socket"
+
+      # Nix reads this as the user registry, so `nixpkgs` resolves to the
+      # nixpkgs input of the flake that configured Hutian. The global registry
+      # points at the same local file so Nix never downloads one, and the host
+      # registries contribute nothing.
+      mkdir -p "$out/run/hutian-nix/nix"
+      cp ${nixRegistry} "$out/run/hutian-nix/nix/registry.json"
     ''}
   '';
 
@@ -285,9 +316,11 @@ let
         fi
 
         nixEnv+=(
-          NIX_CONFIG="experimental-features = nix-command flakes"
+          NIX_CONFIG="experimental-features = nix-command flakes
+            flake-registry = file:///run/hutian-nix/nix/registry.json"
           NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
           XDG_CACHE_HOME=/tmp/nix-cache
+          XDG_CONFIG_HOME=/run/hutian-nix
         )
       ''}
 

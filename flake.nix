@@ -352,6 +352,7 @@
           writableLauncher = "${withSandbox { writable = true; }}/bin/hutian";
           networkLauncher = "${withSandbox { network = true; }}/bin/hutian";
           noNetworkLauncher = "${withSandbox { network = false; }}/bin/hutian";
+          nixDaemonLauncher = "${withSandbox { nixDaemon = true; }}/bin/hutian";
           allowedModelShellLauncher = "${withModel { shell = "allow"; }}/bin/hutian";
           deniedModelShellLauncher = "${withModel { shell = "deny"; }}/bin/hutian";
           askModelShellLauncher = "${withModel { shell = "ask"; }}/bin/hutian";
@@ -451,6 +452,20 @@
             ${pkgs.gnugrep}/bin/grep -F 'network=none' ${noNetworkLauncher}
             if ${pkgs.gnugrep}/bin/grep -F 'GVISOR_NETWORK:-' ${noNetworkLauncher}; then
               echo "sandbox.network = false must not allow GVISOR_NETWORK to re-enable networking" >&2
+              exit 1
+            fi
+            ${pkgs.coreutils}/bin/touch $out
+          '';
+          nix-registry = pkgs.runCommand "hutian-nix-registry-check" { } ''
+            ${pkgs.gnugrep}/bin/grep -F 'NIX_REMOTE=daemon' ${nixDaemonLauncher}
+            ${pkgs.gnugrep}/bin/grep -F 'flake-registry = file:///run/hutian-nix/nix/registry.json' ${nixDaemonLauncher}
+            ${pkgs.gnugrep}/bin/grep -F 'XDG_CONFIG_HOME=/run/hutian-nix' ${nixDaemonLauncher}
+            if ${pkgs.gnugrep}/bin/grep -F -e '/etc/nix/registry.json' -e 'host_registry' ${sandboxScript}; then
+              echo "the sandbox must not expose the host flake registry" >&2
+              exit 1
+            fi
+            if ${pkgs.gnugrep}/bin/grep -F 'flake-registry = file://' ${probeLauncher}; then
+              echo "sandbox.nixDaemon = false must not configure a flake registry" >&2
               exit 1
             fi
             ${pkgs.coreutils}/bin/touch $out

@@ -352,10 +352,21 @@ outputs = { nixpkgs, hutian, ... }:
 The lower-level `lib.mkHutianShell` builder accepts the same option.
 
 In this mode the host's Nix store and Nix daemon socket are exposed to the
-sandbox. Commands such as `nix build`, `nix shell`, `nix run`, and
-`nix develop` act as clients of the host daemon, so builds and substitutions run
-on the host. Flakes and the `nix` command are enabled automatically, and a CA
-bundle is provided for client-side HTTPS fetches.
+sandbox. Commands such as `nix build`, `nix shell`, `nix run`, and `nix develop`
+act as clients of the host daemon, so builds and substitutions run on the host.
+Flakes and the `nix` command are enabled automatically, and a CA bundle is
+provided for client-side HTTPS fetches.
+
+The launcher supplies a local flake registry instead of downloading the global
+one. It contains a single entry, mapping `nixpkgs` to the nixpkgs input of the
+flake that configured Hutian, so `nix run nixpkgs#...` uses the same package set
+as `sandbox.packages`. The host's system and user registries are not exposed, so
+other indirect names are not available unless the project defines them itself.
+
+Consequently, `nix run nixpkgs#...` resolves and starts an already-built package
+without fetching the registry or the nixpkgs flake. Locked local builds work
+offline as long as their inputs are already in the store; pass `--offline` if
+you want Nix to fail instead of trying a substituter for a missing path.
 
 The sandbox still uses gVisor's network mode, but the host Nix store is visible
 in full while `sandbox.nixDaemon = true`. Set it to `false` when you only need the
@@ -428,7 +439,8 @@ Important composition rules:
 - Writes outside `/source`, `/tmp`, and the mounted package store are refused.
   `sandbox.writable = false` (the default) refuses writes to `/source` as well.
 - With `sandbox.nixDaemon = true`, the full host `/nix/store` and the Nix daemon
-  socket are visible. Other host paths remain hidden.
+  socket are visible. Other host paths remain hidden, including the host's
+  flake registries; `nixpkgs` comes from the configured flake instead.
 - The sandbox uses the `systrap` platform by default. Set
   `GVISOR_PLATFORM=ptrace` if your host needs the `ptrace` platform.
 
