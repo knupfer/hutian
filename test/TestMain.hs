@@ -5,6 +5,7 @@ import qualified CommandSpec
 import qualified CompletionSpec
 import qualified ConsoleSpec
 import qualified ConversationSpec
+import Data.List (isPrefixOf)
 import qualified EditorSpec
 import qualified HistorySpec
 import qualified HighlightSpec
@@ -24,15 +25,24 @@ import qualified RelaySpec
 import qualified RenderSpec
 import qualified SessionSpec
 import qualified ShellSpec
+import System.Environment (getArgs, withArgs)
+import Test.Tasty (testGroup)
+import TestReporter (bufferedMain)
 import qualified ToolSpec
 import qualified WireSpec
-import Test.Tasty
-import Test.Tasty.Runners (NumThreads (..))
 
+-- The report is buffered until the last test finished because some suites
+-- redirect the process-wide stdout and stderr. The tests also share process
+-- state such as signal handlers, so they run one at a time.
 main :: IO ()
-main =
-  defaultMain $
-    localOption (NumThreads 1) $
+main = do
+  args <- getArgs
+  let singleThreaded
+        | any (isPrefixOf "--num-threads") args = args
+        | any (isPrefixOf "-j") args = args
+        | otherwise = args ++ ["--num-threads=1"]
+  withArgs singleThreaded $
+    bufferedMain $
       testGroup
         "hutian-shell"
         [ CliSpec.tests

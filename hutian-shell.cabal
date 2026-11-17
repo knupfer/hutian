@@ -142,6 +142,7 @@ test-suite hutian-shell-test
       RenderSpec
       SessionSpec
       ShellSpec
+      TestReporter
       TestSupport
       ToolSpec
       WireSpec
@@ -157,6 +158,7 @@ test-suite hutian-shell-test
     , hutian-shell
     , network
     , QuickCheck
+    , stm
     , tasty
     , tasty-hunit
     , tasty-quickcheck

@@ -13,7 +13,7 @@ module TestSupport
   , assertNotInfix
   ) where
 
-import Control.Concurrent.MVar (MVar, takeMVar)
+import Control.Concurrent.MVar (MVar, newMVar, takeMVar, withMVar)
 import Control.Exception (IOException, finally, try)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
@@ -26,6 +26,7 @@ import System.Directory
   )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.IO (Handle, hClose, hFlush, hPutStrLn, openTempFile, stderr, stdout)
+import System.IO.Unsafe (unsafePerformIO)
 import System.Posix.IO
   ( FdOption (..)
   , closeFd
@@ -82,21 +83,32 @@ stdoutLlmOutput =
     , llmOutputErrorLine = hPutStrLn stderr
     }
 
+-- | Captures install a process-wide redirection, so two of them must never be
+-- active at once: output from one test would otherwise land in the pipe that
+-- another test is reading. The reporter is deferred until all tests are done
+-- (see "TestReporter"), so it cannot interleave either.
+{-# NOINLINE captureLock #-}
+captureLock :: MVar ()
+captureLock = unsafePerformIO (newMVar ())
+
+withCaptureLock :: IO a -> IO a
+withCaptureLock action = withMVar captureLock (const action)
+
 -- | Capture everything written to stdout while an action runs. Used by the LLM
 -- streaming tests because the shell renders model output directly.
 captureStdout :: IO a -> IO (a, String)
-captureStdout = captureOutput stdout stdOutput
+captureStdout action = withCaptureLock (captureOutput stdout stdOutput action)
 
 -- | Capture everything written to stderr while an action runs.
 captureStderr :: IO a -> IO (a, String)
-captureStderr = captureOutput stderr stdError
+captureStderr action = withCaptureLock (captureOutput stderr stdError action)
 
 captureOutput :: Handle -> Fd -> IO a -> IO (a, String)
 captureOutput handle outputFd action = do
   (readFd, writeFd) <- createPipe
   savedFd <- dup outputFd
-  -- Flush before redirecting: the test runner also writes through this handle,
-  -- and its buffered output must not land in the capture.
+  -- Flush before redirecting: output buffered in the handle must not land in
+  -- the capture.
   hFlush handle
   _ <- dupTo writeFd outputFd
   closeFd writeFd
@@ -121,13 +133,13 @@ readPipe readFd = do
 -- terminal-only presentation paths can be observed. The callback reads
 -- everything written to the terminal while the action runs.
 withPseudoTerminalOutput :: (IO String -> IO a) -> IO a
-withPseudoTerminalOutput action = do
+withPseudoTerminalOutput action = withCaptureLock $ do
   (master, slave) <- openPseudoTerminal
   setFdOption master NonBlockingRead True
   savedOutput <- dup stdOutput
   savedError <- dup stdError
-  -- Flush before redirecting: the test runner also writes through these
-  -- handles, and its buffered output must not land on the pseudo-terminal.
+  -- Flush before redirecting: output buffered in the handles must not land on
+  -- the pseudo-terminal.
   hFlush stdout
   hFlush stderr
   _ <- dupTo slave stdOutput

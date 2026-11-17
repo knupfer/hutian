@@ -156,11 +156,12 @@ socketTests =
         flag <- newInterruptFlag
         captured <-
           timeout 3000000 $
-            captureStdout $
+            captureStderr $
               runLlm stdoutLlmOutput flag (settingsForSocket "/nonexistent/hutian/llm.sock") [] "hello"
-        (result, _) <-
+        (result, errors) <-
           maybe (assertFailure "missing socket test timed out" >> pure (Nothing, "")) pure captured
         result @?= Nothing
+        assertBool "the connection failure should be reported" ("llm:" `isInfixOf` errors)
     ]
 
 settingsForSocket :: FilePath -> LlmSettings

@@ -554,6 +554,7 @@ app/Hutian/Llm/UnixSocket.hs  Relay client over a Unix socket
 exe/Main.hs               Shell executable entry point
 exe/RelayMain.hs          Relay executable entry point
 test/                     Unit and property tests
+test/TestReporter.hs      Deferred, single-threaded Tasty report
 test/TestSupport.hs       Shared test helpers
 hutian-shell.cabal        Haskell package manifest
 example.nix               Minimal consumer flake
@@ -588,6 +589,11 @@ $ nix build .#packages.x86_64-linux.default
 
 The package build runs the suite as part of the standard build. With a local
 Cabal setup, `cabal test` runs the same tests directly.
+
+Tests run one at a time and the Tasty report is buffered until the last test
+finished. Several suites redirect the process-wide stdout and stderr or install
+signal handlers, so a live report would leak into their captures and make
+otherwise deterministic tests flaky.
 
 The flake also exposes a check that verifies the Nix options are passed to the
 launcher as command-line arguments:
