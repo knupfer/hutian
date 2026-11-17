@@ -11,7 +11,7 @@ import Hutian.Conversation
   , appendResult
   )
 import Hutian.Interrupt (InterruptFlag, isInterrupted)
-import Hutian.Llm.Protocol (LlmResult (..))
+import Hutian.Llm.Stream (LlmResult (..))
 import Hutian.Tool.Exec (abortToolCalls)
 
 -- | One iteration's effects.

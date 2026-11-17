@@ -73,7 +73,10 @@ library
       Hutian.Key
       Hutian.Llm
       Hutian.Llm.Loop
-      Hutian.Llm.Protocol
+      Hutian.Llm.Presentation
+      Hutian.Llm.Request
+      Hutian.Llm.Settings
+      Hutian.Llm.Stream
       Hutian.Llm.UnixSocket
       Hutian.Markdown
       Hutian.Paths
@@ -82,6 +85,7 @@ library
       Hutian.Relay
       Hutian.Relay.Protocol
       Hutian.Render
+      Hutian.Session
       Hutian.Shell
       Hutian.Terminal
       Hutian.Tool
@@ -126,15 +130,17 @@ test-suite hutian-shell-test
       JobsSpec
       LlmIntegrationSpec
       LlmLoopSpec
-      LlmProtocolSpec
+      LlmPresentationSpec
       LlmSocketSpec
       LlmSpec
+      LlmStreamSpec
       MarkdownSpec
       PathsSpec
       PolicySpec
       PromptSpec
       RelaySpec
       RenderSpec
+      SessionSpec
       ShellSpec
       TestSupport
       ToolSpec

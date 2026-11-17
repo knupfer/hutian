@@ -27,19 +27,15 @@ import Hutian.Conversation
   )
 import Hutian.Editor
   ( InputMode (..)
-  , PromptBuffers
   , initialPromptBuffers
   )
 import Hutian.Highlight (sanitizeOutputBytes)
 import Hutian.History
   ( History (..)
   , HistoryTarget (..)
-  , inputDestination
-  , recordHistory
   )
 import Hutian.History.Store
   ( HistoryFile (..)
-  , appendHistoryFile
   , loadHistoryFile
   )
 import Hutian.Interrupt
@@ -63,6 +59,12 @@ import Hutian.Llm
   )
 import Hutian.Llm.Loop (LlmLoop (..), runToolLoop)
 import Hutian.Render (OutputKind (..))
+import Hutian.Session
+  ( Session (..)
+  , SessionEffects (..)
+  , rememberInput
+  , runSession
+  )
 import Hutian.Shell
   ( executableCommands
   , runShellCommand
@@ -75,18 +77,17 @@ import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
 import System.IO (stderr, stdout)
 
--- | Everything the interactive loop carries between prompts.
-data ShellState = ShellState
-  { shellSettings :: LlmSettings
-  , shellCommands :: [String]
-  , shellHistory :: History
-  , shellInterrupt :: InterruptFlag
-  , shellMode :: InputMode
-  , shellBuffers :: PromptBuffers
-  , shellConversation :: Conversation
-  , shellJobs :: JobRuntime
-  , shellWorkingDirectory :: FilePath
-  }
+-- | The interactive loop's effects, bound to the real terminal, history files,
+-- job runtime, and model client.
+sessionEffects :: FilePath -> [String] -> JobRuntime -> LlmSettings -> InterruptFlag -> SessionEffects
+sessionEffects workingDirectory commands jobs settings interruptFlag =
+  SessionEffects
+    { sessionPrompt = promptForInput workingDirectory commands
+    , sessionRememberInput = rememberInput historyFileFor
+    , sessionClearInterrupt = clearInterrupt interruptFlag
+    , sessionRunInput =
+        runInput workingDirectory jobs settings interruptFlag
+    }
 
 main :: IO ()
 main = do
@@ -109,61 +110,17 @@ main = do
       interruptFlag <- newInterruptFlag
       installInterruptHandler interruptFlag
       withJobRuntime jobDirectory workingDirectory $ \jobs -> do
-        let state =
-              ShellState
-                { shellSettings = settings
-                , shellCommands = commands
-                , shellHistory = History termHistory llmHistory
-                , shellInterrupt = interruptFlag
-                , shellMode = LlmInput
-                , shellBuffers = initialPromptBuffers
-                , shellConversation = emptyConversation
-                , shellJobs = jobs
-                , shellWorkingDirectory = workingDirectory
+        let session =
+              Session
+                { sessionMode = LlmInput
+                , sessionBuffers = initialPromptBuffers
+                , sessionHistory = History termHistory llmHistory
+                , sessionConversation = emptyConversation
                 }
-        shellLoop state `finally` resetTerminal
-
-shellLoop :: ShellState -> IO ()
-shellLoop state = do
-  (nextMode, input, nextBuffers) <-
-    promptForInput
-      (shellWorkingDirectory state)
-      (shellCommands state)
-      (shellMode state)
-      (shellHistory state)
-      (shellBuffers state)
-  let prompted =
-        state
-          { shellMode = nextMode
-          , shellBuffers = nextBuffers
-          }
-  case input of
-    Nothing -> pure ()
-    Just text -> do
-      history' <- rememberInput nextMode text (shellHistory state)
-      clearInterrupt (shellInterrupt state)
-      conversation <-
-        runInput
-          (shellWorkingDirectory state)
-          (shellJobs state)
-          (shellSettings state)
-          (shellInterrupt state)
-          nextMode
-          text
-          (shellConversation state)
-      shellLoop
-        prompted
-          { shellHistory = history'
-          , shellConversation = conversation
-          }
-
-rememberInput :: InputMode -> String -> History -> IO History
-rememberInput mode text history =
-  case inputDestination mode text of
-    Nothing -> pure history
-    Just target -> do
-      appendHistoryFile (historyFileFor target) text
-      pure (recordHistory target text history)
+        runSession
+          (sessionEffects workingDirectory commands jobs settings interruptFlag)
+          session
+          `finally` resetTerminal
 
 historyFileFor :: HistoryTarget -> HistoryFile
 historyFileFor TermHistory = termHistoryFile

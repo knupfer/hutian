@@ -538,9 +538,14 @@ app/Hutian/Highlight.hs   Skylighting for fenced code and shell input
 app/Hutian/Jobs.hs        Pure background-job model and text
 app/Hutian/Jobs/Runtime.hs  Job processes, logs, and signals
 app/Hutian/Llm/Loop.hs    Model and tool exchange loop
+app/Hutian/Llm/Presentation.hs  Stream labels, colours, and Markdown flushing
+app/Hutian/Llm/Request.hs  Chat and completion request bodies
+app/Hutian/Llm/Settings.hs  Launcher settings parsing
+app/Hutian/Llm/Stream.hs  Stream parsing, tool-call assembly, and result
 app/Hutian/Policy.hs      Model shell-tool policy
 app/Hutian/Prompt.hs      Pure prompt reducer
 app/Hutian/Render.hs      Pure ANSI rendering and approval decisions
+app/Hutian/Session.hs     Interactive prompt/history/session loop
 app/Hutian/Tool.hs        Pure tool-call planning
 app/Hutian/Tool/Exec.hs   Terminal execution of tool-call plans
 app/Hutian/Relay.hs       Host-side LLM relay

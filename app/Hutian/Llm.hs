@@ -1,11 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- | Streaming HTTP client for llama.cpp. Protocol parsing and the stream
--- reducer are pure and live in "Hutian.Llm.Protocol"; this module only performs
--- network and terminal IO.
+-- | Streaming HTTP client for llama.cpp. Settings, request bodies, and the
+-- stream reducer are pure and live in their own modules; this module only
+-- performs network and terminal IO.
 module Hutian.Llm
-  ( module Hutian.Llm.Protocol
+  ( module Hutian.Llm.Request
+  , module Hutian.Llm.Settings
+  , module Hutian.Llm.Stream
   , LlmOutput (..)
   , loadLlmSettings
   , runLlm
@@ -43,7 +45,15 @@ import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
 import Hutian.Conversation (Conversation)
 import Hutian.Interrupt (InterruptFlag, isInterrupted)
-import Hutian.Llm.Protocol
+import Hutian.Llm.Presentation
+  ( StreamPresenter
+  , finishPresentation
+  , initialStreamPresenter
+  , presentStreamEvent
+  )
+import Hutian.Llm.Request
+import Hutian.Llm.Settings
+import Hutian.Llm.Stream
 import Hutian.Llm.UnixSocket (postUnixStream)
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
@@ -240,15 +250,16 @@ handleStreamResponse output interruptFlag code reader
       llmOutputErrorLine output ("llm: llama.cpp returned HTTP " ++ show code ++ errorSuffix message)
       pure emptyLlmResult
   | otherwise = do
-      finalState <-
+      (endState, endPresenter) <-
         consumeResponse
           output
           interruptFlag
           reader
           BS.empty
           initialStreamState
-      let (endState, finalOutput) = finishStream finalState
-      _ <- emitStreamOutput output (endState, finalOutput)
+          initialStreamPresenter
+      let (_, finalOutput) = finishPresentation endPresenter
+      emitText output finalOutput
       interrupted <- isInterrupted interruptFlag
       unless (interrupted || streamSawData endState) $
         llmOutputErrorLine output "llm: no response content received"
@@ -260,41 +271,60 @@ consumeResponse
   -> IO BS.ByteString
   -> BS.ByteString
   -> StreamState
-  -> IO StreamState
-consumeResponse output interruptFlag reader buffered state = do
+  -> StreamPresenter
+  -> IO (StreamState, StreamPresenter)
+consumeResponse output interruptFlag reader buffered state presenter = do
   interrupted <- isInterrupted interruptFlag
   if interrupted
-    then pure state
+    then pure (state, presenter)
     else do
       chunk <- reader
       if BS.null chunk
-        then processLines output (fst (splitLines buffered)) state
+        then processLines output (fst (splitLines buffered)) state presenter
         else do
           let (lineChunks, rest) = splitLines (buffered <> chunk)
-          state' <- processLines output lineChunks state
-          if streamDone state'
-            then pure state'
-            else consumeResponse output interruptFlag reader rest state'
+          next <- processLines output lineChunks state presenter
+          if streamDone (fst next)
+            then pure next
+            else
+              uncurry
+                (consumeResponse output interruptFlag reader rest)
+                next
 
-processLines :: LlmOutput -> [BS.ByteString] -> StreamState -> IO StreamState
-processLines _ [] state = pure state
-processLines output (line : rest) state
-  | streamDone state = pure state
-  | otherwise = processLine output line state >>= processLines output rest
+processLines
+  :: LlmOutput
+  -> [BS.ByteString]
+  -> StreamState
+  -> StreamPresenter
+  -> IO (StreamState, StreamPresenter)
+processLines _ [] state presenter = pure (state, presenter)
+processLines output (line : rest) state presenter
+  | streamDone state = pure (state, presenter)
+  | otherwise =
+      processLine output line state presenter
+        >>= uncurry (processLines output rest)
 
-processLine :: LlmOutput -> BS.ByteString -> StreamState -> IO StreamState
-processLine output rawLine state =
+processLine
+  :: LlmOutput
+  -> BS.ByteString
+  -> StreamState
+  -> StreamPresenter
+  -> IO (StreamState, StreamPresenter)
+processLine output rawLine state presenter =
   case parseStreamLine rawLine of
-    Nothing -> pure state
-    Just event -> emitStreamOutput output (applyStreamEvent event state)
+    Nothing -> pure (state, presenter)
+    Just event -> do
+      let (presenter', text) = presentStreamEvent event presenter
+      emitText output text
+      maybe
+        (pure ())
+        (llmOutputErrorLine output . ("llm: " ++) . Text.unpack)
+        (eventError event)
+      pure (applyStreamEvent event state, presenter')
 
-emitStreamOutput :: LlmOutput -> (StreamState, StreamOutput) -> IO StreamState
-emitStreamOutput llmOutput (state, streamOutput) = do
-  emit (outputText streamOutput)
-  maybe (pure ()) (llmOutputErrorLine llmOutput . ("llm: " ++) . Text.unpack) (outputError streamOutput)
-  pure state
-  where
-    emit text = unless (null text) (llmOutputWrite llmOutput text)
+emitText :: LlmOutput -> String -> IO ()
+emitText output text =
+  unless (null text) (llmOutputWrite output text)
 
 -- | Error responses are diagnostics, not data. Read a bounded prefix so a
 -- misbehaving upstream cannot make the shell buffer an arbitrary body.

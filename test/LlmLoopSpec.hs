@@ -16,7 +16,7 @@ import Hutian.Interrupt
   , setInterrupt
   )
 import Hutian.Llm.Loop (LlmLoop (..), runToolLoop)
-import Hutian.Llm.Protocol (LlmResult (..))
+import Hutian.Llm.Stream (LlmResult (..))
 import Hutian.Tool.Exec (abortedToolMessage)
 import Test.Tasty
 import Test.Tasty.HUnit

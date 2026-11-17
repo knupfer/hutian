@@ -12,15 +12,17 @@ import qualified InterruptSpec
 import qualified JobsSpec
 import qualified LlmIntegrationSpec
 import qualified LlmLoopSpec
-import qualified LlmProtocolSpec
+import qualified LlmPresentationSpec
 import qualified LlmSocketSpec
 import qualified LlmSpec
+import qualified LlmStreamSpec
 import qualified MarkdownSpec
 import qualified PathsSpec
 import qualified PolicySpec
 import qualified PromptSpec
 import qualified RelaySpec
 import qualified RenderSpec
+import qualified SessionSpec
 import qualified ShellSpec
 import qualified ToolSpec
 import qualified WireSpec
@@ -46,13 +48,15 @@ main =
         , LlmIntegrationSpec.tests
         , LlmLoopSpec.tests
         , LlmSocketSpec.tests
-        , LlmProtocolSpec.tests
+        , LlmStreamSpec.tests
+        , LlmPresentationSpec.tests
         , MarkdownSpec.tests
         , PathsSpec.tests
         , PolicySpec.tests
         , PromptSpec.tests
         , RelaySpec.tests
         , RenderSpec.tests
+        , SessionSpec.tests
         , ShellSpec.tests
         , ToolSpec.tests
         , WireSpec.tests
