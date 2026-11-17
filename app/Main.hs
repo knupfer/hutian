@@ -10,6 +10,7 @@ import Hutian.Command
 import Hutian.Console
   ( configureConsole
   , consoleFlush
+  , consoleIsInteractive
   , consoleWrite
   , consoleWriteErrorLine
   , printOutputLabel
@@ -29,6 +30,7 @@ import Hutian.Editor
   , PromptBuffers
   , initialPromptBuffers
   )
+import Hutian.Highlight (sanitizeOutputBytes)
 import Hutian.History
   ( History (..)
   , HistoryTarget (..)
@@ -61,12 +63,17 @@ import Hutian.Llm
   , settingModelShell
   )
 import Hutian.Render (OutputKind (..))
-import Hutian.Shell (executableCommands, runShellCommand)
+import Hutian.Shell
+  ( executableCommands
+  , runShellCommand
+  , runShellCommandStreaming
+  )
 import Hutian.Terminal (promptForInput)
 import Hutian.Tool.Exec (abortToolCalls, runToolCalls)
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
+import System.IO (stderr, stdout)
 
 -- | Everything the interactive loop carries between prompts.
 data ShellState = ShellState
@@ -234,9 +241,23 @@ runTerminalScript workingDirectory conversation command = do
   withGrayOutput (runStreamingCommand workingDirectory command)
   pure (appendTerminal command conversation)
 
+-- | Run a command the user typed. A terminal gets inherited stdio so
+-- full-screen programs work; otherwise output is streamed through the
+-- sanitizer so escape sequences do not reach logs.
 runStreamingCommand :: FilePath -> String -> IO ()
-runStreamingCommand workingDirectory command =
-  runShellCommand workingDirectory command >>= either consoleWriteErrorLine pure
+runStreamingCommand workingDirectory command = do
+  interactive <- consoleIsInteractive
+  result <-
+    if interactive
+      then runShellCommand workingDirectory command
+      else
+        runShellCommandStreaming
+          sanitizeOutputBytes
+          stdout
+          stderr
+          workingDirectory
+          command
+  either consoleWriteErrorLine pure result
 
 jobDirectory :: FilePath
 jobDirectory = "/tmp/hutian-jobs"

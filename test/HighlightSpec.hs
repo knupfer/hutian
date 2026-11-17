@@ -1,7 +1,9 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module HighlightSpec (tests) where
 
 import Data.List (isInfixOf)
-import Hutian.Highlight (highlightShellLine, sanitizeOutput)
+import Hutian.Highlight (highlightShellLine, sanitizeOutput, sanitizeOutputBytes)
 import Test.Tasty
 import Test.Tasty.HUnit
 import TestSupport (stripAnsi)
@@ -22,4 +24,6 @@ tests =
         stripAnsi (highlightShellLine "echo\tvalue") @?= "echo\tvalue"
     , testCase "multi-line output keeps newlines but removes escapes" $
         sanitizeOutput "a\ESC[31mb\nc\td\r" @?= "a [31mb\nc\td "
+    , testCase "byte sanitization preserves UTF-8 and layout" $
+        sanitizeOutputBytes "a\ESC[31mb\nc\td\195\169" @?= "a [31mb\nc\td\195\169"
     ]

@@ -95,9 +95,11 @@ captureOutput :: Handle -> Fd -> IO a -> IO (a, String)
 captureOutput handle outputFd action = do
   (readFd, writeFd) <- createPipe
   savedFd <- dup outputFd
+  -- Flush before redirecting: the test runner also writes through this handle,
+  -- and its buffered output must not land in the capture.
+  hFlush handle
   _ <- dupTo writeFd outputFd
   closeFd writeFd
-  hFlush handle
   result <-
     action
       `finally` do
@@ -124,11 +126,13 @@ withPseudoTerminalOutput action = do
   setFdOption master NonBlockingRead True
   savedOutput <- dup stdOutput
   savedError <- dup stdError
+  -- Flush before redirecting: the test runner also writes through these
+  -- handles, and its buffered output must not land on the pseudo-terminal.
+  hFlush stdout
+  hFlush stderr
   _ <- dupTo slave stdOutput
   _ <- dupTo slave stdError
   closeFd slave
-  hFlush stdout
-  hFlush stderr
   action (readAvailable master)
     `finally` do
       hFlush stdout

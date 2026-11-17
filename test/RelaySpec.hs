@@ -6,6 +6,7 @@ module RelaySpec (tests) where
 import Control.Concurrent (forkFinally, forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, tryTakeMVar)
 import Control.Exception (SomeException, bracket, catch, finally)
+import Control.Monad (void)
 import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -59,7 +60,7 @@ import Network.Socket
 import Network.Socket.ByteString (sendAll)
 import System.Directory (doesPathExist)
 import System.IO (IOMode (ReadMode), withFile)
-import System.Posix.Files (fileMode, getFileStatus)
+import System.Posix.Files (fileMode, getFileStatus, setFileCreationMask)
 import System.Timeout (timeout)
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -402,6 +403,26 @@ endToEndTests =
               upstream <- awaitMVar "upstream did not receive a request" requests
               assertInfix "Authorization: Bearer s3cret-key" upstream
               assertInfix "current prompt" upstream
+    , testCase "the relay socket is private even under a permissive umask" $
+        withTemporaryDirectory "hutian-relay-socket" $ \directory -> do
+          let socketPath = directory ++ "/llm.sock"
+          runtime <-
+            newRelayRuntime
+              silentLogger
+              ( RelaySettings
+                  socketPath
+                  "http://127.0.0.1:1/v1/chat/completions"
+                  defaultRelayMaxBody
+                  RelayAuthRequired
+              )
+              (RelayAuthBearer "s3cret-key")
+          previousMask <- setFileCreationMask 0
+          withRelay runtime socketPath
+            ( do
+                permissions <- fileMode <$> getFileStatus socketPath
+                permissions .&. 0o077 @?= 0
+            )
+            `finally` void (setFileCreationMask previousMask)
     , testCase "the relay removes its socket when stopped" $
         withTemporaryDirectory "hutian-relay-socket" $ \directory -> do
           let socketPath = directory ++ "/llm.sock"

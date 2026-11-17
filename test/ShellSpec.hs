@@ -1,12 +1,16 @@
 module ShellSpec (tests) where
 
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 import Data.List (isInfixOf)
+import Hutian.Highlight (sanitizeOutputBytes)
 import Hutian.Shell
   ( CommandResult (..)
   , commandResultText
   , executableCommands
   , runShellCommand
   , runShellCommandOutput
+  , runShellCommandStreaming
   , shellExitSuffix
   )
 import System.Directory
@@ -18,9 +22,15 @@ import System.Directory
   )
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
+import System.IO (IOMode (WriteMode), withFile)
+import System.Timeout (timeout)
 import Test.Tasty
 import Test.Tasty.HUnit
-import TestSupport (temporaryFilePath, withEnv, withTemporaryDirectory)
+import TestSupport
+  ( temporaryFilePath
+  , withEnv
+  , withTemporaryDirectory
+  )
 
 tests :: TestTree
 tests =
@@ -52,6 +62,23 @@ tests =
           contents <- readFile path
           contents @?= directory ++ "\n"
           removeFile path
+    , testCase "runShellCommandStreaming sanitizes control characters" $ do
+        (failure, output, errors) <-
+          captureStreamed
+            "printf 'a\\033[31mb\\nc\\td'; printf 'err\\033[2J' >&2"
+        failure @?= Right ()
+        output @?= BS8.pack "a [31mb\nc\td"
+        errors @?= BS8.pack "err [2J"
+    , testCase "runShellCommandStreaming leaves UTF-8 bytes alone" $ do
+        (_, output, _) <- captureStreamed "printf 'a\\303\\251'"
+        output @?= BS8.pack "a\195\169"
+    , testCase "runShellCommandStreaming does not wait for background children" $ do
+        result <- timeout 3000000 (captureStreamed "sleep 5 & printf done")
+        case result of
+          Nothing -> assertFailure "streaming waited for a background child"
+          Just (failure, output, _) -> do
+            failure @?= Right ()
+            output @?= BS8.pack "done"
     , testCase "commandResultText appends stderr and exit status in order" $ do
         commandResultText (CommandResult ExitSuccess "out" "err") @?= "outerr"
         commandResultText (CommandResult (ExitFailure 3) "out" "err")
@@ -87,3 +114,23 @@ shellQuote value =
   where
     quote '\'' = "'\\''"
     quote character = [character]
+
+-- | Capture a streamed command's output in files: the test runner owns the
+-- process stdout, so stdout and stderr cannot be captured with pipes here.
+captureStreamed :: String -> IO (Either String (), BS.ByteString, BS.ByteString)
+captureStreamed command =
+  withTemporaryDirectory "hutian-shell-stream" $ \directory -> do
+    let outputPath = directory </> "stdout"
+        errorPath = directory </> "stderr"
+    result <-
+      withFile outputPath WriteMode $ \outputHandle ->
+        withFile errorPath WriteMode $ \errorHandle ->
+          runShellCommandStreaming
+            sanitizeOutputBytes
+            outputHandle
+            errorHandle
+            "/"
+            command
+    output <- BS.readFile outputPath
+    errors <- BS.readFile errorPath
+    pure (result, output, errors)

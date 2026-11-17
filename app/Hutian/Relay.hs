@@ -40,6 +40,7 @@ import Control.Exception
   ( Handler (..)
   , IOException
   , bracket
+  , bracketOnError
   , catch
   , catches
   , displayException
@@ -81,7 +82,12 @@ import Network.Socket
 import Network.Socket.ByteString (sendAll)
 import System.Directory (doesPathExist, removeFile)
 import System.IO (Handle, hPutStrLn, stderr)
-import System.Posix.Files (getFileStatus, isSocket, setFileMode)
+import System.Posix.Files
+  ( getFileStatus
+  , isSocket
+  , setFileCreationMask
+  , setFileMode
+  )
 
 -- | Whether the relay requires a key. The key itself arrives separately so it
 -- never becomes part of parsed settings.
@@ -271,12 +277,19 @@ runRelay runtime =
 listenUnix :: FilePath -> IO Socket
 listenUnix path = do
   removeStaleSocket path
-  sock <- socket AF_UNIX Stream defaultProtocol
-  bind sock (SockAddrUnix path)
-  -- Restrict the socket before anyone can connect.
-  setFileMode path 0o600
-  listen sock 16
-  pure sock
+  -- bind creates the socket with mode 0777 reduced by the process umask, and
+  -- the chmod below cannot happen before that instant. Narrowing the umask
+  -- means the socket is never group- or world-accessible, even briefly.
+  bracket (setFileCreationMask 0o077) setFileCreationMask $ \_ ->
+    bracketOnError
+      (socket AF_UNIX Stream defaultProtocol)
+      close
+      ( \sock -> do
+          bind sock (SockAddrUnix path)
+          setFileMode path 0o600
+          listen sock 16
+          pure sock
+      )
 
 removeStaleSocket :: FilePath -> IO ()
 removeStaleSocket path = do

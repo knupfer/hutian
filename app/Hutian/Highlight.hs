@@ -6,11 +6,14 @@ module Hutian.Highlight
   , sanitize
   , sanitizeChar
   , sanitizeOutput
+  , sanitizeOutputBytes
   ) where
 
+import qualified Data.ByteString as BS
 import Data.Char (isControl)
 import Data.List (intercalate)
 import qualified Data.Text as Text
+import Data.Word (Word8)
 import Skylighting
   ( ANSIColorLevel (..)
   , Color (..)
@@ -78,3 +81,15 @@ sanitizeOutputChar :: Char -> Char
 sanitizeOutputChar character
   | isControl character && character /= '\t' && character /= '\n' = ' '
   | otherwise = character
+
+-- | Byte-level 'sanitizeOutput' for streamed command output. Working on bytes
+-- keeps multi-byte UTF-8 sequences intact even when a chunk boundary splits
+-- them; only control bytes change.
+sanitizeOutputBytes :: BS.ByteString -> BS.ByteString
+sanitizeOutputBytes = BS.map sanitizeOutputByte
+
+sanitizeOutputByte :: Word8 -> Word8
+sanitizeOutputByte byte
+  | byte == 0x09 || byte == 0x0A = byte
+  | byte < 0x20 || byte == 0x7F = 0x20
+  | otherwise = byte
