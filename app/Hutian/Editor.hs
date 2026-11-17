@@ -120,6 +120,7 @@ data PromptAction
   | PromptExit
   | PromptContinue
   | PromptClear
+  | PromptNoop
   | PromptEdit Key
   | PromptHistoryUp
   | PromptHistoryDown
@@ -135,6 +136,7 @@ promptAction TermInput prompt KeySubmit
   | isEmptyPrompt prompt = PromptExit
   | otherwise = PromptEdit KeySubmit
 promptAction TermInput prompt KeyEnter
+  | all isSpace (promptText prompt) = PromptNoop
   | needsContinuation prompt = PromptContinue
   | otherwise = PromptSubmit
 promptAction mode prompt key =

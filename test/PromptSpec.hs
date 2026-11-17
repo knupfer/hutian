@@ -75,6 +75,13 @@ tests =
         next <- stepRedraw history KeyEnter (stateWith TermInput "echo 'open")
         promptMode next @?= TermInput
         bufferText TermInput next @?= "echo 'open\n\n"
+    , testCase "Enter on blank term input leaves the prompt untouched" $ do
+        let state = stateWith TermInput ""
+        case stepPrompt history KeyEnter state of
+          StepContinue next -> do
+            promptMode next @?= TermInput
+            bufferText TermInput next @?= "\n"
+          _ -> assertFailure "expected the blank prompt to stay"
     , testCase "history up recalls the active mode's newest entry" $ do
         next <- stepRedraw history KeyUp llmState
         bufferText LlmInput next @?= "llm\n"

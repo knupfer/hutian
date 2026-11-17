@@ -90,6 +90,7 @@ stepPrompt history key state =
         )
     PromptClear ->
       StepRedraw (resetState (clearPrompt mode))
+    PromptNoop -> StepContinue state
     PromptEdit key' ->
       let updated = applyKey key' current
           next = resetState (storePrompt mode updated)
