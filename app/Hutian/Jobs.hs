@@ -36,8 +36,14 @@ data JobStatus
   | JobSignalled Int
   deriving stock (Eq, Show)
 
+{-@ measure isRunning :: JobStatus -> Bool
+        isRunning JobRunning = True
+        isRunning (JobExited _) = False
+        isRunning (JobSignalled _) = False @-}
+
 -- | Convert the process library's exit code to a job status. A negative
 -- failure code means the process was terminated by a signal.
+{-@ jobStatusFromExit :: ExitCode -> {v:JobStatus | not (isRunning v)} @-}
 jobStatusFromExit :: ExitCode -> JobStatus
 jobStatusFromExit ExitSuccess = JobExited 0
 jobStatusFromExit (ExitFailure code)
@@ -126,7 +132,12 @@ jobKillResult wasRunning job
 
 -- | A bounded, positive number of log lines. Constructing one is the only way
 -- to request a tail size, so runtime code never needs to clamp a raw 'Int'.
-newtype LineCount = LineCount Int
+--
+-- This stays a @data@ declaration because LiquidHaskell only enforces data
+-- invariants on @data@ types, not on @newtype@s.
+{- HLINT ignore "Use newtype instead of data" -}
+{-@ data LineCount = LineCount { lineCountValue :: {v:Int | 1 <= v && v <= 500} } @-}
+data LineCount = LineCount { lineCountValue :: Int }
   deriving stock (Eq, Ord, Show)
 
 -- | Clamp a requested tail size into the supported range. Constructing one is
@@ -135,16 +146,15 @@ newtype LineCount = LineCount Int
 lineCount :: Int -> LineCount
 lineCount = LineCount . max 1 . min maxJobOutputLines
 
-lineCountValue :: LineCount -> Int
-lineCountValue (LineCount value) = value
-
 defaultJobOutputLines :: LineCount
 defaultJobOutputLines = LineCount 50
 
+{-@ maxJobOutputLines :: {v:Int | v == 500} @-}
 maxJobOutputLines :: Int
 maxJobOutputLines = 500
 
 -- | Keep a multi-line command from breaking the one-line job presentation.
+{-@ singleLine :: command:String -> {v:String | len v == len command} @-}
 singleLine :: String -> String
 singleLine = map replace
   where

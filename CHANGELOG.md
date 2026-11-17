@@ -5,6 +5,13 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- LiquidHaskell verifies the pure shell and relay modules as well, with tighter
+  refinements for message counts, editor layout, job output bounds, and relay
+  frame lengths. The check disables DEFAULT case expansion, so unexpanded
+  matches no longer emit warnings.
+
 ## [0.6.0.0] - 2026-11-17
 
 ### Changed

@@ -93,15 +93,31 @@ in
         pkgs.z3
       ]
       ''
+        # LiquidHaskell normally expands the DEFAULT case of a case-of
+        # expression two levels deep. Deeper matches only produce "Not
+        # expanding DEFAULT" warnings, and those warnings do not affect the
+        # verification result here, so turn expansion off entirely and keep
+        # the check output clean.
         ghc -XDerivingStrategies -fno-code -iapp \
           -fplugin=LiquidHaskell \
+          -fplugin-opt=LiquidHaskell:--max-case-expand=0 \
+          app/Hutian/Ansi.hs \
+          app/Hutian/Cli.hs \
+          app/Hutian/Command.hs \
           app/Hutian/Completion.hs \
-          app/Hutian/Key.hs \
-          app/Hutian/Paths.hs \
           app/Hutian/Conversation.hs \
           app/Hutian/Editor.hs \
           app/Hutian/History.hs \
-          app/Hutian/Prompt.hs
+          app/Hutian/Jobs.hs \
+          app/Hutian/Key.hs \
+          app/Hutian/Llm/Request.hs \
+          app/Hutian/Llm/Settings.hs \
+          app/Hutian/Llm/Stream.hs \
+          app/Hutian/Paths.hs \
+          app/Hutian/Policy.hs \
+          app/Hutian/Prompt.hs \
+          app/Hutian/Relay/Protocol.hs \
+          app/Hutian/Tool.hs
       '';
 
   # Check that closure paths of any size and plain files are bind-mounted into

@@ -16,13 +16,17 @@ module Hutian.Relay.Protocol
 import Data.Bits (shiftR)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+-- Imported for its LiquidHaskell specification, which defines `isLeft`.
+import Data.Either ()
 import Data.Word (Word8)
 
 -- | Every response starts with exactly this many bytes.
+{-@ statusFrameLength :: {v:Int | v == 4} @-}
 statusFrameLength :: Int
 statusFrameLength = 4
 
 -- | Encode an HTTP status code as four big-endian bytes.
+{-@ encodeStatus :: code:Int -> {v:ByteString | bslen v == 4} @-}
 encodeStatus :: Int -> ByteString
 encodeStatus code =
   BS.pack
@@ -36,6 +40,8 @@ encodeStatus code =
 
 -- | Decode and validate a four-byte status frame. Statuses outside the HTTP
 -- range are rejected instead of being passed through as a number.
+{-@ decodeStatus :: frame:ByteString ->
+      {v:Either String Int | not (isLeft v) => bslen frame == 4} @-}
 decodeStatus :: ByteString -> Either String Int
 decodeStatus frame
   | BS.length frame /= statusFrameLength = Left "relay: invalid status frame"

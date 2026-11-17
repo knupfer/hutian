@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-@ LIQUID "--no-termination" @-}
 
 -- | Pure stream protocol handling: server-sent event parsing, tool-call
 -- assembly, and the accumulator that produces a model result. Nothing here

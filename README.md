@@ -616,13 +616,21 @@ DeadNix over the flake and Nix files. These linters also run automatically in
 the package check phase, so a normal `nix build` fails on lint errors.
 `nix flake check` runs the explicit checks along with the package build.
 
-LiquidHaskell verifies the pure `Hutian.Completion`, `Hutian.Paths`,
-`Hutian.Conversation`, `Hutian.Editor`, `Hutian.History`, and `Hutian.Prompt`
-modules:
+LiquidHaskell verifies the pure modules of the shell and relay: `Hutian.Ansi`,
+`Hutian.Cli`, `Hutian.Command`, `Hutian.Completion`, `Hutian.Conversation`,
+`Hutian.Editor`, `Hutian.History`, `Hutian.Jobs`, `Hutian.Key`,
+`Hutian.Llm.Request`, `Hutian.Llm.Settings`, `Hutian.Llm.Stream`,
+`Hutian.Paths`, `Hutian.Policy`, `Hutian.Prompt`, `Hutian.Relay.Protocol`, and
+`Hutian.Tool`.
 
 ```console
 $ nix build .#checks.x86_64-linux.liquid
 ```
+
+The check disables DEFAULT case expansion (`--max-case-expand=0`). Expanding
+those cases does not change the verification result, but the default depth
+leaves LiquidHaskell warning about every unexpanded match, so the check keeps
+the output clean instead.
 
 This verification also runs automatically as a package-build dependency, so a
 normal `nix build` fails if the LiquidHaskell check fails.

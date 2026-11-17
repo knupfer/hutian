@@ -111,7 +111,7 @@ appendResult prompt answer calls conversation =
 
 -- | Build the message list for an OpenAI-compatible chat request.
 {-@ requestMessages :: systemPrompt:String -> conversation:Conversation -> prompt:String ->
-      {v:[ChatMessage] | len v >= len conversation + 1} @-}
+      {v:[ChatMessage] | len v == len conversation + 1 + (if len systemPrompt == 0 then 0 else 1)} @-}
 requestMessages :: String -> Conversation -> String -> [ChatMessage]
 requestMessages systemPrompt conversation prompt =
   continuationMessages systemPrompt conversation ++ [UserMessage prompt]
@@ -119,7 +119,7 @@ requestMessages systemPrompt conversation prompt =
 -- | Build the message list for a follow-up request after tool results. The
 -- conversation already ends with the messages that the model needs to see.
 {-@ continuationMessages :: systemPrompt:String -> conversation:Conversation ->
-      {v:[ChatMessage] | len v >= len conversation} @-}
+      {v:[ChatMessage] | len v == len conversation + (if len systemPrompt == 0 then 0 else 1)} @-}
 continuationMessages :: String -> Conversation -> [ChatMessage]
 continuationMessages systemPrompt conversation =
   systemMessages ++ map entryMessage conversation
@@ -137,7 +137,7 @@ entryMessage entry =
     AssistantToolCallEntry text calls -> AssistantToolCallMessage text calls
     ToolResultEntry callId output -> ToolResultMessage callId output
 
-{-@ terminalMessage :: command:String -> {v:String | len v >= len command} @-}
+{-@ terminalMessage :: command:String -> {v:String | len v == len command + 36} @-}
 terminalMessage :: String -> String
 terminalMessage command =
   "The user ran this terminal command:\n" ++ command

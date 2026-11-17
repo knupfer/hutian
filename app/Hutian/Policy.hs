@@ -24,6 +24,7 @@ modelShellAdvertised ModelShellAsk = True
 modelShellAdvertised ModelShellAllowed = True
 
 -- | The stable command-line and Nix spelling of a policy.
+{-@ modelShellArgument :: ModelShell -> {v:String | len v >= 3} @-}
 modelShellArgument :: ModelShell -> String
 modelShellArgument ModelShellDenied = "deny"
 modelShellArgument ModelShellAsk = "ask"

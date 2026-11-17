@@ -46,14 +46,14 @@ import Data.Char (isSpace)
 import Data.List (intercalate, isPrefixOf)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (fromMaybe)
 import Hutian.Completion (Completion (..), CompletionKind (..), chooseCompletion)
 import Hutian.Key (Key (..))
 
 {-@ type Pos = {v:Int | v > 0} @-}
 
 -- | Clamp a terminal width to a usable positive value.
-{-@ layoutWidth :: width:Int -> Pos @-}
+{-@ layoutWidth :: width:Int -> {v:Pos | v >= width && (width > 0 => v == width)} @-}
 layoutWidth :: Int -> Int
 layoutWidth width
   | width <= 0 = 1
@@ -371,10 +371,16 @@ lineAtRow :: Prompt -> Int -> String
 lineAtRow prompt row =
   fromMaybe (NonEmpty.head (promptLines prompt)) (atMay (linesOf prompt) row)
 
+{-@ atMay :: values:[a] -> index:Int ->
+      {v:Maybe a | (0 <= index && index < len values => isJust v)
+                && (index < 0 || index >= len values => not (isJust v))} @-}
 atMay :: [a] -> Int -> Maybe a
 atMay values index
   | index < 0 = Nothing
-  | otherwise = listToMaybe (drop index values)
+  | otherwise =
+      case drop index values of
+        [] -> Nothing
+        value : _ -> Just value
 
 replaceLine :: Int -> String -> [String] -> [String]
 replaceLine index value = splice index 1 [value]
@@ -453,21 +459,34 @@ renderedLines prefix prompt =
       (prefixRows, inline) = splitPrefix prefix
    in prefixRows ++ ((inline ++ first) : rest)
 
-{-@ lineStarts :: width:Int -> [String] -> [Nat] @-}
+{-@ lineStarts :: width:Int -> xs:[String] -> {v:[Nat] | len v == len xs + 1} @-}
 lineStarts :: Int -> [String] -> [Int]
 lineStarts width = scanl (+) 0 . map (length . wrapLine (layoutWidth width))
 
-{-@ wrapLine :: width:Int -> String -> [String] @-}
+{-@ wrapLine :: width:Int -> line:String ->
+      {v:[String] | len v > 0
+                  && len (head v) <= len line
+                  && (width > 0 => len (head v) <= width)
+                  && (len line > 0 => len (head v) > 0)
+                  && (len line == 0 => len (head v) == 0)} @-}
 wrapLine :: Int -> String -> [String]
 wrapLine width line
   | null line = [""]
-  | otherwise = go line
-  where
-    width' = layoutWidth width
-    go [] = []
-    go rest =
-      let (chunk, remainder) = splitAt width' rest
-       in chunk : go remainder
+  | otherwise = wrapChunks (layoutWidth width) line
+
+-- | The chunks of a non-empty line. Kept separate from 'wrapLine' so the
+-- refinement about the first chunk has a non-empty list to talk about.
+{-@ wrapChunks :: width:Int -> rest:String ->
+      {v:[String] | (len rest == 0 => len v == 0)
+                  && (len rest > 0 => len v > 0)
+                  && (len rest > 0 => len (head v) <= len rest)
+                  && (width > 0 && len rest > 0 => len (head v) <= width)
+                  && (width > 0 && len rest > 0 => len (head v) > 0)} @-}
+wrapChunks :: Int -> String -> [String]
+wrapChunks _ [] = []
+wrapChunks width' rest =
+  let (chunk, remainder) = splitAt width' rest
+   in chunk : wrapChunks width' remainder
 
 completionTarget :: Prompt -> (Int, String)
 completionTarget prompt =
