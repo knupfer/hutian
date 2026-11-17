@@ -13,13 +13,32 @@ module Hutian.Llm
   , runLlmContinuation
   ) where
 
-import Control.Exception (SomeException, displayException, evaluate, try)
+import Control.Concurrent (forkIOWithUnmask, killThread, threadDelay)
+import Control.Concurrent.MVar
+  ( newEmptyMVar
+  , putMVar
+  , takeMVar
+  , tryTakeMVar
+  )
+import Control.Exception
+  ( SomeAsyncException
+  , SomeException
+  , displayException
+  , evaluate
+  , finally
+  , fromException
+  , mask
+  , onException
+  , try
+  , tryJust
+  )
 import Control.Monad (unless)
 import Data.Aeson (Value)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (isSpace)
+import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
 import Hutian.Conversation (Conversation)
@@ -105,14 +124,67 @@ runRequest output interruptFlag settings body = do
     then pure emptyLlmResult
     else do
       result <-
-        try
+        raceInterrupt
+          interruptFlag
           (streamCompletion output interruptFlag settings body)
-          :: IO (Either SomeException LlmResult)
       case result of
-        Left exception -> do
-          llmOutputErrorLine output ("llm: " ++ show exception)
+        Nothing -> pure emptyLlmResult
+        Just (Left message) -> do
+          llmOutputErrorLine output ("llm: " ++ message)
           pure emptyLlmResult
-        Right response -> pure response
+        Just (Right response) -> pure response
+
+-- | Run a request in a worker thread and stop waiting as soon as the interrupt
+-- flag is set. Killing the worker unblocks a body read that is waiting on the
+-- network, and its bracket closes the connection. 'Nothing' means interrupted.
+raceInterrupt :: InterruptFlag -> IO a -> IO (Maybe (Either String a))
+raceInterrupt interruptFlag action = mask $ \restore -> do
+  outcome <- newEmptyMVar
+  finished <- newEmptyMVar
+  worker <-
+    forkIOWithUnmask $ \unmask ->
+      (unmask (trySync action) >>= putMVar outcome)
+        `finally` putMVar finished ()
+  let wait = do
+        completed <- tryTakeMVar outcome
+        case completed of
+          Just result -> pure (Just result)
+          Nothing -> do
+            stopped <- tryTakeMVar finished
+            case stopped of
+              Just () -> do
+                finalResult <- tryTakeMVar outcome
+                pure
+                  ( Just
+                      ( fromMaybe
+                          (Left "request thread terminated unexpectedly")
+                          finalResult
+                      )
+                  )
+              Nothing -> do
+                interrupted <- isInterrupted interruptFlag
+                if interrupted
+                  then do
+                    killThread worker
+                    takeMVar finished
+                    pure Nothing
+                  else threadDelay interruptPollMicros >> wait
+  restore wait `onException` killThread worker
+
+-- | Catch synchronous failures so the worker always reports a result, but let
+-- async exceptions, including the one used to cancel it, propagate.
+trySync :: IO a -> IO (Either String a)
+trySync = tryJust synchronous
+  where
+    synchronous :: SomeException -> Maybe String
+    synchronous exception =
+      case fromException exception :: Maybe SomeAsyncException of
+        Just _ -> Nothing
+        Nothing -> Just (displayException exception)
+
+-- | How often a blocked request checks whether the user interrupted it.
+interruptPollMicros :: Int
+interruptPollMicros = 20000
 
 streamCompletion :: LlmOutput -> InterruptFlag -> LlmSettings -> Value -> IO LlmResult
 streamCompletion output interruptFlag settings body =

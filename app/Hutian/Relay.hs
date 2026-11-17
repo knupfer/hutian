@@ -36,7 +36,15 @@ module Hutian.Relay
   ) where
 
 import Control.Concurrent (forkFinally)
-import Control.Exception (IOException, SomeException, bracket, catch, displayException, try)
+import Control.Exception
+  ( Handler (..)
+  , IOException
+  , bracket
+  , catch
+  , catches
+  , displayException
+  , try
+  )
 import Control.Monad (forever, unless, void, when)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
@@ -328,18 +336,35 @@ forward :: RelayRuntime -> Socket -> BS.ByteString -> IO ()
 forward runtime connection body = do
   sent <- newIORef False
   result <-
-    try
-      ( withResponse (relayRequest runtime body) (runtimeManager runtime) $ \response -> do
-          writeIORef sent True
-          connected <- sendToClient connection (encodeStatus (statusCode (responseStatus response)))
-          when connected (streamBody connection (brRead (responseBody response)))
-      )
+    ( Right
+        <$> withResponse
+          (relayRequest runtime body)
+          (runtimeManager runtime)
+          ( \response -> do
+              writeIORef sent True
+              connected <-
+                sendToClient
+                  connection
+                  (encodeStatus (statusCode (responseStatus response)))
+              when connected (streamBody connection (brRead (responseBody response)))
+          )
+    )
+      `catches`
+        [ Handler
+            ( \(exception :: HttpException) ->
+                pure (Left (displayException exception))
+            )
+        , Handler
+            ( \(exception :: IOException) ->
+                pure (Left (displayException exception))
+            )
+        ]
   case result of
-    Left (exception :: SomeException) -> do
+    Left message -> do
       alreadySent <- readIORef sent
       unless alreadySent $
         sendError connection 502 "upstream request failed"
-      logRelay runtime ("upstream request failed: " ++ displayException exception)
+      logRelay runtime ("upstream request failed: " ++ message)
     Right () -> pure ()
 
 streamBody :: Socket -> IO BS.ByteString -> IO ()

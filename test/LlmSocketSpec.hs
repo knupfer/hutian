@@ -3,20 +3,26 @@
 
 module LlmSocketSpec (tests) where
 
-import Control.Concurrent (forkIO)
-import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar)
-import Control.Exception (SomeException, catch)
+import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
+import Control.Exception (SomeException, catch, finally)
 import qualified Data.ByteString as BS
 import Data.List (isInfixOf)
 import Hutian.Conversation (ConversationEntry (..))
 import Hutian.Http.Wire (recvAll)
-import Hutian.Interrupt (newInterruptFlag)
+import Hutian.Interrupt
+  ( clearInterrupt
+  , installInterruptHandler
+  , newInterruptFlag
+  )
 import Hutian.Llm
-  ( LlmSettings (..)
+  ( LlmResult (..)
+  , LlmSettings (..)
   , LlmUrl (..)
   , ModelName (..)
   , SystemPrompt (..)
   , runLlm
+  , runLlmWithTools
   )
 import Hutian.Llm.UnixSocket (postUnixStream)
 import Hutian.Policy (ModelShell (..))
@@ -33,6 +39,7 @@ import Network.Socket
   , socket
   )
 import Network.Socket.ByteString (sendAll)
+import System.Posix.Signals (raiseSignal, sigINT)
 import System.Timeout (timeout)
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -40,6 +47,7 @@ import TestSupport
   ( assertInfix
   , assertNotInfix
   , awaitMVar
+  , captureStderr
   , captureStdout
   , stdoutLlmOutput
   , withTemporaryDirectory
@@ -116,6 +124,34 @@ socketTests =
           assertInfix "current" request
           assertInfix "prior" request
           assertNotInfix "Authorization" request
+    , testCase "runLlmWithTools stops a blocked stream when interrupted" $
+        withTemporaryDirectory "hutian-unix-client" $ \directory -> do
+          let socketPath = directory ++ "/llm.sock"
+          ready <- startStallingUnixServer socketPath
+          flag <- newInterruptFlag
+          installInterruptHandler flag
+          _ <- forkIO $ do
+            takeMVar ready
+            threadDelay 100000
+            raiseSignal sigINT
+          result <-
+            timeout 3000000 $
+              captureStderr $
+                runLlmWithTools
+                  stdoutLlmOutput
+                  flag
+                  (settingsForSocket socketPath)
+                  [UserEntry "prior"]
+                  "current"
+          clearInterrupt flag
+          case result of
+            Nothing -> assertFailure "interrupt did not stop a blocked stream"
+            Just (response, errors) -> do
+              llmToolCalls response @?= []
+              llmResponseText response @?= Nothing
+              assertBool
+                "cancelling the worker must not be reported as a request error"
+                (not ("thread killed" `isInfixOf` errors))
     , testCase "runLlm reports errors without crashing when the socket is missing" $ do
         flag <- newInterruptFlag
         captured <-
@@ -167,6 +203,29 @@ startUnixServer path response = do
     )
       `catch` \(_ :: SomeException) -> pure ()
   pure requests
+
+-- | Accept one request, send a successful status, then leave the body open and
+-- silent. The returned 'MVar' is filled once the status is on the wire, so a
+-- test can raise SIGINT only after the client is known to be waiting for data.
+startStallingUnixServer :: FilePath -> IO (MVar ())
+startStallingUnixServer path = do
+  listener <- socket AF_UNIX Stream defaultProtocol
+  bind listener (SockAddrUnix path)
+  listen listener 1
+  ready <- newEmptyMVar
+  _ <- forkIO $
+    ( ( do
+          (connection, _) <- accept listener
+          _ <- recvAll connection
+          sendAll connection (encodeStatus 200)
+          putMVar ready ()
+          threadDelay 5000000
+          close connection
+      )
+        `finally` close listener
+    )
+      `catch` \(_ :: SomeException) -> pure ()
+  pure ready
 
 readAll :: IO BS.ByteString -> IO BS.ByteString
 readAll reader = go []

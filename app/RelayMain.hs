@@ -3,7 +3,7 @@
 -- | Entry point for the host-side LLM relay.
 module Main (main) where
 
-import Control.Exception (SomeException, try)
+import Control.Exception (try)
 import Hutian.Relay
   ( RelayAuth (..)
   , RelayAuthPolicy (..)
@@ -15,6 +15,7 @@ import Hutian.Relay
   , runRelay
   , stderrLogger
   )
+import Network.HTTP.Client (HttpException)
 import System.Environment (getArgs)
 import System.Exit (ExitCode (ExitFailure), exitWith)
 import System.IO (hPutStrLn, stderr, stdin)
@@ -39,7 +40,7 @@ main = do
         Right auth -> do
           runtimeResult <-
             try (newRelayRuntime stderrLogger settings auth)
-              :: IO (Either SomeException RelayRuntime)
+              :: IO (Either HttpException RelayRuntime)
           case runtimeResult of
             Left _ -> failWith "hutian-llm-relay: invalid upstream URL"
             Right runtime -> runRelay runtime
