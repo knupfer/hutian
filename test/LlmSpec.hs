@@ -6,6 +6,7 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
+import qualified Data.IntMap.Strict as IntMap
 import Data.List (isInfixOf, isSuffixOf)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
@@ -326,7 +327,7 @@ unitTests =
     , testCase "mergeToolCallDeltas assembles streamed arguments" $ do
         let first = ToolCallDelta 0 (Just "call-1") (Just "shell") (Just "{\"command\":")
             second = ToolCallDelta 0 Nothing Nothing (Just "\"ls\"}")
-        mergeToolCallDeltas [] [first, second]
+        IntMap.elems (mergeToolCallDeltas IntMap.empty [first, second])
           @?= [ToolCall "call-1" "shell" "{\"command\":\"ls\"}"]
     , testCase "parseStreamLine parses SSE and bare JSON lines" $ do
         parseStreamLine "" @?= Nothing

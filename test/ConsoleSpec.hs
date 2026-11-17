@@ -61,6 +61,11 @@ tests =
           assertBool
             "the job line must appear exactly once"
             (countOccurrences "job 1 started" output == 1)
+    , testCase "gray lines neutralize terminal escape sequences" $
+        withPseudoTerminalOutput $ \readOutput -> do
+          consoleWriteGrayLine "job\ESC[2J started"
+          output <- readOutput
+          stripAnsi output @?= "job [2J started\r\n"
     ]
 
 countOccurrences :: String -> String -> Int

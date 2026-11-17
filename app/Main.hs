@@ -44,6 +44,7 @@ import Hutian.Interrupt
   ( InterruptFlag
   , clearInterrupt
   , installInterruptHandler
+  , isInterrupted
   , newInterruptFlag
   )
 import Hutian.Jobs.Runtime
@@ -62,7 +63,7 @@ import Hutian.Llm
 import Hutian.Render (OutputKind (..))
 import Hutian.Shell (executableCommands, runShellCommand)
 import Hutian.Terminal (promptForInput)
-import Hutian.Tool.Exec (runToolCalls)
+import Hutian.Tool.Exec (abortToolCalls, runToolCalls)
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
@@ -185,24 +186,31 @@ continueLlm :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> Convers
 continueLlm workingDirectory jobs settings interruptFlag conversation result
   | null (llmToolCalls result) = pure conversation
   | otherwise = do
-      (aborted, conversation') <-
-        runToolCalls
-          jobs
-          workingDirectory
-          (settingModelShell settings)
-          conversation
-          (llmToolCalls result)
-      if aborted
-        then pure conversation'
+      interrupted <- isInterrupted interruptFlag
+      if interrupted
+        then
+          -- The user aborted the turn: keep the assistant tool-call message
+          -- paired with results, but do not start new work.
+          pure (abortToolCalls conversation (llmToolCalls result))
         else do
-          next <- runLlmContinuation consoleLlmOutput interruptFlag settings conversation'
-          continueLlm
-            workingDirectory
-            jobs
-            settings
-            interruptFlag
-            (appendResult Nothing (llmResponseText next) (llmToolCalls next) conversation')
-            next
+          (aborted, conversation') <-
+            runToolCalls
+              jobs
+              workingDirectory
+              (settingModelShell settings)
+              conversation
+              (llmToolCalls result)
+          if aborted
+            then pure conversation'
+            else do
+              next <- runLlmContinuation consoleLlmOutput interruptFlag settings conversation'
+              continueLlm
+                workingDirectory
+                jobs
+                settings
+                interruptFlag
+                (appendResult Nothing (llmResponseText next) (llmToolCalls next) conversation')
+                next
 
 -- | Stream LLM output through the terminal boundary, flushing each piece so a
 -- response appears as it arrives.

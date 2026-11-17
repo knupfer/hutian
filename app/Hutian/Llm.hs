@@ -100,15 +100,19 @@ runLlmContinuation output interruptFlag settings conversation =
 
 runRequest :: LlmOutput -> InterruptFlag -> LlmSettings -> Value -> IO LlmResult
 runRequest output interruptFlag settings body = do
-  result <-
-    try
-      (streamCompletion output interruptFlag settings body)
-      :: IO (Either SomeException LlmResult)
-  case result of
-    Left exception -> do
-      llmOutputErrorLine output ("llm: " ++ show exception)
-      pure emptyLlmResult
-    Right response -> pure response
+  interrupted <- isInterrupted interruptFlag
+  if interrupted
+    then pure emptyLlmResult
+    else do
+      result <-
+        try
+          (streamCompletion output interruptFlag settings body)
+          :: IO (Either SomeException LlmResult)
+      case result of
+        Left exception -> do
+          llmOutputErrorLine output ("llm: " ++ show exception)
+          pure emptyLlmResult
+        Right response -> pure response
 
 streamCompletion :: LlmOutput -> InterruptFlag -> LlmSettings -> Value -> IO LlmResult
 streamCompletion output interruptFlag settings body =
@@ -173,9 +177,10 @@ handleStreamResponse output interruptFlag code reader
           initialStreamState
       let (endState, finalOutput) = finishStream finalState
       _ <- emitStreamOutput output (endState, finalOutput)
-      unless (streamSawData endState) $
+      interrupted <- isInterrupted interruptFlag
+      unless (interrupted || streamSawData endState) $
         llmOutputErrorLine output "llm: no response content received"
-      pure (resultFromState endState)
+      pure (resultUnlessInterrupted interrupted endState)
 
 consumeResponse
   :: LlmOutput

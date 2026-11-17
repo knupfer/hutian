@@ -35,6 +35,7 @@ module Hutian.Llm.Protocol
   , applyStreamEvent
   , finishStream
   , resultFromState
+  , resultUnlessInterrupted
   ) where
 
 import Control.Applicative ((<|>))
@@ -44,6 +45,7 @@ import Data.Aeson.Key (Key)
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
 import Data.Char (isControl, isSpace)
+import qualified Data.IntMap.Strict as IntMap
 import Data.List (isPrefixOf, isSuffixOf, nub)
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe, mapMaybe)
 import qualified Data.Text as Text
@@ -374,7 +376,7 @@ data StreamState = StreamState
   , streamReasoningStarted :: Bool
   , streamAnswerStarted :: Bool
   , streamAnswerText :: Text.Text
-  , streamToolCalls :: [ToolCall]
+  , streamToolCalls :: IntMap.IntMap ToolCall
   , streamSawData :: Bool
   , streamDone :: Bool
   }
@@ -387,7 +389,7 @@ initialStreamState =
     , streamReasoningStarted = False
     , streamAnswerStarted = False
     , streamAnswerText = ""
-    , streamToolCalls = []
+    , streamToolCalls = IntMap.empty
     , streamSawData = False
     , streamDone = False
     }
@@ -483,15 +485,25 @@ resultFromState :: StreamState -> LlmResult
 resultFromState state =
   LlmResult
     { llmResponseText = responseText
-    , llmToolCalls = streamToolCalls state
+    , llmToolCalls = calls
     }
   where
-    calls = streamToolCalls state
+    -- A delta may arrive for an index whose name fragment was lost or never
+    -- sent. Such a call cannot be planned, so it is not handed to the executor.
+    calls = filter (not . null . toolCallName) (IntMap.elems (streamToolCalls state))
     answer = streamAnswerText state
     responseText
       | not (streamSawData state) = Nothing
       | Text.null answer && not (null calls) = Nothing
       | otherwise = Just (Text.unpack answer)
+
+-- | Publish a stream result, but never expose partial tool calls when the
+-- stream was interrupted. Their argument JSON may be truncated, and executing
+-- a half-received command is exactly what the interrupt was meant to prevent.
+resultUnlessInterrupted :: Bool -> StreamState -> LlmResult
+resultUnlessInterrupted interrupted state
+  | interrupted = emptyLlmResult
+  | otherwise = resultFromState state
 
 -- | Thinking text uses the same grey as command output.
 thinkingGrey :: String
@@ -592,26 +604,27 @@ lookupFunctionString key fields =
     Just (Object function) -> lookupString key function
     _ -> Nothing
 
--- | Merge streamed tool-call fragments by their index.
-mergeToolCallDeltas :: [ToolCall] -> [ToolCallDelta] -> [ToolCall]
+-- | Merge streamed tool-call fragments by their index. A sparse or
+-- out-of-order index must not create placeholder calls or shift later ones,
+-- so the accumulator is keyed by index and compacted only when the stream is
+-- finished.
+mergeToolCallDeltas :: IntMap.IntMap ToolCall -> [ToolCallDelta] -> IntMap.IntMap ToolCall
 mergeToolCallDeltas = foldl' mergeOne
   where
-    mergeOne calls delta =
-      let index = toolCallDeltaIndex delta
-          (before, rest) = splitAt index calls
-          existing =
-            case rest of
-              call : _ -> call
-              [] -> ToolCall "" "" ""
-          updated =
-            existing
-              { toolCallId = preferText (toolCallId existing) (toolCallDeltaId delta)
-              , toolCallName = preferText (toolCallName existing) (toolCallDeltaName delta)
-              , toolCallArguments =
-                  toolCallArguments existing
-                    ++ maybe "" Text.unpack (toolCallDeltaArguments delta)
-              }
-       in before ++ [updated] ++ drop 1 rest
+    mergeOne accumulated delta =
+      IntMap.alter
+        (Just . applyDelta . fromMaybe (ToolCall "" "" ""))
+        (toolCallDeltaIndex delta)
+        accumulated
+      where
+        applyDelta existing =
+          existing
+            { toolCallId = preferText (toolCallId existing) (toolCallDeltaId delta)
+            , toolCallName = preferText (toolCallName existing) (toolCallDeltaName delta)
+            , toolCallArguments =
+                toolCallArguments existing
+                  ++ maybe "" Text.unpack (toolCallDeltaArguments delta)
+            }
 
 preferText :: String -> Maybe Text.Text -> String
 preferText current Nothing = current

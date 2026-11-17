@@ -5,6 +5,7 @@ module Hutian.Highlight
   , highlightShellLine
   , sanitize
   , sanitizeChar
+  , sanitizeOutput
   ) where
 
 import Data.Char (isControl)
@@ -65,4 +66,15 @@ sanitize = map sanitizeChar
 sanitizeChar :: Char -> Char
 sanitizeChar character
   | isControl character && character /= '\t' = ' '
+  | otherwise = character
+
+-- | Neutralize control characters in multi-line command, job, or tool output.
+-- Unlike 'sanitize', newlines are preserved so captured output keeps its
+-- layout; carriage returns and escape sequences still become spaces.
+sanitizeOutput :: String -> String
+sanitizeOutput = map sanitizeOutputChar
+
+sanitizeOutputChar :: Char -> Char
+sanitizeOutputChar character
+  | isControl character && character /= '\t' && character /= '\n' = ' '
   | otherwise = character

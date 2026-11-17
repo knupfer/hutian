@@ -6,7 +6,11 @@ import Data.Aeson (Value (..))
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.List (isInfixOf)
 import qualified Data.Text as Text
-import Hutian.Conversation (ToolCall (..))
+import Hutian.Conversation
+  ( ConversationEntry (..)
+  , ToolCall (..)
+  , emptyConversation
+  )
 import Hutian.Jobs
   ( JobId (..)
   , defaultJobOutputLines
@@ -15,6 +19,7 @@ import Hutian.Jobs
   )
 import Hutian.Policy (ModelShell (..))
 import Hutian.Tool
+import Hutian.Tool.Exec (abortToolCalls, abortedToolMessage)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -107,6 +112,13 @@ tests =
         assertBool
           "expected the plain numeric limits"
           ("defaults to 50 and is capped at 500" `isInfixOf` show toolDefinitions)
+    , testCase "aborting tool calls records a result for every call" $
+        abortToolCalls
+          emptyConversation
+          [shellCall, ToolCall "call-2" "jobs" "{}"]
+          @?= [ ToolResultEntry "call-1" abortedToolMessage
+              , ToolResultEntry "call-2" abortedToolMessage
+              ]
     ]
 
 shellCall :: ToolCall

@@ -28,9 +28,11 @@ module Hutian.Console
 
 import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (MVar, newMVar, withMVar)
-import Control.Exception (IOException, catch, finally, try)
+import Control.Exception (IOException, catch, finally)
 import Control.Monad (when)
+import Foreign.Marshal.Alloc (allocaBytes)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
+import Hutian.Highlight (sanitize, sanitizeOutput)
 import Hutian.Render
   ( CursorStyle (..)
   , OutputKind
@@ -54,6 +56,7 @@ import System.Console.Terminal.Size (Window (Window), size)
 import System.IO
   ( BufferMode (LineBuffering)
   , hFlush
+  , hGetBufNonBlocking
   , hIsTerminalDevice
   , hPutStr
   , hPutStrLn
@@ -105,7 +108,7 @@ consoleWriteError :: String -> IO ()
 consoleWriteError = hPutStr stderr
 
 consoleWriteErrorLine :: String -> IO ()
-consoleWriteErrorLine = hPutStrLn stderr
+consoleWriteErrorLine message = hPutStrLn stderr (sanitizeOutput message)
 
 consoleFlush :: IO ()
 consoleFlush = hFlush stdout
@@ -144,18 +147,19 @@ consoleWriteToolCommand toolName command = do
   if interactive
     then do
       width <- consoleWidth
-      consoleWrite (toolPromptText toolName width command)
-    else consoleWriteLine command
+      consoleWrite (toolPromptText (sanitize toolName) width command)
+    else consoleWriteLine (sanitizeOutput command)
   consoleFlush
 
 -- | Show a tool call that has no command of its own.
 consoleWriteToolLabel :: String -> IO ()
 consoleWriteToolLabel toolName = do
   interactive <- consoleIsInteractive
+  let name = sanitize toolName
   consoleWriteLine $
     if interactive
-      then toolLabelText toolName
-      else "tool " ++ toolName ++ ":"
+      then toolLabelText name
+      else "tool " ++ name ++ ":"
   consoleFlush
 
 -- | Show one line of command or job output in gray. Streamed and multi-line
@@ -164,7 +168,7 @@ consoleWriteToolLabel toolName = do
 consoleWriteGrayLine :: String -> IO ()
 consoleWriteGrayLine message = do
   interactive <- consoleIsInteractive
-  consoleWriteLine (grayOutputText interactive message)
+  consoleWriteLine (grayOutputText interactive (sanitize message))
   consoleFlush
 
 -- | The result line shown after the options are removed.
@@ -174,9 +178,9 @@ approvalResult ToolDenied = "No"
 approvalResult ToolAborted = "Aborted"
 
 -- | Show a requested command and ask for single-key approval. Returns
--- 'ToolDenied' without prompting when output is not a terminal. Pending input
--- is discarded so text typed while the model was streaming cannot approve the
--- command.
+-- 'ToolDenied' without prompting when output is not a terminal. Input typed
+-- while the model was streaming is discarded after switching to raw mode,
+-- because canonical-mode buffering hides it from 'hReady'.
 confirmToolCommand :: String -> String -> IO ToolApproval
 confirmToolCommand toolName command = do
   consoleWriteToolCommand toolName command
@@ -184,9 +188,9 @@ confirmToolCommand toolName command = do
   inputIsTerminal <- hIsTerminalDevice stdin
   if not interactive || not inputIsTerminal
     then pure ToolDenied
-    else do
-      drainPendingInput
-      withRawTerminal $
+    else
+      withRawTerminal $ do
+        drainPendingInput
         withHiddenCursor $ do
           consoleWrite approvePromptText
           consoleFlush
@@ -210,16 +214,22 @@ withHiddenCursor action =
       consoleWrite showCursorText
       consoleFlush
 
--- | Consume already-buffered input. Typed-ahead text is meant for the next
--- prompt, but it must not accidentally approve a model command.
+-- | Discard input that was typed before the approval prompt appeared. Byte
+-- reads are used on purpose: 'hReady' and 'getChar' both miss data that the
+-- line discipline buffered in canonical mode, and a text read can prefetch a
+-- whole burst that the next 'getChar' would then consume as an approval.
 drainPendingInput :: IO ()
-drainPendingInput = do
-  ready <- consoleInputReady
-  when ready $ do
-    next <- try getChar :: IO (Either IOException Char)
-    case next of
-      Left _ -> pure ()
-      Right _ -> drainPendingInput
+drainPendingInput =
+  allocaBytes drainChunk $ \buffer -> go buffer
+  where
+    go buffer = do
+      count <-
+        hGetBufNonBlocking stdin buffer drainChunk
+          `catch` \(_ :: IOException) -> pure 0
+      when (count > 0) (go buffer)
+
+drainChunk :: Int
+drainChunk = 4096
 
 -- | Print the label shown on its own line before shell or tool output.
 printOutputLabel :: OutputKind -> IO ()

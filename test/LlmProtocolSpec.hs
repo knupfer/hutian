@@ -37,6 +37,28 @@ tests =
               applyStreamEvent second (fst (applyStreamEvent first initialStreamState))
         resultFromState state
           @?= LlmResult Nothing [ToolCall "call-1" "shell" "{\"command\":\"ls\"}"]
+    , testCase "sparse tool-call indices do not create placeholder calls" $ do
+        let first =
+              toolEvent
+                (ToolCallDelta 2 (Just "call-3") (Just "shell") (Just "{\"command\":\"ls\"}"))
+            second = toolEvent (ToolCallDelta 0 (Just "call-1") (Just "jobs") (Just "{}"))
+            state =
+              fst (applyStreamEvent second (fst (applyStreamEvent first initialStreamState)))
+        resultFromState state
+          @?= LlmResult
+            Nothing
+            [ ToolCall "call-1" "jobs" "{}"
+            , ToolCall "call-3" "shell" "{\"command\":\"ls\"}"
+            ]
+    , testCase "incomplete tool calls are not published" $ do
+        let delta = ToolCallDelta 0 (Just "call-1") Nothing (Just "{\"command\":")
+            state = fst (applyStreamEvent (toolEvent delta) initialStreamState)
+        resultFromState state @?= LlmResult (Just "") []
+    , testCase "an interrupted stream never publishes partial tool calls" $ do
+        let delta = ToolCallDelta 0 (Just "call-1") (Just "shell") (Just "{\"command\":\"ls\"}")
+            state = fst (applyStreamEvent (toolEvent delta) initialStreamState)
+        resultFromState state @?= LlmResult Nothing [ToolCall "call-1" "shell" "{\"command\":\"ls\"}"]
+        resultUnlessInterrupted True state @?= emptyLlmResult
     , testCase "event errors are surfaced without stopping the stream" $ do
         let event = StreamEvent Nothing Nothing (Just "boom") [] False
             (state, output) = applyStreamEvent event initialStreamState

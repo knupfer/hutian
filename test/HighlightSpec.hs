@@ -1,7 +1,7 @@
 module HighlightSpec (tests) where
 
 import Data.List (isInfixOf)
-import Hutian.Highlight (highlightShellLine)
+import Hutian.Highlight (highlightShellLine, sanitizeOutput)
 import Test.Tasty
 import Test.Tasty.HUnit
 import TestSupport (stripAnsi)
@@ -20,4 +20,6 @@ tests =
         stripAnsi (highlightShellLine "a\ESC[31mb") @?= "a [31mb"
     , testCase "tabs are preserved" $
         stripAnsi (highlightShellLine "echo\tvalue") @?= "echo\tvalue"
+    , testCase "multi-line output keeps newlines but removes escapes" $
+        sanitizeOutput "a\ESC[31mb\nc\td\r" @?= "a [31mb\nc\td "
     ]

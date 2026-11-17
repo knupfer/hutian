@@ -2,6 +2,7 @@
 -- "Hutian.Tool"; this module only carries out the resulting plan.
 module Hutian.Tool.Exec
   ( abortedToolMessage
+  , abortToolCalls
   , runToolCalls
   ) where
 
@@ -27,6 +28,7 @@ import Hutian.Conversation
   , ToolCall (..)
   , appendToolResult
   )
+import Hutian.Highlight (sanitizeOutput)
 import Hutian.Jobs
   ( Job
   , jobKillResult
@@ -50,6 +52,16 @@ import Hutian.Shell
   , runShellCommandOutput
   )
 import Hutian.Tool (CommandMode (..), ToolPlan (..), planTool)
+
+-- | Append an abort result for every requested call without running any. This
+-- keeps an interrupted assistant tool-call message paired with tool results in
+-- the conversation history.
+abortToolCalls :: Conversation -> [ToolCall] -> Conversation
+abortToolCalls = go
+  where
+    go current [] = current
+    go current (call : rest) =
+      go (appendToolResult (toolCallId call) abortedToolMessage current) rest
 
 -- | Run each requested call in order. Once a call aborts the turn, the
 -- remaining calls get an error result instead of running.
@@ -165,16 +177,16 @@ displayCommandResult :: CommandResult -> IO ()
 displayCommandResult result = do
   stdoutInteractive <- consoleIsInteractive
   stderrInteractive <- consoleIsErrorInteractive
-  let output = commandStdout result
+  let output = sanitizeOutput (commandStdout result)
   consoleWrite (grayOutputText stdoutInteractive output)
-  consoleWriteError (grayOutputText stderrInteractive (commandStderr result))
+  consoleWriteError (grayOutputText stderrInteractive (sanitizeOutput (commandStderr result)))
   unless (null output || "\n" `isSuffixOf` output) (consoleWrite "\n")
   consoleFlush
 
 -- | Print the job table in gray.
 printJobRows :: [Job] -> IO ()
 printJobRows current =
-  withGrayOutput (mapM_ consoleWriteLine (lines (jobListResult current)))
+  withGrayOutput (mapM_ (consoleWriteLine . sanitizeOutput) (lines (jobListResult current)))
 
 -- | Print a job log tail, marking a truncated window at the top.
 displayJobOutput :: String -> Bool -> IO ()
@@ -182,7 +194,7 @@ displayJobOutput output truncated = do
   interactive <- consoleIsInteractive
   let note = if truncated then jobOutputTruncationNote ++ "\n" else ""
       body = if null output then "(no output)\n" else output
-      text = note ++ body
+      text = sanitizeOutput (note ++ body)
   consoleWrite (grayOutputText interactive text)
   unless (null text || "\n" `isSuffixOf` text) (consoleWrite "\n")
   consoleFlush
