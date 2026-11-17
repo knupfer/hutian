@@ -5,6 +5,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0.0] - 2026-11-17
+
 ### Changed
 
 - Prompt state now separates input ownership (`LlmInput`/`TermInput`) from
@@ -29,9 +31,23 @@ All notable changes to Hutian are documented here. The format follows
 - Relay authentication is a sum type, `RelayAuthNone` or
   `RelayAuthBearer key`, with a redacted `Show` instance. The relay socket is
   restricted to `0600` before it starts listening.
+- The package builds a `hutian-shell` library shared by the shell and relay
+  executables, and `Hutian.Llm.Loop` owns the model/tool exchange with its
+  executor and continuation injected.
+- LLM requests are split into `Hutian.Llm.Settings`, `Request`, `Stream`, and
+  `Presentation`, and the interactive prompt loop moved to `Hutian.Session`, so
+  prompting, history, and input execution are explicit effects.
 
 ### Fixed
 
+- Interrupting a stream drops partial tool calls and leaves the conversation
+  valid, and a request blocked on the network is stopped instead of left
+  running.
+- Typed-ahead input buffered during an approval prompt can no longer approve a
+  model command, and control characters in command, job, and tool output are
+  neutralized before rendering.
+- The test suite defers its report and runs one test at a time, so Tasty output
+  and other tests' writes cannot leak into process-wide stdout/stderr captures.
 - Denied shell policy is refused before tool arguments are inspected.
 - Relay sockets and job logs are no longer exposed through permissive file
   modes.
