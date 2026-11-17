@@ -52,10 +52,10 @@ common dependencies
     , unix
     , vector
 
-executable hutian-shell
+library
   import:           defaults, dependencies
-  main-is:          Main.hs
-  other-modules:
+  hs-source-dirs:   app
+  exposed-modules:
       Hutian.Ansi
       Hutian.Cli
       Hutian.Command
@@ -63,54 +63,54 @@ executable hutian-shell
       Hutian.Console
       Hutian.Conversation
       Hutian.Editor
+      Hutian.Highlight
       Hutian.History
       Hutian.History.Store
-      Hutian.Highlight
       Hutian.Http.Wire
       Hutian.Interrupt
       Hutian.Jobs
       Hutian.Jobs.Runtime
       Hutian.Key
       Hutian.Llm
+      Hutian.Llm.Loop
       Hutian.Llm.Protocol
       Hutian.Llm.UnixSocket
       Hutian.Markdown
       Hutian.Paths
       Hutian.Policy
       Hutian.Prompt
+      Hutian.Relay
       Hutian.Relay.Protocol
       Hutian.Render
       Hutian.Shell
       Hutian.Terminal
       Hutian.Tool
       Hutian.Tool.Exec
-  hs-source-dirs:   app
   build-depends:
       network
     , terminal-size
 
+executable hutian-shell
+  import:           defaults
+  main-is:          Main.hs
+  hs-source-dirs:   exe
+  build-depends:
+      base
+    , directory
+    , hutian-shell
+
 executable hutian-llm-relay
   import:           defaults
   main-is:          RelayMain.hs
-  other-modules:
-      Hutian.Cli
-      Hutian.Http.Wire
-      Hutian.Relay
-      Hutian.Relay.Protocol
-  hs-source-dirs:   app
+  hs-source-dirs:   exe
   build-depends:
       base
-    , bytestring
-    , directory
     , http-client
-    , http-client-tls
-    , http-types
-    , network
-    , text
+    , hutian-shell
     , unix
 
 test-suite hutian-shell-test
-  import:           defaults, dependencies
+  import:           defaults
   type:             exitcode-stdio-1.0
   main-is:          TestMain.hs
   other-modules:
@@ -120,38 +120,12 @@ test-suite hutian-shell-test
       ConsoleSpec
       ConversationSpec
       EditorSpec
+      HighlightSpec
       HistorySpec
-      Hutian.Ansi
-      Hutian.Cli
-      Hutian.Command
-      Hutian.Completion
-      Hutian.Console
-      Hutian.Conversation
-      Hutian.Editor
-      Hutian.History
-      Hutian.History.Store
-      Hutian.Highlight
-      Hutian.Http.Wire
-      Hutian.Interrupt
-      Hutian.Jobs
-      Hutian.Jobs.Runtime
-      Hutian.Key
-      Hutian.Llm
-      Hutian.Llm.Protocol
-      Hutian.Llm.UnixSocket
-      Hutian.Markdown
-      Hutian.Paths
-      Hutian.Policy
-      Hutian.Prompt
-      Hutian.Relay
-      Hutian.Relay.Protocol
-      Hutian.Render
-      Hutian.Shell
-      Hutian.Tool
-      Hutian.Tool.Exec
       InterruptSpec
       JobsSpec
       LlmIntegrationSpec
+      LlmLoopSpec
       LlmProtocolSpec
       LlmSocketSpec
       LlmSpec
@@ -162,15 +136,24 @@ test-suite hutian-shell-test
       RelaySpec
       RenderSpec
       ShellSpec
-      HighlightSpec
       TestSupport
       ToolSpec
       WireSpec
-  hs-source-dirs:   test app
+  hs-source-dirs:   test
   build-depends:
-      network
+      aeson
+    , ansi-terminal
+    , base
+    , bytestring
+    , containers
+    , directory
+    , filepath
+    , hutian-shell
+    , network
     , QuickCheck
     , tasty
     , tasty-hunit
     , tasty-quickcheck
-    , terminal-size
+    , text
+    , unix
+    , vector

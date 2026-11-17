@@ -5,6 +5,7 @@ module Hutian.Interrupt
   ( InterruptFlag
   , newInterruptFlag
   , clearInterrupt
+  , setInterrupt
   , isInterrupted
   , installInterruptHandler
   ) where
@@ -21,6 +22,9 @@ newInterruptFlag = InterruptFlag <$> newIORef False
 
 clearInterrupt :: InterruptFlag -> IO ()
 clearInterrupt (InterruptFlag flag) = writeIORef flag False
+
+setInterrupt :: InterruptFlag -> IO ()
+setInterrupt (InterruptFlag flag) = writeIORef flag True
 
 isInterrupted :: InterruptFlag -> IO Bool
 isInterrupted (InterruptFlag flag) = readIORef flag

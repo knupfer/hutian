@@ -25,6 +25,10 @@ tests =
         waitUntilInterrupted 100 flag >>= (@?= True)
         clearInterrupt flag
         isInterrupted flag >>= (@?= False)
+    , testCase "setInterrupt marks the flag without a signal" $ do
+        flag <- newInterruptFlag
+        setInterrupt flag
+        isInterrupted flag >>= (@?= True)
     ]
 
 -- | Signal handlers run in their own thread, so poll briefly for the interrupt

@@ -11,6 +11,7 @@ import qualified HighlightSpec
 import qualified InterruptSpec
 import qualified JobsSpec
 import qualified LlmIntegrationSpec
+import qualified LlmLoopSpec
 import qualified LlmProtocolSpec
 import qualified LlmSocketSpec
 import qualified LlmSpec
@@ -43,6 +44,7 @@ main =
         , JobsSpec.tests
         , LlmSpec.tests
         , LlmIntegrationSpec.tests
+        , LlmLoopSpec.tests
         , LlmSocketSpec.tests
         , LlmProtocolSpec.tests
         , MarkdownSpec.tests

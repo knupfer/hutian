@@ -73,7 +73,7 @@ let
   '';
 in
 {
-  haskell = mkCheck "hutian-hlint" [ pkgs.hlint ] "hlint app test";
+  haskell = mkCheck "hutian-hlint" [ pkgs.hlint ] "hlint app exe test";
 
   nix =
     mkCheck "hutian-nix-lint"

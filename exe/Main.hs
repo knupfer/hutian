@@ -46,7 +46,6 @@ import Hutian.Interrupt
   ( InterruptFlag
   , clearInterrupt
   , installInterruptHandler
-  , isInterrupted
   , newInterruptFlag
   )
 import Hutian.Jobs.Runtime
@@ -62,6 +61,7 @@ import Hutian.Llm
   , runLlmWithTools
   , settingModelShell
   )
+import Hutian.Llm.Loop (LlmLoop (..), runToolLoop)
 import Hutian.Render (OutputKind (..))
 import Hutian.Shell
   ( executableCommands
@@ -69,7 +69,7 @@ import Hutian.Shell
   , runShellCommandStreaming
   )
 import Hutian.Terminal (promptForInput)
-import Hutian.Tool.Exec (abortToolCalls, runToolCalls)
+import Hutian.Tool.Exec (runToolCalls)
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
@@ -181,43 +181,24 @@ runLlmInput :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> Convers
 runLlmInput workingDirectory jobs settings interruptFlag conversation prompt =
   withoutEcho $ withRespondingCursor $ do
     result <- runLlmWithTools consoleLlmOutput interruptFlag settings conversation prompt
-    continueLlm
-      workingDirectory
-      jobs
-      settings
+    runToolLoop
+      (llmLoop interruptFlag workingDirectory jobs settings)
       interruptFlag
       (appendResult (Just prompt) (llmResponseText result) (llmToolCalls result) conversation)
       result
 
-continueLlm :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> Conversation -> LlmResult -> IO Conversation
-continueLlm workingDirectory jobs settings interruptFlag conversation result
-  | null (llmToolCalls result) = pure conversation
-  | otherwise = do
-      interrupted <- isInterrupted interruptFlag
-      if interrupted
-        then
-          -- The user aborted the turn: keep the assistant tool-call message
-          -- paired with results, but do not start new work.
-          pure (abortToolCalls conversation (llmToolCalls result))
-        else do
-          (aborted, conversation') <-
-            runToolCalls
-              jobs
-              workingDirectory
-              (settingModelShell settings)
-              conversation
-              (llmToolCalls result)
-          if aborted
-            then pure conversation'
-            else do
-              next <- runLlmContinuation consoleLlmOutput interruptFlag settings conversation'
-              continueLlm
-                workingDirectory
-                jobs
-                settings
-                interruptFlag
-                (appendResult Nothing (llmResponseText next) (llmToolCalls next) conversation')
-                next
+-- | Bind the loop's effects to the real executor and model client.
+llmLoop :: InterruptFlag -> FilePath -> JobRuntime -> LlmSettings -> LlmLoop
+llmLoop interruptFlag workingDirectory jobs settings =
+  LlmLoop
+    { loopRunTools =
+        runToolCalls
+          jobs
+          workingDirectory
+          (settingModelShell settings)
+    , loopContinue =
+        runLlmContinuation consoleLlmOutput interruptFlag settings
+    }
 
 -- | Stream LLM output through the terminal boundary, flushing each piece so a
 -- response appears as it arrives.
