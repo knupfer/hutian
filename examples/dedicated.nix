@@ -1,22 +1,36 @@
-# Minimal consumer flake.
+# A dedicated Hutian flake.
 #
-# Copy this file into your project as `flake.nix` and adjust the `hutian`
-# input URL. The selected packages, plus their runtime closures, are mounted
-# under /nix/store in the sandbox and their bin/ outputs are added to PATH.
+# Copy this file into a project as `flake.nix` and adjust the `hutian` input
+# URL. Then run:
+#
+#   nix run .#hutian
+#
+# The selected packages, plus their runtime closures, are mounted under
+# /nix/store in the sandbox, and their bin/ outputs are added to PATH.
+#
+# To add Hutian to an existing project flake instead, see
+# examples/existing-project.nix.
 
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  inputs.hutian.url = "path:/path/to/this/flake";
+  description = "A project sandboxed with Hutian";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+    hutian = {
+      url = "path:/path/to/this/flake";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs =
     { nixpkgs, hutian, ... }:
-    hutian.lib.mkHutianShellFlake nixpkgs {
+    hutian.lib.mkFlake nixpkgs {
       sandbox = {
-        packages =
-          pkgs: with pkgs; [
-            coreutils
-            git
-          ];
+        packages = pkgs: [
+          pkgs.coreutils
+          pkgs.git
+        ];
 
         # Allow writes to /source. The default is false (read-only); set true
         # when the model should be able to modify the project.

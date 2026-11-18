@@ -5,8 +5,22 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `lib.mkApp` builds a single-system Hutian app, so an existing flake can add
+  `apps.<system>.hutian` without replacing its own default app.
+
 ### Changed
 
+- `lib.mkPackage` and `lib.mkApp` now take `pkgs` as a separate first argument,
+  and `sandbox.packages` is a `pkgs` selector for both builders. This lets one
+  configuration be shared by `mkPackage`, `mkApp`, and `mkFlake`.
+- `lib.mkFlake` now exposes `apps.<system>.hutian` and
+  `packages.<system>.hutian` instead of `default`. Run dedicated Hutian flakes
+  with `nix run .#hutian`.
+- Renamed the public helpers from `mkHutianShellFlake`, `mkHutianShell`, and
+  `mkHutianApp` to `mkFlake`, `mkPackage`, and `mkApp` under the `hutian.lib`
+  namespace.
 - LiquidHaskell verifies the pure shell and relay modules as well, with tighter
   refinements for message counts, editor layout, job output bounds, and relay
   frame lengths. The check disables DEFAULT case expansion, so unexpanded

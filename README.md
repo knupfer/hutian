@@ -44,7 +44,7 @@ Ctrl+C aborts the current LLM turn. Shell output is preceded by a dimmed pink
 
 ```console
 $ cd /some/project
-$ nix run /path/to/this/flake
+$ nix run /path/to/this/flake#hutian
 <Ctrl+X>          # switch from llm mode to term mode
 pwd
 <Enter>
@@ -54,8 +54,8 @@ pwd
 Run a single command without starting the interactive shell:
 
 ```console
-$ nix run /path/to/this/flake -- echo hello
-$ nix run /path/to/this/flake -- /bin/sh -c 'echo hello > /tmp/result.txt'
+$ nix run /path/to/this/flake#hutian -- echo hello
+$ nix run /path/to/this/flake#hutian -- /bin/sh -c 'echo hello > /tmp/result.txt'
 ```
 
 When `sandbox.writable = true`, files written under `/source` appear directly in
@@ -202,10 +202,10 @@ Without an API key the relay starts with `--no-auth` and forwards requests
 without an `Authorization` header. This works with local llama.cpp servers that
 do not require a key, and the sandbox still needs no direct network access to
 the model endpoint. To keep a key on the host instead, pass `model.apiKeyFile`
-or `model.apiKeyCommand` to `mkHutianShellFlake` or `mkHutianShell`:
+or `model.apiKeyCommand` to `mkFlake` or `mkPackage`:
 
 ```nix
-hutian.lib.mkHutianShellFlake nixpkgs {
+hutian.lib.mkFlake nixpkgs {
   # ...
   model.apiKeyFile = "/run/secrets/hutian-key";
 }
@@ -248,11 +248,13 @@ model.apiKeyCommand = "pass show llama/api-key";
 
 ## Adding packages
 
-`lib.mkHutianShellFlake` builds Hutian for all supported systems from a single
-package selector. Each selected package's runtime closure is mounted under
-`/nix/store`, and its `bin` directory is added to `PATH`. Closures of any size
-are supported; Hutian bind-mounts the closure into the root filesystem instead
-of passing one sandbox volume per store path.
+`lib.mkFlake` builds Hutian for all supported systems from a single
+package selector. It exposes `apps.<system>.hutian` and
+`packages.<system>.hutian`, so a dedicated flake can return its result directly
+and run with `nix run .#hutian`. Each selected package's runtime closure is
+mounted under `/nix/store`, and its `bin` directory is added to `PATH`.
+Closures of any size are supported; Hutian bind-mounts the closure into the root
+filesystem instead of passing one sandbox volume per store path.
 
 The `sandbox` and `model` groups are required. `sandbox` configures the
 package closure, whether the host working directory is writable, whether Nix
@@ -262,13 +264,19 @@ tool is handled (`"deny"`, `"ask"`, or `"allow"`):
 
 ```nix
 {
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  inputs.hutian.url = "path:/path/to/this/flake";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+    hutian = {
+      url = "path:/path/to/this/flake";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs = { nixpkgs, hutian, ... }:
-    hutian.lib.mkHutianShellFlake nixpkgs {
+    hutian.lib.mkFlake nixpkgs {
       sandbox = {
-        packages = pkgs: with pkgs; [ coreutils git ];
+        packages = pkgs: [ pkgs.coreutils pkgs.git ];
         writable = true;
         nixDaemon = false;
         network = true;
@@ -300,18 +308,17 @@ request and also refuses to execute any tool call that arrives anyway. Use
 `"ask"` to keep the tools available with per-command approval (job inspection
 stays free), or `"allow"` to run model-requested commands automatically.
 
-Then run `nix run .` from that project. Package versions come from the consumer
-flake's lock file. Every option is mandatory, and omitting one fails with an
-error that lists the missing option paths. Unknown options are rejected, so a
-misspelled key such as `model.foo` cannot be ignored silently.
+Then run `nix run .#hutian` from that project. Package versions come from the
+consumer flake's lock file. Every option is mandatory, and omitting one fails
+with an error that lists the missing option paths. Unknown options are rejected,
+so a misspelled key such as `model.foo` cannot be ignored silently.
 
 For a single system or an existing `pkgs` instance, use the lower-level builder:
 
 ```nix
-hutian.lib.mkHutianShell {
-  inherit pkgs;
+hutian.lib.mkPackage pkgs {
   sandbox = {
-    packages = [ pkgs.git pkgs.jq ];
+    packages = pkgs: [ pkgs.git pkgs.jq ];
     writable = true;
     nixDaemon = false;
     network = true;
@@ -325,7 +332,46 @@ hutian.lib.mkHutianShell {
 }
 ```
 
-A complete consumer example is available in [`example.nix`](./example.nix).
+To add Hutian to a flake that already has its own `default` app or package, use
+`lib.mkApp` and `lib.mkPackage`. They add one output each and leave
+everything else untouched:
+
+```nix
+outputs = { nixpkgs, hutian, ... }:
+  let
+    inherit (nixpkgs) lib;
+
+    systems = [ "x86_64-linux" ];
+    forAllSystems = lib.genAttrs systems;
+    pkgsFor = system: nixpkgs.legacyPackages.${system};
+
+    hutianConfig = {
+      sandbox = {
+        packages = pkgs: [ pkgs.coreutils ];
+        writable = false;
+        nixDaemon = false;
+        network = false;
+      };
+      model = { ... };
+    };
+  in
+  {
+    # Keep your existing packages and apps, and add Hutian next to them.
+    packages = forAllSystems (system: existingPackages.${system} // {
+      hutian = hutian.lib.mkPackage (pkgsFor system) hutianConfig;
+    });
+
+    apps = forAllSystems (system: existingApps.${system} // {
+      hutian = hutian.lib.mkApp (pkgsFor system) hutianConfig;
+    });
+  };
+```
+
+Here `existingPackages` and `existingApps` are the flake's existing per-system
+attrsets. Complete examples are available in
+[`examples/dedicated.nix`](./examples/dedicated.nix) for a dedicated Hutian
+flake and [`examples/existing-project.nix`](./examples/existing-project.nix)
+for adding Hutian to an existing project flake.
 
 ## Using Nix inside the sandbox
 
@@ -333,9 +379,9 @@ Pass `sandbox.nixDaemon = true` to expose the host Nix store and connect the san
 
 ```nix
 outputs = { nixpkgs, hutian, ... }:
-  hutian.lib.mkHutianShellFlake nixpkgs {
+  hutian.lib.mkFlake nixpkgs {
     sandbox = {
-      packages = pkgs: with pkgs; [ coreutils git ];
+      packages = pkgs: [ pkgs.coreutils pkgs.git ];
       writable = true;
       nixDaemon = true;
       network = true;
@@ -349,7 +395,8 @@ outputs = { nixpkgs, hutian, ... }:
   };
 ```
 
-The lower-level `lib.mkHutianShell` builder accepts the same option.
+The lower-level `lib.mkPackage` builder accepts the same options and
+package selector.
 
 In this mode the host's Nix store and Nix daemon socket are exposed to the
 sandbox. Commands such as `nix build`, `nix shell`, `nix run`, and `nix develop`
@@ -557,7 +604,9 @@ test/                     Unit and property tests
 test/TestReporter.hs      Deferred, single-threaded Tasty report
 test/TestSupport.hs       Shared test helpers
 hutian-shell.cabal        Haskell package manifest
-example.nix               Minimal consumer flake
+examples/
+  dedicated.nix           Dedicated Hutian flake
+  existing-project.nix    Project flake that also exposes Hutian
 LICENSE                   MIT license
 CHANGELOG.md              Release notes
 ```
@@ -584,7 +633,7 @@ socket framing, and interrupt handling. It also includes integration tests for:
 Run it through Nix:
 
 ```console
-$ nix build .#packages.x86_64-linux.default
+$ nix build .#packages.x86_64-linux.hutian
 ```
 
 The package build runs the suite as part of the standard build. With a local

@@ -117,13 +117,6 @@
         else
           throw "hutian: option `${name}` must be \"deny\", \"ask\", or \"allow\"";
 
-      requireList =
-        name: value:
-        if builtins.isList value then
-          value
-        else
-          throw "hutian: option `${name}` must be a list of packages";
-
       requirePackageSelector =
         name: value:
         if builtins.isFunction value then
@@ -225,36 +218,39 @@
         };
       };
 
-      # Always build the Haskell package from this flake's source.
-      mkHutianShell =
-        args:
+      # Build a Hutian package for one pkgs instance.
+      mkPackage =
+        pkgs: args:
         let
-          options = checkedCommonOptions "mkHutianShell" [ [ "pkgs" ] ] args;
-          packages = requireList "sandbox.packages" options.packages;
+          options = checkedCommonOptions "mkPackage" [ ] args;
+          packages = requirePackageSelector "sandbox.packages" options.packages;
         in
         import ./nix/hutian.nix (
           options
           // {
-            inherit packages;
-            inherit (args) pkgs;
+            inherit pkgs;
+            packages = packages pkgs;
             src = self;
           }
         );
 
-      mkApp = program: {
+      mkAppOutput = program: {
         type = "app";
         inherit program;
         meta.description = "Run an unprivileged gVisor shell with a configured package closure";
       };
 
+      # Add Hutian to an existing flake's apps without replacing its default.
+      mkApp = pkgs: args: mkAppOutput "${mkPackage pkgs args}/bin/hutian";
+
       # Convenience helper for consumer flakes: derive packages and apps for
       # every supported system from a single package selector.
-      mkHutianShellFlake =
+      mkFlake =
         nixpkgsInput: args:
         let
-          options = checkedCommonOptions "mkHutianShellFlake" [ ] args;
+          options = checkedCommonOptions "mkFlake" [ ] args;
           packages = requirePackageSelector "sandbox.packages" options.packages;
-          mkPackage =
+          mkPackageFor =
             system:
             let
               pkgs = nixpkgsInput.legacyPackages.${system};
@@ -270,53 +266,39 @@
         in
         {
           packages = lib.genAttrs systems (system: {
-            default = mkPackage system;
+            hutian = mkPackageFor system;
           });
 
           apps = lib.genAttrs systems (system: {
-            default = mkApp "${mkPackage system}/bin/hutian";
+            hutian = mkAppOutput "${mkPackageFor system}/bin/hutian";
           });
         };
 
-      built = mkHutianShellFlake nixpkgs defaults;
+      built = mkFlake nixpkgs defaults;
     in
     {
-      # Import this from another flake:
-      #
-      #   hutian.lib.mkHutianShell {
-      #     inherit pkgs;
-      #     sandbox = {
-      #       packages = [ pkgs.git pkgs.jq ];
-      #       writable = true;
-      #       nixDaemon = false;
-      #       network = true;
-      #     };
-      #     model = {
-      #       name = "your-model";
-      #       url = "http://127.0.0.1:8080/v1/chat/completions";
-      #       systemPrompt = "You are a coding assistant.";
-      #       shell = "allow";
-      #     };
-      #   }
-      #
-      # Or, for a minimal consumer flake:
+      # A dedicated Hutian flake returns the helper's outputs directly:
       #
       #   outputs = { nixpkgs, hutian, ... }:
-      #     hutian.lib.mkHutianShellFlake nixpkgs {
-      #       sandbox = {
-      #         packages = pkgs: [ pkgs.git pkgs.jq ];
-      #         writable = true;
-      #         nixDaemon = false;
-      #         network = true;
-      #       };
-      #       model = {
-      #         name = "your-model";
-      #         url = "http://127.0.0.1:8080/v1/chat/completions";
-      #         systemPrompt = "You are a coding assistant.";
-      #         shell = "allow";
-      #       };
+      #     hutian.lib.mkFlake nixpkgs {
+      #       sandbox = { ... };
+      #       model = { ... };
       #     };
-      lib = { inherit mkHutianShell mkHutianShellFlake; };
+      #
+      # That exposes `apps.<system>.hutian` and `packages.<system>.hutian`.
+      #
+      # To add Hutian to an existing flake, insert its app without replacing
+      # the flake's own default:
+      #
+      #   apps.<system>.hutian =
+      #     hutian.lib.mkApp pkgs {
+      #       sandbox = { ... };
+      #       model = { ... };
+      #     };
+      #
+      # For a single package, use `hutian.lib.mkPackage` with the same
+      # arguments.
+      lib = { inherit mkApp mkFlake mkPackage; };
 
       inherit (built) packages apps;
 
@@ -332,7 +314,7 @@
           };
           probeOptions = defaults // {
             sandbox = defaults.sandbox // {
-              packages = [ ];
+              packages = _: [ ];
             };
             model = defaults.model // {
               name = "probe-model";
@@ -340,7 +322,7 @@
               systemPrompt = "probe system prompt";
             };
           };
-          probe = extra: mkHutianShell ({ inherit pkgs; } // probeOptions // extra);
+          probe = extra: mkPackage pkgs (probeOptions // extra);
           withSandbox = extra: probe { sandbox = probeOptions.sandbox // extra; };
           withModel = extra: probe { model = probeOptions.model // extra; };
           relayPackage = pkgs.callPackage ./nix/hutian-shell.nix { src = self; };
@@ -396,7 +378,7 @@
           ];
         in
         {
-          package = built.packages.${system}.default;
+          package = built.packages.${system}.hutian;
           haskell-lint = lint.haskell;
           nix-lint = lint.nix;
           inherit (lint) liquid sandboxClosure sandboxSource;
