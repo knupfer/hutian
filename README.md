@@ -201,22 +201,28 @@ embedded in `model.url`.
 Without an API key the relay starts with `--no-auth` and forwards requests
 without an `Authorization` header. This works with local llama.cpp servers that
 do not require a key, and the sandbox still needs no direct network access to
-the model endpoint. To keep a key on the host instead, pass `model.apiKeyFile`
-or `model.apiKeyCommand` to `mkFlake` or `mkPackage`:
+the model endpoint. `model.apiKeyCommand` is mandatory: set it to `null` when no
+key is used, or to a command that prints the key when the upstream requires one:
 
 ```nix
 hutian.lib.mkFlake nixpkgs {
   # ...
-  model.apiKeyFile = "/run/secrets/hutian-key";
+  model.apiKeyCommand = "pass show llama/api-key";
 }
 ```
 
-The launcher starts `hutian-llm-relay` on the host. With a key configured, the
-relay reads it from standard input; the launcher pipes either `model.apiKeyFile`
-or the standard output of `model.apiKeyCommand` into it. `model.apiKeyCommand`
-runs in the foreground before the sandbox starts, so commands that prompt for a
-password (for example `passage`) work normally and can be cancelled with
-`Ctrl+C`. The relay listens on a per-session Unix socket under
+To read a key from a file, use `cat`:
+
+```nix
+model.apiKeyCommand = "cat /run/secrets/hutian-key";
+```
+
+The launcher starts `hutian-llm-relay` on the host. With a command configured,
+the relay reads the key from standard input; the launcher runs the command and
+pipes its output into the relay. `model.apiKeyCommand` runs in the foreground
+before the sandbox starts, so commands that prompt for a password (for example
+`passage`) work normally and can be cancelled with `Ctrl+C`. The relay listens
+on a per-session Unix socket under
 `$XDG_RUNTIME_DIR` (falling back to `/tmp`). The socket directory is mode `0700`
 and is bind-mounted read-only at `/run/hutian`, so the sandbox can connect to
 `/run/hutian/llm.sock` but cannot unlink or replace the socket; the directory
@@ -233,18 +239,11 @@ path, or headers, cannot redirect the key, and cannot use the relay as a
 general authenticated proxy. The relay does not follow upstream redirects, and
 the key never appears in argv, environment variables, files, or the Nix store.
 
-`model.apiKeyFile` and `model.apiKeyCommand` are mutually exclusive.
-`model.apiKeyFile` must not point into the Nix store or the host working
-directory, both of which the sandbox can read; the launcher rejects such paths
-at startup. Keep `model.apiKeyCommand` as a command that fetches the key, for
-example from `pass` or `sops`, rather than embedding the key in the command
-string, because option values live in the Nix store.
-
-For example, with `pass`:
-
-```nix
-model.apiKeyCommand = "pass show llama/api-key";
-```
+Keep `model.apiKeyCommand` as a command that fetches the key, for example from
+`pass` or `sops`, rather than embedding the key in the command string, because
+option values live in the Nix store. The command runs on the host, but do not
+read the key from `/source` or the Nix store: the sandbox can read both. Use
+`model.apiKeyCommand = null` when the upstream does not need a key.
 
 ## Adding packages
 
@@ -288,6 +287,7 @@ tool is handled (`"deny"`, `"ask"`, or `"allow"`):
           You are a careful coding assistant working in a sandboxed shell.
         '';
         shell = "allow";
+        apiKeyCommand = null;
       };
     };
 }
@@ -328,6 +328,7 @@ hutian.lib.mkPackage pkgs {
     url = "http://127.0.0.1:8080/v1/chat/completions";
     systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
     shell = "allow";
+    apiKeyCommand = null;
   };
 }
 ```
@@ -392,6 +393,7 @@ outputs = { nixpkgs, hutian, ... }:
       url = "http://127.0.0.1:8080/v1/chat/completions";
       systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
       shell = "allow";
+      apiKeyCommand = null;
     };
   };
 ```
@@ -455,7 +457,7 @@ Hutian separates sandbox capabilities from model-tool permissions:
 | `sandbox.nixDaemon` | sandbox | Exposes the host `/nix/store` and Nix daemon socket. |
 | `sandbox.network` | sandbox | Controls direct gVisor networking. `true` uses `host` mode; `false` forces `none`. |
 | `model.shell` | model | `"deny"`, `"ask"`, or `"allow"` for the model's shell and background-job tools. |
-| `model.apiKeyFile`, `model.apiKeyCommand` | host relay | Supply the upstream key without exposing it to the sandbox. |
+| `model.apiKeyCommand` | host relay | Supplies the upstream key, or `null` for no key, without exposing it to the sandbox. |
 
 Important composition rules:
 
@@ -494,9 +496,9 @@ Important composition rules:
   host relay socket instead.
 - Model traffic always uses the relay socket at `/run/hutian/llm.sock`, which
   accepts only a request body and forwards it to one fixed target, so it cannot
-  be used as a general proxy. With `model.apiKeyFile` or
-  `model.apiKeyCommand`, the key stays on the host and is never visible to the
-  sandbox. Without a key, the relay forwards unauthenticated.
+  be used as a general proxy. With `model.apiKeyCommand`, the key stays on the
+  host and is never visible to the sandbox. Without a key
+  (`model.apiKeyCommand = null`), the relay forwards unauthenticated.
 - With `model.shell = "deny"`, the model cannot run commands: the shell tool is
   omitted from LLM requests and tool calls are refused. `"ask"` requires
   approval before each command, while `"allow"` runs model commands

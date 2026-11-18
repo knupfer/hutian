@@ -50,6 +50,10 @@
           "model"
           "shell"
         ]
+        [
+          "model"
+          "apiKeyCommand"
+        ]
       ];
 
       hasPath =
@@ -95,9 +99,8 @@
         else
           throw "hutian: option `${name}` must be a non-empty string";
 
-      optionalNonEmptyString =
-        name: label: args:
-        if args ? ${name} && args.${name} != null then requireNonEmptyString label args.${name} else null;
+      requireNullableNonEmptyString =
+        name: value: if value == null then null else requireNonEmptyString name value;
 
       requireBool =
         name: value:
@@ -141,7 +144,6 @@
         "url"
         "systemPrompt"
         "shell"
-        "apiKeyFile"
         "apiKeyCommand"
       ];
 
@@ -197,8 +199,7 @@
             nixDaemon = requireBool "sandbox.nixDaemon" sandbox.nixDaemon;
             network = requireBool "sandbox.network" sandbox.network;
             modelShell = requireModelShell "model.shell" model.shell;
-            apiKeyFile = optionalNonEmptyString "apiKeyFile" "model.apiKeyFile" model;
-            apiKeyCommand = optionalNonEmptyString "apiKeyCommand" "model.apiKeyCommand" model;
+            apiKeyCommand = requireNullableNonEmptyString "model.apiKeyCommand" model.apiKeyCommand;
           };
 
       # Used only by this flake's own package. Consumers must pass every
@@ -215,6 +216,7 @@
           url = "http://127.0.0.1:8080/v1/chat/completions";
           systemPrompt = "You are a coding agent.";
           shell = "ask";
+          apiKeyCommand = null;
         };
       };
 
@@ -338,19 +340,19 @@
           allowedModelShellLauncher = "${withModel { shell = "allow"; }}/bin/hutian";
           deniedModelShellLauncher = "${withModel { shell = "deny"; }}/bin/hutian";
           askModelShellLauncher = "${withModel { shell = "ask"; }}/bin/hutian";
-          keyLauncher = "${withModel { apiKeyFile = "/run/secrets/hutian-key"; }}/bin/hutian";
           keyCommandLauncher = "${withModel { apiKeyCommand = "pass show k"; }}/bin/hutian";
-          keyStoreRejected =
-            !(builtins.tryEval (withModel { apiKeyFile = "${builtins.storeDir}/hutian-key"; }).drvPath).success;
-          keyConflictRejected =
-            !(builtins.tryEval
-              (withModel {
-                apiKeyFile = "/run/secrets/k";
-                apiKeyCommand = "pass show k";
-              }).drvPath
-            ).success;
-          keyEmptyRejected = !(builtins.tryEval (withModel { apiKeyFile = ""; }).drvPath).success;
+          keyFileRejected =
+            !(builtins.tryEval (withModel { apiKeyFile = "/run/secrets/k"; }).drvPath).success;
           keyCommandEmptyRejected = !(builtins.tryEval (withModel { apiKeyCommand = ""; }).drvPath).success;
+          keyCommandMissingRejected =
+            !(builtins.tryEval
+              (mkPackage pkgs (
+                probeOptions
+                // {
+                  model = builtins.removeAttrs probeOptions.model [ "apiKeyCommand" ];
+                }
+              )).drvPath
+            ).success;
           unknownTopLevelRejected = !(builtins.tryEval (probe { unknownOption = true; }).drvPath).success;
           unknownSandboxRejected =
             !(builtins.tryEval (withSandbox { unknownOption = true; }).drvPath).success;
@@ -484,25 +486,6 @@
             ${builtins.concatStringsSep "\n" (
               map
                 (pattern: ''
-                  ${pkgs.gnugrep}/bin/grep -F -- ${lib.escapeShellArg pattern} ${keyLauncher}
-                '')
-                [
-                  "hutian-llm-relay"
-                  "cat --"
-                  "/run/secrets/hutian-key"
-                  "chmod 700"
-                  "trap cleanup"
-                  "must not be inside the sandbox working directory"
-                  "--llama-socket"
-                  "/run/hutian/llm.sock"
-                  "--host-uds=open"
-                  "network=none"
-                  "http://hutian-relay/v1/chat/completions"
-                ]
-            )}
-            ${builtins.concatStringsSep "\n" (
-              map
-                (pattern: ''
                   ${pkgs.gnugrep}/bin/grep -F -- ${lib.escapeShellArg pattern} ${keyCommandLauncher}
                 '')
                 [
@@ -512,8 +495,13 @@
                   "unset key"
                   "trap 'exit 130' INT TERM HUP"
                   "restore_terminal"
+                  "chmod 700"
+                  "trap cleanup"
+                  "network=none"
                   "--llama-socket"
                   "/run/hutian/llm.sock"
+                  "--host-uds=open"
+                  "http://hutian-relay/v1/chat/completions"
                 ]
             )}
             if ${pkgs.gnugrep}/bin/grep -F -- 'did not create its socket' ${keyCommandLauncher}; then
@@ -528,22 +516,6 @@
               echo "the launcher must not pass the API key as an argument" >&2
               exit 1
             fi
-            if ${pkgs.gnugrep}/bin/grep -F -- '--key-file' ${keyLauncher}; then
-              echo "the launcher must not pass the key file path to the relay" >&2
-              exit 1
-            fi
-            if ${pkgs.gnugrep}/bin/grep -F -- '--key-stdin' ${keyLauncher}; then
-              echo "the relay always reads the key from stdin" >&2
-              exit 1
-            fi
-            if ${pkgs.gnugrep}/bin/grep -F -- '--api-key' ${keyLauncher}; then
-              echo "the launcher must not pass the API key as an argument" >&2
-              exit 1
-            fi
-            if ${pkgs.gnugrep}/bin/grep -F -- '--no-auth' ${keyLauncher}; then
-              echo "a launcher with an API key must not disable authentication" >&2
-              exit 1
-            fi
             if ${pkgs.gnugrep}/bin/grep -F -- '--no-auth' ${keyCommandLauncher}; then
               echo "a launcher with an API key must not disable authentication" >&2
               exit 1
@@ -551,10 +523,10 @@
             ${pkgs.coreutils}/bin/touch $out
           '';
           api-key-rejected =
-            if keyStoreRejected && keyConflictRejected && keyEmptyRejected && keyCommandEmptyRejected then
+            if keyFileRejected && keyCommandEmptyRejected && keyCommandMissingRejected then
               pkgs.runCommand "hutian-api-key-rejected-check" { } "touch $out"
             else
-              throw "hutian: a store-backed, empty, or conflicting key source must be rejected";
+              throw "hutian: a removed, empty, or missing key command must be rejected";
           unknown-option-rejected =
             if unknownTopLevelRejected && unknownSandboxRejected && unknownModelRejected then
               pkgs.runCommand "hutian-unknown-option-check" { } "touch $out"

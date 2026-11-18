@@ -26,11 +26,12 @@
     name = "your-model";
     url = "http://127.0.0.1:8080/v1/chat/completions";
 
-    # Optional: keep the API key on the host and expose only a private relay
-    # socket to the sandbox. Set at most one of these. apiKeyFile must not
-    # point into the Nix store, which the sandbox can read.
-    # apiKeyFile = "/run/secrets/hutian-key";
+    # Set apiKeyCommand to a command that prints the key, or null to forward
+    # without authentication. For a key file on the host, use
+    # `cat /run/secrets/hutian-key`. Keep the command from reading a file
+    # under /source or the Nix store, which the sandbox can read.
     # apiKeyCommand = "pass show llama/api-key";
+    apiKeyCommand = null;
 
     # Grant the model's shell tool. Term mode is always available. Use "deny"
     # to hide the tool, "ask" to confirm each call, or "allow" to run

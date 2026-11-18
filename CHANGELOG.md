@@ -21,6 +21,9 @@ All notable changes to Hutian are documented here. The format follows
 - Renamed the public helpers from `mkHutianShellFlake`, `mkHutianShell`, and
   `mkHutianApp` to `mkFlake`, `mkPackage`, and `mkApp` under the `hutian.lib`
   namespace.
+- `model.apiKeyCommand` is now required. Set it to `null` when no key is used.
+- Removed `model.apiKeyFile`. Use `model.apiKeyCommand = "cat /path"` to
+  read a key from a file.
 - LiquidHaskell verifies the pure shell and relay modules as well, with tighter
   refinements for message counts, editor layout, job output bounds, and relay
   frame lengths. The check disables DEFAULT case expansion, so unexpanded

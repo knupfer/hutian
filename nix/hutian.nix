@@ -9,7 +9,6 @@
   nixDaemon,
   network,
   modelShell,
-  apiKeyFile ? null,
   apiKeyCommand ? null,
 }:
 
@@ -33,17 +32,8 @@ assert pkgs.lib.assertMsg (
   ]
 ) "hutian: modelShell must be \"deny\", \"ask\", or \"allow\"";
 assert pkgs.lib.assertMsg (
-  apiKeyFile == null || (builtins.isString apiKeyFile && apiKeyFile != "")
-) "hutian: apiKeyFile must be a non-empty string";
-assert pkgs.lib.assertMsg (
   apiKeyCommand == null || (builtins.isString apiKeyCommand && apiKeyCommand != "")
 ) "hutian: apiKeyCommand must be a non-empty string";
-assert pkgs.lib.assertMsg (
-  apiKeyFile == null || apiKeyCommand == null
-) "hutian: apiKeyFile and apiKeyCommand are mutually exclusive";
-assert pkgs.lib.assertMsg (
-  apiKeyFile == null || !(pkgs.lib.hasPrefix builtins.storeDir apiKeyFile)
-) "hutian: apiKeyFile must not be under the Nix store; the sandbox can read the store";
 
 let
   inherit (pkgs) lib;
@@ -78,26 +68,7 @@ let
   # The relay is always present. Without a configured key it forwards without
   # an Authorization header and never reads standard input.
   relayLaunch =
-    if apiKeyFile != null then
-      ''
-        key_file=${escapeShellArg apiKeyFile}
-        key_file=$(realpath -m -- "$key_file")
-        case "$key_file" in
-          ${builtins.storeDir}/* | "$sourcedir" | "$sourcedir"/*)
-            echo "hutian: apiKeyFile must not be inside the sandbox working directory or the Nix store" >&2
-            exit 1
-            ;;
-        esac
-        if [ ! -r "$key_file" ]; then
-          echo "hutian: cannot read apiKeyFile: $key_file" >&2
-          exit 1
-        fi
-        # The relay reads the key from stdin, so it never appears in argv.
-        cat -- "$key_file" | ${relayBin} \
-          --listen "$relay_socket" \
-          --upstream ${escapeShellArg llamaUrl} &
-      ''
-    else if apiKeyCommand != null then
+    if apiKeyCommand != null then
       ''
         # Run the command in the foreground so its password prompt keeps
         # Ctrl+C and the terminal. The key is captured in a shell variable
