@@ -1,7 +1,8 @@
 # A dedicated Hutian flake.
 #
-# Copy this file into a project as `flake.nix` and adjust the `hutian` input
-# URL. Then run:
+# Copy this file as `flake.nix` and `hutian.nix` next to it, then adjust the
+# `hutian` input URL. The Hutian configuration lives in `hutian.nix`; this file
+# only connects it to the flake. Run:
 #
 #   nix run .#hutian
 #
@@ -25,41 +26,5 @@
 
   outputs =
     { nixpkgs, hutian, ... }:
-    hutian.lib.mkFlake nixpkgs {
-      sandbox = {
-        packages = pkgs: [
-          pkgs.coreutils
-          pkgs.git
-        ];
-
-        # Allow writes to /source. The default is false (read-only); set true
-        # when the model should be able to modify the project.
-        writable = false;
-
-        # Expose the host Nix store and connect to the Nix daemon.
-        nixDaemon = false;
-
-        # Grant direct network access. When false, the sandbox gets GVisor's
-        # none network mode and GVISOR_NETWORK cannot re-enable it.
-        network = false;
-      };
-
-      model = {
-        name = "Qwen3.8-Flash-Next-IQ4_XS";
-        url = "http://127.0.0.1:8080/v1/chat/completions";
-
-        # Optional: keep the API key on the host and expose only a private
-        # relay socket to the sandbox. Set at most one of these. apiKeyFile
-        # must not point into the Nix store, which the sandbox can read.
-        # apiKeyFile = "/run/secrets/hutian-key";
-        # apiKeyCommand = "pass show llama/api-key";
-
-        # Grant the model's shell tool. Term mode is always available. Use
-        # "deny" to hide the tool, "ask" to confirm each call, or "allow" to
-        # run model-requested commands automatically.
-        shell = "ask";
-
-        systemPrompt = "You are a coding agent.";
-      };
-    };
+    hutian.lib.mkFlake nixpkgs (import ./hutian.nix);
 }

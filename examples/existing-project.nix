@@ -1,13 +1,14 @@
 # Add Hutian to an existing project flake.
 #
-# Copy this file into your project as `flake.nix`, keep your own outputs, and
-# adjust the `hutian` input URL. Then run:
+# Copy this file into your project as `flake.nix` together with `hutian.nix`,
+# keep your own outputs, and adjust the `hutian` input URL. Then run:
 #
 #   nix run             # the project's own default app
 #   nix run .#hutian    # Hutian
 #
 # `mkApp` and `mkPackage` add one output each, so the project's existing
-# `default` app and package stay in place.
+# `default` app and package stay in place. The Hutian configuration is shared
+# with examples/dedicated.nix through `hutian.nix`.
 #
 # For a flake that exists only to run Hutian, see examples/dedicated.nix.
 
@@ -36,26 +37,7 @@
       pkgsFor = system: nixpkgs.legacyPackages.${system};
 
       # One Hutian configuration, shared by the app and the package.
-      hutianConfig = {
-        sandbox = {
-          packages = pkgs: [ pkgs.coreutils ];
-
-          # Keep the project read-only and isolated from the host Nix daemon
-          # and network. Set these to true to grant those capabilities.
-          writable = false;
-          nixDaemon = false;
-          network = false;
-        };
-
-        model = {
-          name = "your-model";
-          url = "http://127.0.0.1:8080/v1/chat/completions";
-          systemPrompt = "You are a helpful assistant.";
-
-          # "deny", "ask", or "allow". Term mode is always available.
-          shell = "ask";
-        };
-      };
+      hutianConfig = import ./hutian.nix;
 
       # The project's own app, kept as the default.
       sampleApp =

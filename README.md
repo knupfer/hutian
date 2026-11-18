@@ -371,7 +371,8 @@ Here `existingPackages` and `existingApps` are the flake's existing per-system
 attrsets. Complete examples are available in
 [`examples/dedicated.nix`](./examples/dedicated.nix) for a dedicated Hutian
 flake and [`examples/existing-project.nix`](./examples/existing-project.nix)
-for adding Hutian to an existing project flake.
+for adding Hutian to an existing project flake. Both import the shared
+configuration in [`examples/hutian.nix`](./examples/hutian.nix).
 
 ## Using Nix inside the sandbox
 
@@ -605,6 +606,7 @@ test/TestReporter.hs      Deferred, single-threaded Tasty report
 test/TestSupport.hs       Shared test helpers
 hutian-shell.cabal        Haskell package manifest
 examples/
+  hutian.nix              Shared Hutian configuration
   dedicated.nix           Dedicated Hutian flake
   existing-project.nix    Project flake that also exposes Hutian
 LICENSE                   MIT license
