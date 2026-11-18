@@ -73,7 +73,7 @@ let
   '';
 in
 {
-  haskell = mkCheck "hutian-hlint" [ pkgs.hlint ] "hlint app exe test";
+  haskell = mkCheck "hutian-hlint" [ pkgs.hlint ] "hlint src app test";
 
   nix =
     mkCheck "hutian-nix-lint"
@@ -98,26 +98,26 @@ in
         # expanding DEFAULT" warnings, and those warnings do not affect the
         # verification result here, so turn expansion off entirely and keep
         # the check output clean.
-        ghc -XDerivingStrategies -fno-code -iapp \
+        ghc -XDerivingStrategies -fno-code -isrc \
           -fplugin=LiquidHaskell \
           -fplugin-opt=LiquidHaskell:--max-case-expand=0 \
-          app/Hutian/Ansi.hs \
-          app/Hutian/Cli.hs \
-          app/Hutian/Command.hs \
-          app/Hutian/Completion.hs \
-          app/Hutian/Conversation.hs \
-          app/Hutian/Editor.hs \
-          app/Hutian/History.hs \
-          app/Hutian/Jobs.hs \
-          app/Hutian/Key.hs \
-          app/Hutian/Llm/Request.hs \
-          app/Hutian/Llm/Settings.hs \
-          app/Hutian/Llm/Stream.hs \
-          app/Hutian/Paths.hs \
-          app/Hutian/Policy.hs \
-          app/Hutian/Prompt.hs \
-          app/Hutian/Relay/Protocol.hs \
-          app/Hutian/Tool.hs
+          src/Hutian/Ansi.hs \
+          src/Hutian/Cli.hs \
+          src/Hutian/Command.hs \
+          src/Hutian/Completion.hs \
+          src/Hutian/Conversation.hs \
+          src/Hutian/Editor.hs \
+          src/Hutian/History.hs \
+          src/Hutian/Jobs.hs \
+          src/Hutian/Key.hs \
+          src/Hutian/Llm/Request.hs \
+          src/Hutian/Llm/Settings.hs \
+          src/Hutian/Llm/Stream.hs \
+          src/Hutian/Paths.hs \
+          src/Hutian/Policy.hs \
+          src/Hutian/Prompt.hs \
+          src/Hutian/Relay/Protocol.hs \
+          src/Hutian/Tool.hs
       '';
 
   # Check that closure paths of any size and plain files are bind-mounted into

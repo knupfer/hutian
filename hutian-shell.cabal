@@ -54,7 +54,7 @@ common dependencies
 
 library
   import:           defaults, dependencies
-  hs-source-dirs:   app
+  hs-source-dirs:   src
   exposed-modules:
       Hutian.Ansi
       Hutian.Cli
@@ -97,7 +97,7 @@ library
 executable hutian-shell
   import:           defaults
   main-is:          Main.hs
-  hs-source-dirs:   exe
+  hs-source-dirs:   app
   build-depends:
       base
     , directory
@@ -106,7 +106,7 @@ executable hutian-shell
 executable hutian-llm-relay
   import:           defaults
   main-is:          RelayMain.hs
-  hs-source-dirs:   exe
+  hs-source-dirs:   app
   build-depends:
       base
     , http-client

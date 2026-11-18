@@ -575,31 +575,31 @@ flake.nix                 Flake outputs and consumer helpers
 nix/hutian.nix            Sandbox rootfs, launcher, and wrapper
 nix/hutian-shell.nix      Haskell package definition
 nix/lint.nix              Shared lint and LiquidHaskell checks
-app/                      Haskell library source
-app/Hutian/Ansi.hs        Typed terminal colours and styles
-app/Hutian/Cli.hs         Strict shared command-line option parser
-app/Hutian/Command.hs     Term-mode input classification
-app/Hutian/Completion.hs  Pure completion selection
-app/Hutian/Console.hs     Single terminal IO boundary
-app/Hutian/Highlight.hs   Skylighting for fenced code and shell input
-app/Hutian/Jobs.hs        Pure background-job model and text
-app/Hutian/Jobs/Runtime.hs  Job processes, logs, and signals
-app/Hutian/Llm/Loop.hs    Model and tool exchange loop
-app/Hutian/Llm/Presentation.hs  Stream labels, colours, and Markdown flushing
-app/Hutian/Llm/Request.hs  Chat and completion request bodies
-app/Hutian/Llm/Settings.hs  Launcher settings parsing
-app/Hutian/Llm/Stream.hs  Stream parsing, tool-call assembly, and result
-app/Hutian/Policy.hs      Model shell-tool policy
-app/Hutian/Prompt.hs      Pure prompt reducer
-app/Hutian/Render.hs      Pure ANSI rendering and approval decisions
-app/Hutian/Session.hs     Interactive prompt/history/session loop
-app/Hutian/Tool.hs        Pure tool-call planning
-app/Hutian/Tool/Exec.hs   Terminal execution of tool-call plans
-app/Hutian/Relay.hs       Host-side LLM relay
-app/Hutian/Relay/Protocol.hs  Relay status framing
-app/Hutian/Llm/UnixSocket.hs  Relay client over a Unix socket
-exe/Main.hs               Shell executable entry point
-exe/RelayMain.hs          Relay executable entry point
+src/                      Haskell library source
+src/Hutian/Ansi.hs        Typed terminal colours and styles
+src/Hutian/Cli.hs         Strict shared command-line option parser
+src/Hutian/Command.hs     Term-mode input classification
+src/Hutian/Completion.hs  Pure completion selection
+src/Hutian/Console.hs     Single terminal IO boundary
+src/Hutian/Highlight.hs   Skylighting for fenced code and shell input
+src/Hutian/Jobs.hs        Pure background-job model and text
+src/Hutian/Jobs/Runtime.hs  Job processes, logs, and signals
+src/Hutian/Llm/Loop.hs    Model and tool exchange loop
+src/Hutian/Llm/Presentation.hs  Stream labels, colours, and Markdown flushing
+src/Hutian/Llm/Request.hs  Chat and completion request bodies
+src/Hutian/Llm/Settings.hs  Launcher settings parsing
+src/Hutian/Llm/Stream.hs  Stream parsing, tool-call assembly, and result
+src/Hutian/Policy.hs      Model shell-tool policy
+src/Hutian/Prompt.hs      Pure prompt reducer
+src/Hutian/Render.hs      Pure ANSI rendering and approval decisions
+src/Hutian/Session.hs     Interactive prompt/history/session loop
+src/Hutian/Tool.hs        Pure tool-call planning
+src/Hutian/Tool/Exec.hs   Terminal execution of tool-call plans
+src/Hutian/Relay.hs       Host-side LLM relay
+src/Hutian/Relay/Protocol.hs  Relay status framing
+src/Hutian/Llm/UnixSocket.hs  Relay client over a Unix socket
+app/Main.hs               Shell executable entry point
+app/RelayMain.hs          Relay executable entry point
 test/                     Unit and property tests
 test/TestReporter.hs      Deferred, single-threaded Tasty report
 test/TestSupport.hs       Shared test helpers
@@ -660,9 +660,10 @@ $ nix build .#checks.x86_64-linux.haskell-lint
 $ nix build .#checks.x86_64-linux.nix-lint
 ```
 
-`haskell-lint` runs HLint over `app/`, `exe/`, and `test/`. `nix-lint` runs Statix and
-DeadNix over the flake and Nix files. These linters also run automatically in
-the package check phase, so a normal `nix build` fails on lint errors.
+`haskell-lint` runs HLint over `src/`, `app/`, and `test/`. `nix-lint` runs
+Statix and DeadNix over the flake and Nix files. These linters also run
+automatically in the package check phase, so a normal `nix build` fails on lint
+errors.
 `nix flake check` runs the explicit checks along with the package build.
 
 LiquidHaskell verifies the pure modules of the shell and relay: `Hutian.Ansi`,
