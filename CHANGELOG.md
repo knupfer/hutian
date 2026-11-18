@@ -5,6 +5,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0.0] - 2026-11-18
+
 ### Added
 
 - `lib.mkApp` builds a single-system Hutian app, so an existing flake can add
