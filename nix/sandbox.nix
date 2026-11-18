@@ -1,13 +1,15 @@
-{ pkgs }:
-
-# Prepare the sandbox rootfs inside the private user and mount namespace
-# created by the launcher, then run the sandbox command. gVisor recursively
-# binds the rootfs into the sandbox, so binding paths over their rootfs
-# mountpoints makes them visible without passing one volume per path.
+# Mount the closure, working directory, and relay directory into the sandbox
+# rootfs, then run the sandbox command. The launcher calls this inside a private
+# user and mount namespace. gVisor recursively binds the rootfs into the
+# sandbox, so binding paths over their rootfs mountpoints makes them visible
+# without passing one volume per path.
+#
+# Usage: hutian-sandbox <rootfs> <closure> <source-dir> <writable> <nix-daemon> <relay-dir> <command...>
 #
 # gVisor reserves file descriptors starting at 256 for stdio. A volume per store
 # path exhausts that range once a closure has more than about 250 paths, and the
 # sandbox then fails to start with an opaque EOF error.
+{ pkgs }:
 let
   inherit (pkgs) util-linux;
   mount = "${util-linux}/bin/mount";
@@ -17,10 +19,10 @@ pkgs.writeShellScript "hutian-sandbox" ''
 
   rootfs=$1
   closure=$2
-  sourcedir=$3
+  source_dir=$3
   writable=$4
   nix_daemon=$5
-  relaydir=$6
+  relay_dir=$6
   shift 6
 
   if [ "$nix_daemon" = true ]; then
@@ -37,7 +39,7 @@ pkgs.writeShellScript "hutian-sandbox" ''
   # EINVAL when the directory is a mountpoint with locked child mounts, such as
   # /nix (which contains /nix/store), and gVisor reports that failure as an EOF
   # while starting the sandbox. Recursive binds also keep nested mounts visible.
-  ${mount} --rbind "$sourcedir" "$rootfs/source"
+  ${mount} --rbind "$source_dir" "$rootfs/source"
 
   if [ "$writable" = false ]; then
     ${mount} -o remount,bind,ro "$rootfs/source"
@@ -60,8 +62,8 @@ pkgs.writeShellScript "hutian-sandbox" ''
 
   # The relay socket is connectable from a read-only mount, but a sandboxed
   # command cannot unlink or replace the socket file.
-  if [ -n "$relaydir" ]; then
-    ${mount} --rbind "$relaydir" "$rootfs/run/hutian"
+  if [ -n "$relay_dir" ]; then
+    ${mount} --rbind "$relay_dir" "$rootfs/run/hutian"
     ${mount} -o remount,bind,ro "$rootfs/run/hutian"
   fi
 

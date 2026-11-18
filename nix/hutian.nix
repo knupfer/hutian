@@ -1,9 +1,11 @@
+# Internal package builder. `flake.nix` validates the options before calling
+# this module, so the values arriving here are already checked.
 {
   pkgs,
   src,
   packages,
   systemPrompt,
-  model,
+  modelName,
   llamaUrl,
   writable,
   nixDaemon,
@@ -12,58 +14,35 @@
   apiKeyCommand ? null,
 }:
 
-assert pkgs.lib.assertMsg (builtins.isList packages) "hutian: packages must be a list";
-assert pkgs.lib.assertMsg (builtins.isString systemPrompt) "hutian: systemPrompt must be a string";
-assert pkgs.lib.assertMsg (
-  builtins.isString model && model != ""
-) "hutian: model must be a non-empty string";
-assert pkgs.lib.assertMsg (
-  builtins.isString llamaUrl && llamaUrl != ""
-) "hutian: llamaUrl must be a non-empty string";
-assert pkgs.lib.assertMsg (builtins.isBool writable) "hutian: writable must be a boolean";
-assert pkgs.lib.assertMsg (builtins.isBool nixDaemon) "hutian: nixDaemon must be a boolean";
-assert pkgs.lib.assertMsg (builtins.isBool network) "hutian: network must be a boolean";
-assert pkgs.lib.assertMsg (
-  builtins.isString modelShell
-  && builtins.elem modelShell [
-    "deny"
-    "ask"
-    "allow"
-  ]
-) "hutian: modelShell must be \"deny\", \"ask\", or \"allow\"";
-assert pkgs.lib.assertMsg (
-  apiKeyCommand == null || (builtins.isString apiKeyCommand && apiKeyCommand != "")
-) "hutian: apiKeyCommand must be a non-empty string";
-
 let
   inherit (pkgs) lib;
   inherit (builtins) dirOf storeDir;
-
   inherit (lib)
+    boolToString
     escapeShellArg
     makeBinPath
     optional
     optionalString
     ;
 
-  allPackages = packages ++ optional nixDaemon pkgs.nix;
+  # `packages` is the `sandbox.packages` selector from the flake options.
+  selectedPackages = packages pkgs;
+  allPackages = selectedPackages ++ optional nixDaemon pkgs.nix;
 
   hutianShell = pkgs.callPackage ./hutian-shell.nix { inherit src; };
-
   sandboxLauncher = import ./sandbox.nix { inherit pkgs; };
-
   relayBin = "${hutianShell}/bin/hutian-llm-relay";
 
   # The shell only needs the path to choose the chat or completion request
-  # shape. Replacing the authority keeps a URL that contains credentials, the
-  # upstream host, and query or fragment parameters out of the sandbox.
-  llamaUrlSuffix =
+  # shape. Replacing the authority keeps a URL's credentials, upstream host,
+  # and query or fragment parameters out of the sandbox.
+  relayUrlPath =
     let
-      matched = builtins.match "[a-zA-Z][a-zA-Z0-9+.-]*://[^/?#]*(/[^?#]*)?([?#].*)?" llamaUrl;
-      path = if matched == null then null else builtins.head matched;
+      captures = builtins.match "[a-zA-Z][a-zA-Z0-9+.-]*://[^/?#]*(/[^?#]*)?([?#].*)?" llamaUrl;
+      path = if captures == null then null else builtins.head captures;
     in
     if path == null then "" else path;
-  relayLogicalUrl = "http://hutian-relay" + llamaUrlSuffix;
+  relayLogicalUrl = "http://hutian-relay" + relayUrlPath;
 
   # The relay is always present. Without a configured key it forwards without
   # an Authorization header and never reads standard input.
@@ -72,9 +51,9 @@ let
       ''
         # Run the command in the foreground so its password prompt keeps
         # Ctrl+C and the terminal. The key is captured in a shell variable
-        # and piped to the relay, so it stays out of argv and the
-        # environment. The relay creates its socket only after the key is
-        # available, so the launcher waits here rather than timing out.
+        # and piped to the relay, so it stays out of argv and the environment.
+        # The relay creates its socket only after the key is available, so the
+        # launcher waits here rather than timing out.
         key=$(eval ${escapeShellArg apiKeyCommand})
         printf '%s' "$key" | ${relayBin} \
           --listen "$relay_socket" \
@@ -181,11 +160,11 @@ let
     text = ''
       rootfs=${rootfs}
       closure=${closure}
-      sourcedir=$(pwd -P)
+      source_dir=$(pwd -P)
       platform="''${GVISOR_PLATFORM:-systrap}"
       saved_tty=$(stty -g 2>/dev/null || true)
-      writable=${if writable then "true" else "false"}
-      nix_daemon=${if nixDaemon then "true" else "false"}
+      writable=${boolToString writable}
+      nix_daemon=${boolToString nixDaemon}
 
       # The network option is a hard gate. Without it the sandbox gets no
       # network regardless of GVISOR_NETWORK; with it, GVISOR_NETWORK can still
@@ -206,6 +185,7 @@ let
 
       # A key command or the sandbox may leave the terminal in raw or no-echo
       # mode. Restore the saved settings on every exit path.
+      # shellcheck disable=SC2329
       restore_terminal() {
         if [ -n "''${saved_tty:-}" ]; then
           stty "$saved_tty" 2>/dev/null || true
@@ -215,18 +195,17 @@ let
         fi
       }
 
-      nixEnv=()
-      nixVolumes=()
-      nixRunscArgs=()
+      # Create a directory that only the current user can access.
+      private_dir() {
+        local dir
+        dir=$(mktemp -d "$relay_parent/$1.XXXXXX")
+        chmod 700 "$dir"
+        printf '%s\n' "$dir"
+      }
 
-      # gVisor never revalidates cached directory entries against host changes.
-      # Both /source and, with the host daemon, /nix/store can change outside
-      # the sandbox while it runs. Without this, files created by the user's
-      # editor stay invisible and writes to those names fail with ENOENT,
-      # while paths built by the host daemon cannot be executed. Disable the
-      # dentry cache so lookups always go back to the host.
-      nixRunscArgs+=(--dcache=0)
-
+      nix_env=()
+      nix_volumes=()
+      runsc_args=()
       config_volumes=()
       relay_runsc_args=()
       llm_args=()
@@ -254,12 +233,17 @@ let
       # is running, the sandbox owns the terminal again.
       trap 'exit 130' INT TERM HUP
 
+      # gVisor never revalidates cached directory entries against host changes.
+      # Both /source and, with the host daemon, /nix/store can change outside
+      # the sandbox while it runs. Without this, files created by the user's
+      # editor stay invisible and writes to those names fail with ENOENT,
+      # while paths built by the host daemon cannot be executed. Disable the
+      # dentry cache so lookups always go back to the host.
+      runsc_args+=(--dcache=0)
+
       relay_parent="''${XDG_RUNTIME_DIR:-/tmp}"
-      if [ ! -d "$relay_parent" ]; then
-        relay_parent=/tmp
-      fi
-      relay_dir=$(mktemp -d "$relay_parent/hutian-relay.XXXXXX")
-      chmod 700 "$relay_dir"
+      [ -d "$relay_parent" ] || relay_parent=/tmp
+      relay_dir=$(private_dir hutian-relay)
       relay_socket="$relay_dir/llm.sock"
 
       ${relayLaunch}
@@ -286,15 +270,15 @@ let
         # daemon socket when present. Builds are performed by the host daemon;
         # the sandbox only reads the resulting store paths.
         if [ -S "${stateDir}/daemon-socket/socket" ]; then
-          nixVolumes+=(-volume "${stateDir}/daemon-socket:${stateDir}/daemon-socket")
-          nixRunscArgs+=(--host-uds=open)
-          nixEnv+=(
+          nix_volumes+=(-volume "${stateDir}/daemon-socket:${stateDir}/daemon-socket")
+          runsc_args+=(--host-uds=open)
+          nix_env+=(
             NIX_REMOTE=daemon
             NIX_STATE_DIR=${stateDir}
           )
         fi
 
-        nixEnv+=(
+        nix_env+=(
           NIX_CONFIG="experimental-features = nix-command flakes
             flake-registry = file:///run/hutian-nix/nix/registry.json"
           NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
@@ -307,9 +291,8 @@ let
         # Keep the model name and system prompt out of the process listing.
         # The shell reads these files once and removes them before it can run
         # any command.
-        config_dir=$(mktemp -d "$relay_parent/hutian-config.XXXXXX")
-        chmod 700 "$config_dir"
-        printf '%s' ${escapeShellArg model} > "$config_dir/model"
+        config_dir=$(private_dir hutian-config)
+        printf '%s' ${escapeShellArg modelName} > "$config_dir/model"
         printf '%s' ${escapeShellArg systemPrompt} > "$config_dir/system-prompt"
         chmod 600 "$config_dir/model" "$config_dir/system-prompt"
         config_volumes=(-volume "$config_dir:/run/hutian-config")
@@ -332,17 +315,17 @@ let
 
       sandbox=(
         env -i
-        PATH=${pathEnv}
+        "PATH=${pathEnv}"
         HOME=/source
         TERM=xterm-256color
         LANG=C.UTF-8
         TMPDIR=/tmp
-        SYSTEM_CERTIFICATE_PATH=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
-        "''${nixEnv[@]}"
+        "SYSTEM_CERTIFICATE_PATH=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+        "''${nix_env[@]}"
         "$(command -v runsc)"
           --rootless
           --network "$network"
-          "''${nixRunscArgs[@]}"
+          "''${runsc_args[@]}"
           "''${relay_runsc_args[@]}"
           --platform "$platform"
           'do'
@@ -350,7 +333,7 @@ let
             -root "$rootfs"
             -cwd /
             -force-overlay=false
-            "''${nixVolumes[@]}"
+            "''${nix_volumes[@]}"
             "''${config_volumes[@]}"
             "$@"
       )
@@ -361,11 +344,9 @@ let
       # namespace and let gVisor recursively bind the rootfs into the sandbox.
       status=0
       ${pkgs.util-linux}/bin/unshare --user --map-root-user --mount --propagation private \
-        ${sandboxLauncher} "$rootfs" "$closure" "$sourcedir" "$writable" "$nix_daemon" "$relay_dir" \
+        ${sandboxLauncher} "$rootfs" "$closure" "$source_dir" "$writable" "$nix_daemon" "$relay_dir" \
         "''${sandbox[@]}" || status=$?
 
-      # Keep the host terminal usable even if the sandbox leaves it in raw mode.
-      restore_terminal
       exit "$status"
     '';
     meta = {

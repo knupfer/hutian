@@ -1,11 +1,17 @@
+# Shared lint checks, used both by the flake checks and as package build
+# dependencies in `hutian-shell.nix`.
 { pkgs, src }:
 
 let
+  inherit (pkgs) lib;
+
   liquidGhc = pkgs.haskellPackages.ghcWithPackages (h: [
     h.filepath
     h.liquidhaskell
   ]);
 
+  # The flake source is read-only in the Nix store, so each check works on a
+  # writable copy.
   mkCheck =
     name: nativeBuildInputs: script:
     pkgs.runCommand name { inherit nativeBuildInputs; } ''
@@ -18,16 +24,17 @@ let
 
   sandboxLauncher = import ./sandbox.nix { inherit pkgs; };
 
-  # The sandbox launcher has to be exercised inside a private user and mount
-  # namespace. This script creates a mountpoint with a nested mount, then checks
-  # that the launcher keeps both visible and honours the writable option for both.
-  sandboxSourceTest = pkgs.writeShellScript "hutian-sandbox-source-test" ''
+  # Exercise the sandbox launcher inside a private user and mount namespace.
+  # This script creates a mountpoint with a nested mount, then checks that the
+  # launcher keeps both visible, honours the writable option for both, and
+  # mounts the relay directory read-only.
+  sandboxSourceProbe = pkgs.writeShellScript "hutian-sandbox-source-test" ''
     set -euo pipefail
 
     rootfs=$1
     closure=$2
     work=$3
-    sandbox=$4
+    launcher=$4
     src="$work/source dir"
 
     mkdir -p "$src"
@@ -38,7 +45,7 @@ let
     echo inner > "$src/child/file"
 
     # Writable: nested mounts and writes are preserved.
-    "$sandbox" "$rootfs" "$closure" "$src" true false "" \
+    "$launcher" "$rootfs" "$closure" "$src" true false "" \
       ${pkgs.bash}/bin/bash -c '
         set -e
         test "$(cat "$1/file")" = outer
@@ -48,7 +55,7 @@ let
       ' bash "$rootfs/source" "$src"
 
     # Read-only: writes through the root and the nested mount are rejected.
-    "$sandbox" "$rootfs" "$closure" "$src" false false "" \
+    "$launcher" "$rootfs" "$closure" "$src" false false "" \
       ${pkgs.bash}/bin/bash -c '
         set -e
         test "$(cat "$1/file")" = changed
@@ -64,12 +71,44 @@ let
     relay="$work/relay dir"
     mkdir -p "$relay" "$rootfs/run/hutian"
     echo relay > "$relay/file"
-    "$sandbox" "$rootfs" "$closure" "$src" false false "$relay" \
+    "$launcher" "$rootfs" "$closure" "$src" false false "$relay" \
       ${pkgs.bash}/bin/bash -c '
         set -e
         test "$(cat "$1/file")" = relay
         if { echo nope > "$1/new"; } 2>/dev/null; then exit 1; fi
       ' bash "$rootfs/run/hutian"
+  '';
+
+  # LiquidHaskell verifies the pure shell and relay modules.
+  liquidModules = [
+    "Ansi"
+    "Cli"
+    "Command"
+    "Completion"
+    "Conversation"
+    "Editor"
+    "History"
+    "Jobs"
+    "Key"
+    "Llm/Request"
+    "Llm/Settings"
+    "Llm/Stream"
+    "Paths"
+    "Policy"
+    "Prompt"
+    "Relay/Protocol"
+    "Tool"
+  ];
+
+  liquid = mkCheck "hutian-liquid" [ liquidGhc pkgs.z3 ] ''
+    # LiquidHaskell normally expands the DEFAULT case of a case-of expression
+    # two levels deep. Deeper matches only produce "Not expanding DEFAULT"
+    # warnings, and those warnings do not affect the verification result here,
+    # so turn expansion off entirely and keep the check output clean.
+    ghc -XDerivingStrategies -fno-code -isrc \
+      -fplugin=LiquidHaskell \
+      -fplugin-opt=LiquidHaskell:--max-case-expand=0 \
+      ${lib.concatMapStringsSep " \\\n" (module: "src/Hutian/${module}.hs") liquidModules}
   '';
 in
 {
@@ -86,39 +125,7 @@ in
         deadnix --fail .
       '';
 
-  liquid =
-    mkCheck "hutian-liquid"
-      [
-        liquidGhc
-        pkgs.z3
-      ]
-      ''
-        # LiquidHaskell normally expands the DEFAULT case of a case-of
-        # expression two levels deep. Deeper matches only produce "Not
-        # expanding DEFAULT" warnings, and those warnings do not affect the
-        # verification result here, so turn expansion off entirely and keep
-        # the check output clean.
-        ghc -XDerivingStrategies -fno-code -isrc \
-          -fplugin=LiquidHaskell \
-          -fplugin-opt=LiquidHaskell:--max-case-expand=0 \
-          src/Hutian/Ansi.hs \
-          src/Hutian/Cli.hs \
-          src/Hutian/Command.hs \
-          src/Hutian/Completion.hs \
-          src/Hutian/Conversation.hs \
-          src/Hutian/Editor.hs \
-          src/Hutian/History.hs \
-          src/Hutian/Jobs.hs \
-          src/Hutian/Key.hs \
-          src/Hutian/Llm/Request.hs \
-          src/Hutian/Llm/Settings.hs \
-          src/Hutian/Llm/Stream.hs \
-          src/Hutian/Paths.hs \
-          src/Hutian/Policy.hs \
-          src/Hutian/Prompt.hs \
-          src/Hutian/Relay/Protocol.hs \
-          src/Hutian/Tool.hs
-      '';
+  inherit liquid;
 
   # Check that closure paths of any size and plain files are bind-mounted into
   # the rootfs instead of being passed as one gVisor volume per path.
@@ -169,6 +176,6 @@ in
         : > closure/store-paths
 
         ${pkgs.util-linux}/bin/unshare --user --map-root-user --mount --propagation private \
-          ${sandboxSourceTest} "$PWD/rootfs" "$PWD/closure" "$PWD/work" ${sandboxLauncher}
+          ${sandboxSourceProbe} "$PWD/rootfs" "$PWD/closure" "$PWD/work" ${sandboxLauncher}
       '';
 }

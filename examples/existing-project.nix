@@ -34,13 +34,13 @@
         "x86_64-linux"
         "aarch64-linux"
       ];
-      forAllSystems = lib.genAttrs systems;
+      perSystem = lib.genAttrs systems;
       pkgsFor = system: nixpkgs.legacyPackages.${system};
 
       # One Hutian configuration, shared by the app and the package.
       hutianConfig = import ./hutian.nix;
 
-      # The project's own app, kept as the default.
+      # The project's own sample app, kept as the default.
       sampleApp =
         pkgs:
         pkgs.writeShellScriptBin "sample" ''
@@ -50,7 +50,7 @@
         '';
     in
     {
-      packages = forAllSystems (
+      packages = perSystem (
         system:
         let
           pkgs = pkgsFor system;
@@ -61,7 +61,7 @@
         }
       );
 
-      apps = forAllSystems (
+      apps = perSystem (
         system:
         let
           pkgs = pkgsFor system;

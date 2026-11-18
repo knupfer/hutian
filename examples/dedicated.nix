@@ -1,9 +1,9 @@
 # A dedicated Hutian flake.
 #
-# Copy this file as `flake.nix` and `hutian.nix` next to it. The `hutian`
-# input points at the published flake; pin it to a tag or revision for
-# reproducibility. The Hutian configuration lives in `hutian.nix`; this file
-# only connects it to the flake. Run:
+# Copy this file as `flake.nix` next to `hutian.nix`. The `hutian` input points
+# at the published flake; pin it to a tag or revision for reproducibility. The
+# Hutian configuration lives in `hutian.nix`; this file only connects it to the
+# flake. Run:
 #
 #   nix run .#hutian
 #

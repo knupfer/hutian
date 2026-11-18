@@ -8,7 +8,7 @@ author:             Florian Knupfer
 license:            MIT
 license-file:       LICENSE
 build-type:         Simple
-extra-source-files:
+extra-doc-files:
     CHANGELOG.md
     README.md
 
