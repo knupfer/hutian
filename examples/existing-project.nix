@@ -1,7 +1,8 @@
 # Add Hutian to an existing project flake.
 #
-# Copy this file into your project as `flake.nix` together with `hutian.nix`,
-# keep your own outputs, and adjust the `hutian` input URL. Then run:
+# Copy this file into your project as `flake.nix` together with `hutian.nix`
+# and keep your own outputs. The `hutian` input points at the published flake;
+# pin it to a tag or revision for reproducibility. Then run:
 #
 #   nix run             # the project's own default app
 #   nix run .#hutian    # Hutian
@@ -19,7 +20,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     hutian = {
-      url = "path:/path/to/this/flake";
+      url = "github:knupfer/hutian";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };

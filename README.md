@@ -44,7 +44,7 @@ Ctrl+C aborts the current LLM turn. Shell output is preceded by a dimmed pink
 
 ```console
 $ cd /some/project
-$ nix run /path/to/this/flake#hutian
+$ nix run github:knupfer/hutian#hutian
 <Ctrl+X>          # switch from llm mode to term mode
 pwd
 <Enter>
@@ -54,8 +54,8 @@ pwd
 Run a single command without starting the interactive shell:
 
 ```console
-$ nix run /path/to/this/flake#hutian -- echo hello
-$ nix run /path/to/this/flake#hutian -- /bin/sh -c 'echo hello > /tmp/result.txt'
+$ nix run github:knupfer/hutian#hutian -- echo hello
+$ nix run github:knupfer/hutian#hutian -- /bin/sh -c 'echo hello > /tmp/result.txt'
 ```
 
 When `sandbox.writable = true`, files written under `/source` appear directly in
@@ -267,7 +267,7 @@ tool is handled (`"deny"`, `"ask"`, or `"allow"`):
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     hutian = {
-      url = "path:/path/to/this/flake";
+      url = "github:knupfer/hutian";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
