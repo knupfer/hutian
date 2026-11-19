@@ -5,6 +5,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0.0] - 2026-11-19
+
 ### Fixed
 
 - A final streamed response line that arrives without a trailing newline is no
