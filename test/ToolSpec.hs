@@ -20,7 +20,7 @@ import Hutian.Jobs
 import Hutian.Jobs.Runtime (withJobRuntime)
 import Hutian.Policy (ModelShell (..))
 import Hutian.Tool
-import Hutian.Tool.Exec (abortToolCalls, abortedToolMessage, runToolCalls)
+import Hutian.Tool.Exec (runToolCalls)
 import Test.Tasty
 import Test.Tasty.HUnit
 import TestSupport (stripAnsi, withPseudoTerminalOutput, withTemporaryDirectory)

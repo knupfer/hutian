@@ -1,9 +1,7 @@
 -- | Terminal-side execution of model tool calls. Planning is pure and lives in
 -- "Hutian.Tool"; this module only carries out the resulting plan.
 module Hutian.Tool.Exec
-  ( abortedToolMessage
-  , abortToolCalls
-  , runToolCalls
+  ( runToolCalls
   ) where
 
 import Hutian.Console
@@ -49,17 +47,12 @@ import Hutian.Shell
   , commandResultText
   , runShellCommandOutput
   )
-import Hutian.Tool (CommandMode (..), ToolPlan (..), planTool)
-
--- | Append an abort result for every requested call without running any. This
--- keeps an interrupted assistant tool-call message paired with tool results in
--- the conversation history.
-abortToolCalls :: Conversation -> [ToolCall] -> Conversation
-abortToolCalls = go
-  where
-    go current [] = current
-    go current (call : rest) =
-      go (appendToolResult (toolCallId call) abortedToolMessage current) rest
+import Hutian.Tool
+  ( CommandMode (..)
+  , ToolPlan (..)
+  , abortedToolMessage
+  , planTool
+  )
 
 -- | Run each requested call in order. Once a call aborts the turn, the
 -- remaining calls get an error result instead of running.
@@ -72,9 +65,6 @@ runToolCalls jobs workingDirectory policy = go False
     go False conversation (call : rest) = do
       (callAborted, conversation') <- runToolCall jobs workingDirectory policy conversation call
       go callAborted conversation' rest
-
-abortedToolMessage :: String
-abortedToolMessage = "tool error: the user aborted the LLM turn"
 
 runToolCall :: JobRuntime -> FilePath -> ModelShell -> Conversation -> ToolCall -> IO (Bool, Conversation)
 runToolCall jobs workingDirectory policy conversation call =

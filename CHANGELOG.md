@@ -18,6 +18,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
+- Tool-call abort bookkeeping moved into pure `Hutian.Tool`, so
+  `Hutian.Llm.Loop` no longer depends on the IO executor for it.
 - The README project layout now lists every source module and `nix/sandbox.nix`.
 
 ## [0.7.0.0] - 2026-11-18

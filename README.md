@@ -491,7 +491,8 @@ The code keeps pure logic separate from IO:
 - `Hutian.Policy` defines the model's shell-tool policy (`deny`, `ask`, or
   `allow`) used by the LLM protocol and the tool loop. Term mode is not gated
   by it.
-- `Hutian.Tool` turns a model tool call and the policy into a pure `ToolPlan`.
+- `Hutian.Tool` turns a model tool call and the policy into a pure `ToolPlan`,
+  and records aborted tool calls as conversation results.
   `Hutian.Tool.Exec` performs only the terminal or shell IO that the plan
   requests, so refusals, approvals, commands, and job actions can be tested
   without a terminal.
@@ -580,7 +581,7 @@ src/Hutian/Render.hs            Pure ANSI rendering and approval decisions
 src/Hutian/Session.hs           Interactive prompt/history/session loop
 src/Hutian/Shell.hs             Captured shell command execution
 src/Hutian/Terminal.hs          Prompt driver over Prompt and Console
-src/Hutian/Tool.hs              Pure tool-call planning
+src/Hutian/Tool.hs              Pure tool-call planning and abort bookkeeping
 src/Hutian/Tool/Exec.hs         Terminal execution of tool-call plans
 app/Main.hs                     Shell executable entry point
 app/RelayMain.hs                Relay executable entry point

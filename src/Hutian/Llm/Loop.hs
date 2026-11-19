@@ -12,7 +12,7 @@ import Hutian.Conversation
   )
 import Hutian.Interrupt (InterruptFlag, isInterrupted)
 import Hutian.Llm.Stream (LlmResult (..))
-import Hutian.Tool.Exec (abortToolCalls)
+import Hutian.Tool (abortToolCalls)
 
 -- | One iteration's effects.
 data LlmLoop = LlmLoop
