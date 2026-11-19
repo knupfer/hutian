@@ -8,6 +8,7 @@ import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Hutian.Conversation
   ( ConversationEntry (..)
   , ToolCall (..)
+  , abortedToolMessage
   , appendToolResult
   , emptyConversation
   )
@@ -17,7 +18,6 @@ import Hutian.Interrupt
   )
 import Hutian.Llm.Loop (LlmLoop (..), runToolLoop)
 import Hutian.Llm.Stream (LlmResult (..))
-import Hutian.Tool (abortedToolMessage)
 import Test.Tasty
 import Test.Tasty.HUnit
 

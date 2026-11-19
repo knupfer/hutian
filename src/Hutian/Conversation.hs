@@ -12,6 +12,8 @@ module Hutian.Conversation
   , appendAssistantToolCalls
   , appendToolResult
   , appendResult
+  , abortedToolMessage
+  , abortToolCalls
   , requestMessages
   , continuationMessages
   , completionPrompt
@@ -108,6 +110,21 @@ appendResult prompt answer calls conversation =
       appendAssistantToolCalls (fromMaybe "" answer) calls withPrompt
   where
     withPrompt = maybe conversation (`appendUser` conversation) prompt
+
+-- | Append an abort result for every requested call without running any. This
+-- keeps an interrupted assistant tool-call message paired with tool results in
+-- the conversation history.
+{-@ abortToolCalls :: conversation:Conversation -> calls:[ToolCall] ->
+      {v:Conversation | len v == len conversation + len calls} @-}
+abortToolCalls :: Conversation -> [ToolCall] -> Conversation
+abortToolCalls = go
+  where
+    go current [] = current
+    go current (call : rest) =
+      go (appendToolResult (toolCallId call) abortedToolMessage current) rest
+
+abortedToolMessage :: String
+abortedToolMessage = "tool error: the user aborted the LLM turn"
 
 -- | Build the message list for an OpenAI-compatible chat request.
 {-@ requestMessages :: systemPrompt:String -> conversation:Conversation -> prompt:String ->

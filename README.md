@@ -491,8 +491,7 @@ The code keeps pure logic separate from IO:
 - `Hutian.Policy` defines the model's shell-tool policy (`deny`, `ask`, or
   `allow`) used by the LLM protocol and the tool loop. Term mode is not gated
   by it.
-- `Hutian.Tool` turns a model tool call and the policy into a pure `ToolPlan`,
-  and records aborted tool calls as conversation results.
+- `Hutian.Tool` turns a model tool call and the policy into a pure `ToolPlan`.
   `Hutian.Tool.Exec` performs only the terminal or shell IO that the plan
   requests, so refusals, approvals, commands, and job actions can be tested
   without a terminal.
@@ -512,7 +511,8 @@ The code keeps pure logic separate from IO:
   the pure approval decisions shared with the console.
 - `Hutian.History` owns the pure on-disk history codec.
 - `Hutian.Conversation` is a pure model of chat messages, tool calls, and tool
-  results; `Hutian.Paths` holds the pure path-completion helpers.
+  results, including the abort results recorded when an interrupt stops a
+  turn; `Hutian.Paths` holds the pure path-completion helpers.
 - `Hutian.Markdown` is a pure streaming renderer for Markdown and ANSI styles.
 - `Hutian.Highlight` wraps Skylighting for fenced code and shell input, used by
   both term-mode input and model-requested commands.
@@ -554,7 +554,7 @@ src/Hutian/Cli.hs               Strict shared command-line option parser
 src/Hutian/Command.hs           Term-mode input classification
 src/Hutian/Completion.hs        Pure completion selection
 src/Hutian/Console.hs           Single terminal IO boundary
-src/Hutian/Conversation.hs      Conversation entries and tool results
+src/Hutian/Conversation.hs      Conversation entries, tool results, and aborts
 src/Hutian/Editor.hs            Prompt text, cursor, and layout state
 src/Hutian/Highlight.hs         Skylighting for fenced code and shell input
 src/Hutian/History.hs           Pure history codec and navigation
@@ -581,7 +581,7 @@ src/Hutian/Render.hs            Pure ANSI rendering and approval decisions
 src/Hutian/Session.hs           Interactive prompt/history/session loop
 src/Hutian/Shell.hs             Captured shell command execution
 src/Hutian/Terminal.hs          Prompt driver over Prompt and Console
-src/Hutian/Tool.hs              Pure tool-call planning and abort bookkeeping
+src/Hutian/Tool.hs              Pure tool-call planning
 src/Hutian/Tool/Exec.hs         Terminal execution of tool-call plans
 app/Main.hs                     Shell executable entry point
 app/RelayMain.hs                Relay executable entry point

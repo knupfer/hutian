@@ -11,8 +11,6 @@ module Hutian.Tool
   , toolDefinitions
   , toolRequest
   , planTool
-  , abortedToolMessage
-  , abortToolCalls
   ) where
 
 import Data.Aeson (Value (..), object, (.=))
@@ -23,11 +21,7 @@ import Data.Aeson.Types (Result (..))
 import Data.Char (isSpace)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
-import Hutian.Conversation
-  ( Conversation
-  , ToolCall (..)
-  , appendToolResult
-  )
+import Hutian.Conversation (ToolCall (..))
 import Hutian.Jobs
   ( JobId (..)
   , LineCount
@@ -265,16 +259,3 @@ linesFrom arguments =
       case (Aeson.fromJSON value :: Result Int) of
         Success requested -> Right (lineCount requested)
         _ -> Left "lines must be an integer"
-
--- | Append an abort result for every requested call without running any. This
--- keeps an interrupted assistant tool-call message paired with tool results in
--- the conversation history.
-abortToolCalls :: Conversation -> [ToolCall] -> Conversation
-abortToolCalls = go
-  where
-    go current [] = current
-    go current (call : rest) =
-      go (appendToolResult (toolCallId call) abortedToolMessage current) rest
-
-abortedToolMessage :: String
-abortedToolMessage = "tool error: the user aborted the LLM turn"

@@ -22,6 +22,7 @@ import Hutian.Console
 import Hutian.Conversation
   ( Conversation
   , ToolCall (..)
+  , abortedToolMessage
   , appendToolResult
   )
 import Hutian.Highlight (sanitizeOutput)
@@ -50,7 +51,6 @@ import Hutian.Shell
 import Hutian.Tool
   ( CommandMode (..)
   , ToolPlan (..)
-  , abortedToolMessage
   , planTool
   )
 

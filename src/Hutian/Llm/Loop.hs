@@ -8,11 +8,11 @@ module Hutian.Llm.Loop
 import Hutian.Conversation
   ( Conversation
   , ToolCall
+  , abortToolCalls
   , appendResult
   )
 import Hutian.Interrupt (InterruptFlag, isInterrupted)
 import Hutian.Llm.Stream (LlmResult (..))
-import Hutian.Tool (abortToolCalls)
 
 -- | One iteration's effects.
 data LlmLoop = LlmLoop

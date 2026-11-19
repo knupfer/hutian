@@ -9,6 +9,8 @@ import qualified Data.Text as Text
 import Hutian.Conversation
   ( ConversationEntry (..)
   , ToolCall (..)
+  , abortToolCalls
+  , abortedToolMessage
   , emptyConversation
   )
 import Hutian.Jobs
