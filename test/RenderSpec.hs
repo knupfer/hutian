@@ -157,6 +157,10 @@ tests =
         grayOutputText False "hello" @?= "hello"
     , testCase "grayOutputText leaves empty output unchanged" $
         grayOutputText True "" @?= ""
+    , testCase "trailingNewline terminates non-empty output once" $ do
+        trailingNewline "" @?= ""
+        trailingNewline "hello" @?= "hello\n"
+        trailingNewline "hello\n" @?= "hello\n"
     , testCase "darkenColour scales RGB channels" $ do
         darkenColour 0.6 (rgb 255 20 147) @?= rgb 153 12 88
         darkenColour 1 (rgb 1 2 3) @?= rgb 1 2 3

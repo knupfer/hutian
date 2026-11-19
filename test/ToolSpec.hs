@@ -17,11 +17,13 @@ import Hutian.Jobs
   , lineCount
   , maxJobOutputLines
   )
+import Hutian.Jobs.Runtime (withJobRuntime)
 import Hutian.Policy (ModelShell (..))
 import Hutian.Tool
-import Hutian.Tool.Exec (abortToolCalls, abortedToolMessage)
+import Hutian.Tool.Exec (abortToolCalls, abortedToolMessage, runToolCalls)
 import Test.Tasty
 import Test.Tasty.HUnit
+import TestSupport (stripAnsi, withPseudoTerminalOutput, withTemporaryDirectory)
 
 tests :: TestTree
 tests =
@@ -119,6 +121,21 @@ tests =
           @?= [ ToolResultEntry "call-1" abortedToolMessage
               , ToolResultEntry "call-2" abortedToolMessage
               ]
+    , testCase "tool output terminates stdout and stderr separately" $
+        withTemporaryDirectory "hutian-tool-output" $ \directory ->
+          withJobRuntime directory directory $ \jobs ->
+            withPseudoTerminalOutput $ \readOutput -> do
+              _ <-
+                runToolCalls
+                  jobs
+                  directory
+                  ModelShellAllowed
+                  emptyConversation
+                  [ToolCall "call-1" "shell" "{\"command\":\"printf out; printf err >&2\"}"]
+              output <- readOutput
+              let plain = stripAnsi output
+              assertBool "stdout must end its own line" ("out\r\n" `isInfixOf` plain)
+              assertBool "stderr must end its own line" ("err\r\n" `isInfixOf` plain)
     ]
 
 shellCall :: ToolCall

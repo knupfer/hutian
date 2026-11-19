@@ -5,6 +5,21 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A final streamed response line that arrives without a trailing newline is no
+  longer dropped, so an answer or tool call is not lost when the server closes
+  the connection immediately after it.
+- Reasoning that resumes after an answer is labelled again with `think:`, and a
+  flushed reasoning block no longer leaves a stray terminal reset at the end of
+  the response.
+- Tool command output terminates stdout and stderr separately, so stderr-only
+  output ends on its own line and the two streams cannot run together.
+
+### Changed
+
+- The README project layout now lists every source module and `nix/sandbox.nix`.
+
 ## [0.7.0.0] - 2026-11-18
 
 ### Added

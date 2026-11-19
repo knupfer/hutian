@@ -280,7 +280,13 @@ consumeResponse output interruptFlag reader buffered state presenter = do
     else do
       chunk <- reader
       if BS.null chunk
-        then processLines output (fst (splitLines buffered)) state presenter
+        then do
+          let (lineChunks, remainder) = splitLines buffered
+              finalChunks =
+                if BS.null remainder
+                  then lineChunks
+                  else lineChunks ++ [remainder]
+          processLines output finalChunks state presenter
         else do
           let (lineChunks, rest) = splitLines (buffered <> chunk)
           next <- processLines output lineChunks state presenter

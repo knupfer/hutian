@@ -87,7 +87,13 @@ appendContent (Just text) presenter
 flushReasoning :: StreamPresenter -> (StreamPresenter, String)
 flushReasoning presenter
   | not (presenterReasoningStarted presenter) = (presenter, "")
-  | otherwise = (presenter {presenterReasoning = initialMarkdownState}, output)
+  | otherwise =
+      ( presenter
+          { presenterReasoning = initialMarkdownState
+          , presenterReasoningStarted = False
+          }
+      , output
+      )
   where
     trailing = finishMarkdownWith thinkingGrey (presenterReasoning presenter)
     output = (if null trailing then "" else trailing ++ "\n") ++ reset

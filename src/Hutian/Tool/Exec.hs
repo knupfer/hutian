@@ -6,8 +6,6 @@ module Hutian.Tool.Exec
   , runToolCalls
   ) where
 
-import Control.Monad (unless)
-import Data.List (isSuffixOf)
 import Hutian.Console
   ( confirmToolCommand
   , consoleFlush
@@ -45,7 +43,7 @@ import Hutian.Jobs.Runtime
   , startJob
   )
 import Hutian.Policy (ModelShell)
-import Hutian.Render (OutputKind (..), ToolApproval (..), grayOutputText)
+import Hutian.Render (OutputKind (..), ToolApproval (..), grayOutputText, trailingNewline)
 import Hutian.Shell
   ( CommandResult (..)
   , commandResultText
@@ -177,10 +175,10 @@ displayCommandResult :: CommandResult -> IO ()
 displayCommandResult result = do
   stdoutInteractive <- consoleIsInteractive
   stderrInteractive <- consoleIsErrorInteractive
-  let output = sanitizeOutput (commandStdout result)
+  let output = trailingNewline (sanitizeOutput (commandStdout result))
+      errors = trailingNewline (sanitizeOutput (commandStderr result))
   consoleWrite (grayOutputText stdoutInteractive output)
-  consoleWriteError (grayOutputText stderrInteractive (sanitizeOutput (commandStderr result)))
-  unless (null output || "\n" `isSuffixOf` output) (consoleWrite "\n")
+  consoleWriteError (grayOutputText stderrInteractive errors)
   consoleFlush
 
 -- | Print the job table in gray.
@@ -194,7 +192,6 @@ displayJobOutput output truncated = do
   interactive <- consoleIsInteractive
   let note = if truncated then jobOutputTruncationNote ++ "\n" else ""
       body = if null output then "(no output)\n" else output
-      text = sanitizeOutput (note ++ body)
+      text = trailingNewline (sanitizeOutput (note ++ body))
   consoleWrite (grayOutputText interactive text)
-  unless (null text || "\n" `isSuffixOf` text) (consoleWrite "\n")
   consoleFlush

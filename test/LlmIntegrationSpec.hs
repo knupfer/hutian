@@ -86,6 +86,29 @@ tests =
         llmToolCalls result
           @?= [ToolCall "call-1" "shell" "{\"command\":\"ls\"}"]
         llmResponseText result @?= Nothing
+    , testCase "runLlm processes a final stream line without a newline" $ do
+        let chunk =
+              Aeson.object
+                [ "choices"
+                    .= [ Aeson.object
+                           [ "delta" .= Aeson.object ["content" .= ("last" :: String)]
+                           ]
+                       ]
+                ]
+        (port, _) <-
+          startFakeServerWith
+            (streamingResponse ("data: " <> BL.toStrict (Aeson.encode chunk)))
+        flag <- newInterruptFlag
+        captured <-
+          timeout 7000000 $
+            captureStdout $
+              runLlm stdoutLlmOutput flag (settingsFor port) [] "hello"
+        (result, _) <-
+          maybe
+            (assertFailure "unterminated stream test timed out" >> pure (Nothing, ""))
+            pure
+            captured
+        result @?= Just "last"
     , testCase "non-success responses are reported without throwing" $ do
         (port, _) <- startFakeServerWith (httpResponse 500 "{\"error\":\"boom\"}")
         flag <- newInterruptFlag
@@ -220,22 +243,24 @@ receiveRequest connection = go BS.empty
 
 responseFor :: [Aeson.Value] -> BS.ByteString
 responseFor chunks =
-  let body =
-        BS.concat
-          [ "data: " <> BL.toStrict (Aeson.encode chunk) <> "\n\n"
-          | chunk <- chunks
-          ]
-          <> "data: [DONE]\n\n"
-      headers =
-        BS8.pack
-          ( "HTTP/1.1 200 OK\r\n"
-              ++ "Content-Type: text/event-stream\r\n"
-              ++ "Content-Length: "
-              ++ show (BS.length body)
-              ++ "\r\n"
-              ++ "Connection: close\r\n\r\n"
-          )
-   in headers <> body
+  streamingResponse $
+    BS.concat
+      [ "data: " <> BL.toStrict (Aeson.encode chunk) <> "\n\n"
+      | chunk <- chunks
+      ]
+      <> "data: [DONE]\n\n"
+
+streamingResponse :: BS.ByteString -> BS.ByteString
+streamingResponse body =
+  BS8.pack
+    ( "HTTP/1.1 200 OK\r\n"
+        ++ "Content-Type: text/event-stream\r\n"
+        ++ "Content-Length: "
+        ++ show (BS.length body)
+        ++ "\r\n"
+        ++ "Connection: close\r\n\r\n"
+    )
+    <> body
 
 httpResponse :: Int -> BS.ByteString -> BS.ByteString
 httpResponse status body =

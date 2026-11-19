@@ -26,6 +26,15 @@ tests =
         assertBool "thinking reset" (reset `isInfixOf` output)
         assertBool "answer label" ((boldTeal ++ "answer:" ++ reset) `isInfixOf` output)
         assertBool "answer text" ("hello" `isInfixOf` (output ++ finished))
+    , testCase "reasoning after a flushed answer gets its own label" $ do
+        let output =
+              presentAll
+                [ reasoningEvent "first"
+                , contentEvent "answer\n"
+                , reasoningEvent "second"
+                ]
+            label = dimTealForeground ++ "think:" ++ reset
+        Text.count (Text.pack label) (Text.pack output) @?= 2
     , testCase "finishing flushes a partial answer line" $ do
         let output = presentAll [contentEvent "partial"]
             finished = finishAll [contentEvent "partial"]

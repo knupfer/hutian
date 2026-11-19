@@ -12,6 +12,7 @@ module Hutian.Render
   , outputForeground
   , outputLabelText
   , grayOutputText
+  , trailingNewline
   , ToolApproval (..)
   , approvalForKey
   , approvalDecisionText
@@ -32,6 +33,7 @@ module Hutian.Render
   ) where
 
 import Data.Char (toUpper)
+import Data.List (isSuffixOf)
 import Numeric (showHex)
 import qualified Hutian.Ansi as Ansi
 import Hutian.Editor
@@ -210,6 +212,14 @@ grayOutputText :: Bool -> String -> String
 grayOutputText interactive text
   | interactive && not (null text) = grayForeground ++ text ++ reset
   | otherwise = text
+
+-- | Terminate non-empty output with a newline, so a following label, prompt,
+-- or the other output stream starts on its own line.
+trailingNewline :: String -> String
+trailingNewline [] = []
+trailingNewline text
+  | "\n" `isSuffixOf` text = text
+  | otherwise = text ++ "\n"
 
 -- | How the terminal cursor should look for a given activity.
 data CursorStyle

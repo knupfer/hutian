@@ -510,8 +510,8 @@ The code keeps pure logic separate from IO:
 - `Hutian.Render` turns prompts and output labels into ANSI output, and holds
   the pure approval decisions shared with the console.
 - `Hutian.History` owns the pure on-disk history codec.
-- `Hutian.Conversation` and `Hutian.Paths` are pure models;
-  `Hutian.Conversation` also represents tool calls and tool results.
+- `Hutian.Conversation` is a pure model of chat messages, tool calls, and tool
+  results; `Hutian.Paths` holds the pure path-completion helpers.
 - `Hutian.Markdown` is a pure streaming renderer for Markdown and ANSI styles.
 - `Hutian.Highlight` wraps Skylighting for fenced code and shell input, used by
   both term-mode input and model-requested commands.
@@ -527,6 +527,8 @@ The code keeps pure logic separate from IO:
   both sides.
 - `Hutian.Console` is the single terminal IO boundary: writes, terminal
   attributes, cursor styling, size, and stream colouring.
+- `Hutian.Key` decodes terminal input, and `Hutian.Session` owns the interactive
+  prompt, history, and command loop.
 - `Hutian.Terminal` is the prompt driver over `Hutian.Prompt` and
   `Hutian.Console`.
 - `Hutian.Shell` returns captured command output as `CommandResult` data instead
@@ -543,6 +545,7 @@ The package uses `GHC2021` and compiles with strict warnings and `-Werror`.
 flake.nix                       Flake outputs and consumer helpers
 nix/hutian.nix                  Sandbox rootfs, launcher, and wrapper
 nix/hutian-shell.nix            Haskell package definition
+nix/sandbox.nix                 Rootfs mounts, working directory, and relay mount
 nix/lint.nix                    Shared lint and LiquidHaskell checks
 src/                            Haskell library source
 src/Hutian/Ansi.hs              Typed terminal colours and styles
@@ -550,23 +553,35 @@ src/Hutian/Cli.hs               Strict shared command-line option parser
 src/Hutian/Command.hs           Term-mode input classification
 src/Hutian/Completion.hs        Pure completion selection
 src/Hutian/Console.hs           Single terminal IO boundary
+src/Hutian/Conversation.hs      Conversation entries and tool results
+src/Hutian/Editor.hs            Prompt text, cursor, and layout state
 src/Hutian/Highlight.hs         Skylighting for fenced code and shell input
+src/Hutian/History.hs           Pure history codec and navigation
+src/Hutian/History/Store.hs     History file IO
+src/Hutian/Http/Wire.hs         Shared socket framing helpers
+src/Hutian/Interrupt.hs         Interrupt flag and signal handling
 src/Hutian/Jobs.hs              Pure background-job model and text
 src/Hutian/Jobs/Runtime.hs      Job processes, logs, and signals
+src/Hutian/Key.hs               Pure terminal key classification
+src/Hutian/Llm.hs               HTTP, relay, and streamed-response IO
 src/Hutian/Llm/Loop.hs          Model and tool exchange loop
 src/Hutian/Llm/Presentation.hs  Stream labels, colours, and Markdown flushing
 src/Hutian/Llm/Request.hs       Chat and completion request bodies
 src/Hutian/Llm/Settings.hs      Launcher settings parsing
 src/Hutian/Llm/Stream.hs        Stream parsing, tool-call assembly, and result
+src/Hutian/Llm/UnixSocket.hs    Relay client over a Unix socket
+src/Hutian/Markdown.hs          Pure streaming Markdown renderer
+src/Hutian/Paths.hs             Pure path completion helpers
 src/Hutian/Policy.hs            Model shell-tool policy
 src/Hutian/Prompt.hs            Pure prompt reducer
-src/Hutian/Render.hs            Pure ANSI rendering and approval decisions
-src/Hutian/Session.hs           Interactive prompt/history/session loop
-src/Hutian/Tool.hs              Pure tool-call planning
-src/Hutian/Tool/Exec.hs         Terminal execution of tool-call plans
 src/Hutian/Relay.hs             Host-side LLM relay
 src/Hutian/Relay/Protocol.hs    Relay status framing
-src/Hutian/Llm/UnixSocket.hs    Relay client over a Unix socket
+src/Hutian/Render.hs            Pure ANSI rendering and approval decisions
+src/Hutian/Session.hs           Interactive prompt/history/session loop
+src/Hutian/Shell.hs             Captured shell command execution
+src/Hutian/Terminal.hs          Prompt driver over Prompt and Console
+src/Hutian/Tool.hs              Pure tool-call planning
+src/Hutian/Tool/Exec.hs         Terminal execution of tool-call plans
 app/Main.hs                     Shell executable entry point
 app/RelayMain.hs                Relay executable entry point
 test/                           Unit and property tests
