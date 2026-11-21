@@ -33,7 +33,7 @@
           "name"
           "url"
           "systemPrompt"
-          "shell"
+          "tools"
           "apiKeyCommand"
         ];
       };
@@ -116,11 +116,140 @@
         if predicate value then value else throw "hutian: option `${name}` must be ${expected}";
 
       isNonEmptyString = value: builtins.isString value && value != "";
-      modelShells = [
+      toolPolicies = [
         "deny"
         "ask"
         "allow"
       ];
+
+      # Tool configuration is validated recursively because every subagent has
+      # its own tools attribute with the same shape.
+      toolOptionNames = [
+        "shell"
+        "webfetch"
+        "websearch"
+        "subagent"
+      ];
+
+      toolPolicy =
+        path: value:
+        if builtins.isString value && builtins.elem value toolPolicies then
+          value
+        else
+          throw "hutian: option `${path}` must be \"deny\", \"ask\", or \"allow\"";
+
+      requiredKeys =
+        path: names: value:
+        let
+          missing = builtins.filter (name: !(value ? ${name})) names;
+        in
+        if missing == [ ] then
+          value
+        else
+          throw "hutian: option `${path}` is missing required key${plural (builtins.length missing)}: ${lib.concatStringsSep ", " missing}";
+
+      allowedKeys =
+        path: names: value:
+        let
+          unknown = builtins.filter (name: !(builtins.elem name names)) (builtins.attrNames value);
+        in
+        if unknown == [ ] then
+          value
+        else
+          throw "hutian: option `${path}` has unknown key${plural (builtins.length unknown)}: ${lib.concatStringsSep ", " unknown}";
+
+      checkedTools =
+        path: value:
+        if !(builtins.isAttrs value) then
+          throw "hutian: option `${path}` must be an attribute set"
+        else
+          let
+            present = allowedKeys path toolOptionNames (requiredKeys path toolOptionNames value);
+          in
+          {
+            shell = toolPolicy "${path}.shell" present.shell;
+            webfetch = toolPolicy "${path}.webfetch" present.webfetch;
+            websearch = checkedWebsearch "${path}.websearch" present.websearch;
+            subagent = checkedSubagents "${path}.subagent" present.subagent;
+          };
+
+      checkedWebsearch =
+        path: value:
+        if value == null then
+          null
+        else if builtins.isString value then
+          if value == "" then
+            throw "hutian: option `${path}` must be a non-empty search URL"
+          else
+            {
+              url = value;
+              policy = "ask";
+            }
+        else if builtins.isAttrs value then
+          let
+            names = [
+              "url"
+              "policy"
+            ];
+            present = allowedKeys path names (requiredKeys path [ "url" ] value);
+            policy = if present ? policy then toolPolicy "${path}.policy" present.policy else "ask";
+          in
+          {
+            url =
+              if builtins.isString present.url && present.url != "" then
+                present.url
+              else
+                throw "hutian: option `${path}.url` must be a non-empty string";
+            inherit policy;
+          }
+        else
+          throw "hutian: option `${path}` must be null, a search URL, or an attribute set with url and policy";
+
+      checkedSubagents =
+        path: value:
+        if !(builtins.isAttrs value) then
+          throw "hutian: option `${path}` must be an attribute set keyed by subagent name"
+        else
+          lib.mapAttrs (
+            name:
+            if name == "" then
+              throw "hutian: option `${path}` has an empty subagent name"
+            else
+              checkedSubagent "${path}.${name}"
+          ) value;
+
+      checkedSubagent =
+        path: value:
+        if !(builtins.isAttrs value) then
+          throw "hutian: option `${path}` must be an attribute set"
+        else
+          let
+            names = [
+              "model"
+              "description"
+              "systemPrompt"
+              "tools"
+            ];
+            present = allowedKeys path names (requiredKeys path names value);
+          in
+          {
+            model =
+              if builtins.isString present.model && present.model != "" then
+                present.model
+              else
+                throw "hutian: option `${path}.model` must be a non-empty string";
+            description =
+              if builtins.isString present.description && present.description != "" then
+                present.description
+              else
+                throw "hutian: option `${path}.description` must be a non-empty string";
+            systemPrompt =
+              if builtins.isString present.systemPrompt then
+                present.systemPrompt
+              else
+                throw "hutian: option `${path}.systemPrompt` must be a string";
+            tools = checkedTools "${path}.tools" present.tools;
+          };
 
       # Normalize and validate the options shared by every helper. The result
       # is passed unchanged to the internal package builder.
@@ -138,9 +267,7 @@
           modelName = checked "model.name" "a non-empty string" isNonEmptyString model.name;
           llamaUrl = checked "model.url" "a non-empty string" isNonEmptyString model.url;
           systemPrompt = checked "model.systemPrompt" "a string" builtins.isString model.systemPrompt;
-          modelShell = checked "model.shell" ''"deny", "ask", or "allow"'' (
-            value: builtins.elem value modelShells
-          ) model.shell;
+          tools = checkedTools "model.tools" model.tools;
           apiKeyCommand =
             if model.apiKeyCommand == null then
               null
@@ -161,7 +288,12 @@
           name = "default";
           url = "http://127.0.0.1:8080/v1/chat/completions";
           systemPrompt = "You are a coding agent.";
-          shell = "ask";
+          tools = {
+            shell = "ask";
+            webfetch = "deny";
+            websearch = null;
+            subagent = { };
+          };
           apiKeyCommand = null;
         };
       };
@@ -271,9 +403,46 @@
           networkLauncher = withSandbox { network = true; };
           noNetworkLauncher = withSandbox { network = false; };
           nixDaemonLauncher = withSandbox { nixDaemon = true; };
-          allowedModelShellLauncher = withModel { shell = "allow"; };
-          deniedModelShellLauncher = withModel { shell = "deny"; };
-          askModelShellLauncher = withModel { shell = "ask"; };
+          allowedToolPolicyLauncher = withModel {
+            tools = {
+              shell = "allow";
+            };
+          };
+          deniedToolPolicyLauncher = withModel {
+            tools = {
+              shell = "deny";
+            };
+          };
+          askToolPolicyLauncher = withModel {
+            tools = {
+              shell = "ask";
+            };
+          };
+          allowedWebfetchLauncher = withModel {
+            tools = {
+              webfetch = "allow";
+            };
+          };
+          websearchLauncher = withModel {
+            tools = {
+              websearch = {
+                url = "https://search.invalid/?q=";
+                policy = "ask";
+              };
+            };
+          };
+          subagentLauncher = withModel {
+            tools = {
+              subagent = {
+                probe = {
+                  model = "probe-subagent";
+                  description = "probe subagent description";
+                  systemPrompt = "probe subagent prompt";
+                  tools = defaults.model.tools;
+                };
+              };
+            };
+          };
           keyCommandLauncher = withModel { apiKeyCommand = "pass show k"; };
 
           # Assertions for the generated launchers and scripts.
@@ -338,6 +507,10 @@
               "/run/hutian/llm.sock"
               "/run/hutian-config/model"
               "/run/hutian-config/system-prompt"
+              "/run/hutian-config/tools"
+              "--tools-file"
+              "\"shell\":\"ask\""
+              "\"webfetch\":\"deny\""
               "/bin/dumb-init"
               "--single-child"
               "--host-uds=open"
@@ -411,13 +584,32 @@
           ];
 
           model-shell-option = check "model-shell-option" [
-            (contains "--model-shell allow" allowedModelShellLauncher)
-            (contains "--model-shell ask" askModelShellLauncher)
-            (contains "--model-shell deny" deniedModelShellLauncher)
-            (omits "model.shell = \"deny\" must not grant the model's shell tool" "--model-shell allow"
-              deniedModelShellLauncher
+            (contains "--model-shell allow" allowedToolPolicyLauncher)
+            (contains "--model-shell ask" askToolPolicyLauncher)
+            (contains "--model-shell deny" deniedToolPolicyLauncher)
+            (omits "model.tools.shell = \"deny\" must not grant the model's shell tool" "--model-shell allow"
+              deniedToolPolicyLauncher
             )
-            (contains "hutian-llm-relay" deniedModelShellLauncher)
+            (contains "\"shell\":\"allow\"" allowedToolPolicyLauncher)
+            (contains "\"shell\":\"deny\"" deniedToolPolicyLauncher)
+            (contains "hutian-llm-relay" deniedToolPolicyLauncher)
+          ];
+
+          web-tools-option = check "web-tools-option" [
+            (contains "\"webfetch\":\"allow\"" allowedWebfetchLauncher)
+            (contains "\"webfetch\":\"deny\"" probeLauncher)
+            (contains "\"websearch\":{" websearchLauncher)
+            (contains "\"policy\":\"ask\"" websearchLauncher)
+            (contains "\"url\":\"https://search.invalid/?q=\"" websearchLauncher)
+            (contains "\"websearch\":null" probeLauncher)
+          ];
+
+          subagent-option = check "subagent-option" [
+            (contains "\"subagent\":{}" probeLauncher)
+            (contains "\"subagent\":{\"probe\":{" subagentLauncher)
+            (contains "\"model\":\"probe-subagent\"" subagentLauncher)
+            (contains "\"description\":\"probe subagent description\"" subagentLauncher)
+            (contains "\"systemPrompt\":\"probe subagent prompt\"" subagentLauncher)
           ];
 
           launcher-volumes = check "launcher-volumes" [
@@ -480,6 +672,11 @@
                 (launcherFor { unknownOption = true; })
                 (withSandbox { unknownOption = true; })
                 (withModel { unknownOption = true; })
+                (withModel {
+                  tools = defaults.model.tools // {
+                    unknownTool = "ask";
+                  };
+                })
               ];
 
           relay-sigint = pkgs.runCommand "hutian-relay-sigint-check" { } ''

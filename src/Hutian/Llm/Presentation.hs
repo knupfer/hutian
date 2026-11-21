@@ -4,6 +4,7 @@
 module Hutian.Llm.Presentation
   ( StreamPresenter
   , initialStreamPresenter
+  , initialStreamPresenterIn
   , presentStreamEvent
   , finishPresentation
   ) where
@@ -18,21 +19,32 @@ import Hutian.Markdown
   , renderMarkdown
   , renderMarkdownWith
   )
-import Hutian.Render (boldTeal, dimTealForeground, grayForeground, reset)
+import Hutian.Render
+  ( TurnContext (..)
+  , answerLabelText
+  , grayForeground
+  , reasoningLabelText
+  , reset
+  )
 
 -- | Rendering state for one streamed response. Reasoning and answer Markdown
 -- are kept separately so the answer can flush the reasoning buffer first.
 data StreamPresenter = StreamPresenter
-  { presenterReasoning :: MarkdownState
+  { presenterContext :: TurnContext
+  , presenterReasoning :: MarkdownState
   , presenterReasoningStarted :: Bool
   , presenterAnswer :: MarkdownState
   , presenterAnswerStarted :: Bool
   }
 
 initialStreamPresenter :: StreamPresenter
-initialStreamPresenter =
+initialStreamPresenter = initialStreamPresenterIn MainContext
+
+initialStreamPresenterIn :: TurnContext -> StreamPresenter
+initialStreamPresenterIn context =
   StreamPresenter
-    { presenterReasoning = initialMarkdownState
+    { presenterContext = context
+    , presenterReasoning = initialMarkdownState
     , presenterReasoningStarted = False
     , presenterAnswer = initialMarkdownState
     , presenterAnswerStarted = False
@@ -57,7 +69,7 @@ appendReasoning (Just text) presenter
   where
     header
       | presenterReasoningStarted presenter = ""
-      | otherwise = dimTealForeground ++ "think:" ++ reset ++ "\n"
+      | otherwise = reasoningLabelText (presenterContext presenter) ++ "\n"
     (markdown', output) =
       renderMarkdownWith thinkingGrey (presenterReasoning presenter) text
     presenter' =
@@ -75,7 +87,7 @@ appendContent (Just text) presenter
     (startingAnswer, flushed) = flushReasoning presenter
     header
       | presenterAnswerStarted startingAnswer = ""
-      | otherwise = boldTeal ++ "answer:" ++ reset ++ "\n"
+      | otherwise = answerLabelText (presenterContext startingAnswer) ++ "\n"
     (markdown', output) = renderMarkdown (presenterAnswer startingAnswer) text
     presenter' =
       startingAnswer

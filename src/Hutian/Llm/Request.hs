@@ -22,8 +22,8 @@ import Hutian.Conversation
   , requestMessages
   )
 import Hutian.Llm.Settings (LlmUrl (..), ModelName (..), SystemPrompt (..), urlPath)
-import Hutian.Policy (ModelShell (..), modelShellAdvertised)
-import Hutian.Tool (toolDefinitions)
+import Hutian.Tool (toolDefinitionsFor)
+import Hutian.Tool.Config (HasToolConfig, ToolConfig, toolConfigFor)
 
 data Api
   = ChatApi
@@ -35,10 +35,10 @@ apiFor url
   | "/v1/chat/completions" `isSuffixOf` urlPath url = ChatApi
   | otherwise = CompletionApi
 
-requestBodyFor :: ModelShell -> Api -> ModelName -> SystemPrompt -> Conversation -> String -> Aeson.Value
-requestBodyFor policy api model systemPrompt conversation prompt =
+requestBodyFor :: HasToolConfig tools => tools -> Api -> ModelName -> SystemPrompt -> Conversation -> String -> Aeson.Value
+requestBodyFor tools api model systemPrompt conversation prompt =
   case api of
-    ChatApi -> chatBody policy model (requestMessages (unSystemPrompt systemPrompt) conversation prompt)
+    ChatApi -> chatBody (toolConfigFor tools) model (requestMessages (unSystemPrompt systemPrompt) conversation prompt)
     CompletionApi ->
       object
         [ "model" .= unModelName model
@@ -47,10 +47,10 @@ requestBodyFor policy api model systemPrompt conversation prompt =
         ]
 
 -- | Build a follow-up request after tool results, without a new user message.
-continuationBodyFor :: ModelShell -> Api -> ModelName -> SystemPrompt -> Conversation -> Aeson.Value
-continuationBodyFor policy api model systemPrompt conversation =
+continuationBodyFor :: HasToolConfig tools => tools -> Api -> ModelName -> SystemPrompt -> Conversation -> Aeson.Value
+continuationBodyFor tools api model systemPrompt conversation =
   case api of
-    ChatApi -> chatBody policy model (continuationMessages (unSystemPrompt systemPrompt) conversation)
+    ChatApi -> chatBody (toolConfigFor tools) model (continuationMessages (unSystemPrompt systemPrompt) conversation)
     CompletionApi ->
       object
         [ "model" .= unModelName model
@@ -58,8 +58,8 @@ continuationBodyFor policy api model systemPrompt conversation =
         , "stream" .= True
         ]
 
-chatBody :: ModelShell -> ModelName -> [ChatMessage] -> Aeson.Value
-chatBody policy model messages =
+chatBody :: ToolConfig -> ModelName -> [ChatMessage] -> Aeson.Value
+chatBody config model messages =
   object $
     [ "model" .= unModelName model
     , "messages" .= map messageValue messages
@@ -67,12 +67,13 @@ chatBody policy model messages =
     ]
       ++ toolFields
   where
+    definitions = toolDefinitionsFor config
     toolFields
-      | modelShellAdvertised policy =
-          [ "tools" .= toolDefinitions
+      | null definitions = []
+      | otherwise =
+          [ "tools" .= definitions
           , "tool_choice" .= ("auto" :: String)
           ]
-      | otherwise = []
 
 messageValue :: ChatMessage -> Aeson.Value
 messageValue message =

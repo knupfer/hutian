@@ -48,23 +48,26 @@ import Hutian.Interrupt (InterruptFlag, isInterrupted)
 import Hutian.Llm.Presentation
   ( StreamPresenter
   , finishPresentation
-  , initialStreamPresenter
+  , initialStreamPresenterIn
   , presentStreamEvent
   )
 import Hutian.Llm.Request
 import Hutian.Llm.Settings
 import Hutian.Llm.Stream
 import Hutian.Llm.UnixSocket (postUnixStream)
+import Hutian.Render (TurnContext)
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (statusCode)
 import System.Directory (removeFile)
 
 -- | Where streamed output and diagnostics go. The caller owns the terminal and
--- can flush or capture each write.
+-- can flush or capture each write. The context selects the main or subagent
+-- palette for reasoning and answer labels.
 data LlmOutput = LlmOutput
   { llmOutputWrite :: String -> IO ()
   , llmOutputErrorLine :: String -> IO ()
+  , llmOutputContext :: TurnContext
   }
 
 -- | Load settings, including file-backed model and system-prompt values. The
@@ -109,7 +112,7 @@ runLlmWithTools output interruptFlag settings conversation prompt
   | otherwise =
       runRequest output interruptFlag settings $
         requestBodyFor
-          (settingModelShell settings)
+          (settingTools settings)
           (apiFor (settingUrl settings))
           (settingModel settings)
           (settingSystemPrompt settings)
@@ -121,7 +124,7 @@ runLlmContinuation :: LlmOutput -> InterruptFlag -> LlmSettings -> Conversation 
 runLlmContinuation output interruptFlag settings conversation =
   runRequest output interruptFlag settings $
     continuationBodyFor
-      (settingModelShell settings)
+      (settingTools settings)
       (apiFor (settingUrl settings))
       (settingModel settings)
       (settingSystemPrompt settings)
@@ -257,7 +260,7 @@ handleStreamResponse output interruptFlag code reader
           reader
           BS.empty
           initialStreamState
-          initialStreamPresenter
+          (initialStreamPresenterIn (llmOutputContext output))
       let (_, finalOutput) = finishPresentation endPresenter
       emitText output finalOutput
       interrupted <- isInterrupted interruptFlag

@@ -51,14 +51,15 @@ import Hutian.Jobs.Runtime
 import Hutian.Llm
   ( LlmOutput (..)
   , LlmResult (..)
-  , LlmSettings
+  , LlmSettings (..)
+  , ModelName (..)
+  , SystemPrompt (..)
   , loadLlmSettings
   , runLlmContinuation
   , runLlmWithTools
-  , settingModelShell
   )
-import Hutian.Llm.Loop (LlmLoop (..), runToolLoop)
-import Hutian.Render (OutputKind (..))
+import Hutian.Llm.Loop (LlmLoop (..), runToolLoopWithResult)
+import Hutian.Render (OutputKind (..), TurnContext (..))
 import Hutian.Session
   ( Session (..)
   , SessionEffects (..)
@@ -71,7 +72,8 @@ import Hutian.Shell
   , runShellCommandStreaming
   )
 import Hutian.Terminal (promptForInput)
-import Hutian.Tool.Exec (runToolCalls)
+import Hutian.Tool.Config (SubagentConfig (..))
+import Hutian.Tool.Exec (ToolRuntime (..), runToolCallsWith)
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
@@ -132,38 +134,96 @@ runInput workingDirectory jobs settings interruptFlag mode text conversation =
     LlmInput -> runLlmInput workingDirectory jobs settings interruptFlag conversation text
     TermInput -> runTerminalInput workingDirectory conversation text
 
--- | Run a prompt through the model, executing any shell tools it requests and
+-- | Run a prompt through the model, executing any tools it requests and
 -- feeding the results back until it produces a final answer.
 runLlmInput :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> Conversation -> String -> IO Conversation
 runLlmInput workingDirectory jobs settings interruptFlag conversation prompt =
   withoutEcho $ withRespondingCursor $ do
-    result <- runLlmWithTools consoleLlmOutput interruptFlag settings conversation prompt
-    runToolLoop
-      (llmLoop interruptFlag workingDirectory jobs settings)
-      interruptFlag
-      (appendResult (Just prompt) (llmResponseText result) (llmToolCalls result) conversation)
-      result
+    let runtime = toolRuntime MainContext workingDirectory jobs settings interruptFlag
+    fst <$> runModelTurn interruptFlag settings runtime conversation prompt
+
+-- | Send one prompt, then run the tool/continuation loop until the model
+-- answers. Returns the updated conversation and the result that ended the turn.
+-- The runtime context selects the output palette, so the initial request and
+-- every continuation always agree.
+runModelTurn
+  :: InterruptFlag
+  -> LlmSettings
+  -> ToolRuntime
+  -> Conversation
+  -> String
+  -> IO (Conversation, LlmResult)
+runModelTurn interruptFlag settings runtime conversation prompt = do
+  let output = consoleLlmOutputIn (toolRuntimeContext runtime)
+  result <- runLlmWithTools output interruptFlag settings conversation prompt
+  runToolLoopWithResult
+    (llmLoop interruptFlag runtime settings)
+    interruptFlag
+    (appendResult (Just prompt) (llmResponseText result) (llmToolCalls result) conversation)
+    result
 
 -- | Bind the loop's effects to the real executor and model client.
-llmLoop :: InterruptFlag -> FilePath -> JobRuntime -> LlmSettings -> LlmLoop
-llmLoop interruptFlag workingDirectory jobs settings =
+llmLoop :: InterruptFlag -> ToolRuntime -> LlmSettings -> LlmLoop
+llmLoop interruptFlag runtime settings =
   LlmLoop
-    { loopRunTools =
-        runToolCalls
-          jobs
-          workingDirectory
-          (settingModelShell settings)
+    { loopRunTools = runToolCallsWith runtime (settingTools settings)
     , loopContinue =
-        runLlmContinuation consoleLlmOutput interruptFlag settings
+        runLlmContinuation
+          (consoleLlmOutputIn (toolRuntimeContext runtime))
+          interruptFlag
+          settings
     }
+
+-- | The runtime for one model turn. Subagents reuse the same API, settings,
+-- job runtime, and interrupt flag, but substitute their own model, system
+-- prompt, and tools. They run synchronously inside the tool call, so only the
+-- final answer is appended to the caller's conversation.
+toolRuntime :: TurnContext -> FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> ToolRuntime
+toolRuntime context workingDirectory jobs settings interruptFlag =
+  ToolRuntime
+    { toolRuntimeJobs = jobs
+    , toolRuntimeWorkingDirectory = workingDirectory
+    , toolRuntimeContext = context
+    , toolRuntimeSubagent = runSubagent workingDirectory jobs settings interruptFlag
+    }
+
+runSubagent
+  :: FilePath
+  -> JobRuntime
+  -> LlmSettings
+  -> InterruptFlag
+  -> SubagentConfig
+  -> String
+  -> IO (Either String String)
+runSubagent workingDirectory jobs settings interruptFlag agent prompt = do
+  let subagentSettings =
+        settings
+          { settingModel = ModelName (subagentModel agent)
+          , settingSystemPrompt = SystemPrompt (subagentSystemPrompt agent)
+          , settingTools = subagentTools agent
+          }
+      runtime =
+        toolRuntime SubagentContext workingDirectory jobs subagentSettings interruptFlag
+  (_, finalResult) <-
+    runModelTurn
+      interruptFlag
+      subagentSettings
+      runtime
+      emptyConversation
+      prompt
+  pure $
+    case llmResponseText finalResult of
+      Just answer -> Right answer
+      Nothing -> Left "tool error: the subagent returned no answer"
 
 -- | Stream LLM output through the terminal boundary, flushing each piece so a
 -- response appears as it arrives.
-consoleLlmOutput :: LlmOutput
-consoleLlmOutput =
+consoleLlmOutputIn :: TurnContext -> LlmOutput
+consoleLlmOutputIn context =
   LlmOutput
     { llmOutputWrite = \text -> unless (null text) (consoleWrite text >> consoleFlush)
     , llmOutputErrorLine = consoleWriteErrorLine
+    , llmOutputContext = context
     }
 
 runTerminalInput :: FilePath -> Conversation -> String -> IO Conversation

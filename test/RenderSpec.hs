@@ -62,7 +62,7 @@ tests =
           ("shell:\nif true; then echo \"hi\"; fi" `isInfixOf` stripAnsi output)
     , testCase "tool prompt highlights shell input" $ do
         let prompt = setPromptText "if true; then echo \"hi\"; fi" initialPrompt
-            (output, _) = promptRenderText (ToolPrompt "shell") 0 80 prompt
+            (output, _) = promptRenderText (ToolPrompt MainContext "shell") 0 80 prompt
         assertBool "expected a shell syntax style" ("\ESC[38;2;" `isInfixOf` output)
         assertBool
           "tool input keeps its text below the label"
@@ -73,7 +73,7 @@ tests =
             llmPrompt = setPromptText "abc" initialPrompt
             (llmOutput, _) = promptRenderText LlmPrompt 0 80 llmPrompt
             toolPrompt = setPromptText "ls" initialPrompt
-            (toolOutput, _) = promptRenderText (ToolPrompt "shell") 0 80 toolPrompt
+            (toolOutput, _) = promptRenderText (ToolPrompt MainContext "shell") 0 80 toolPrompt
         assertBool "term has no background" (not ("\ESC[48;" `isInfixOf` termOutput))
         assertBool "llm has no background" (not ("\ESC[48;" `isInfixOf` llmOutput))
         assertBool "tool has no background" (not ("\ESC[48;" `isInfixOf` toolOutput))
@@ -104,7 +104,7 @@ tests =
         startPromptText @?= "\ESC[K"
     , testCase "tool prompts use the answer teal on its own line" $ do
         let prompt = setPromptText "ls" initialPrompt
-            (output, position) = promptRenderText (ToolPrompt "shell") 0 80 prompt
+            (output, position) = promptRenderText (ToolPrompt MainContext "shell") 0 80 prompt
         assertBool "teal prefix" ((boldTeal ++ "tool shell:") `isInfixOf` output)
         assertBool "label text" ("tool shell:" `isInfixOf` output)
         assertBool "label sits above the command" ("tool shell:\nls" `isInfixOf` stripAnsi output)
@@ -119,6 +119,28 @@ tests =
         assertBool "resets colors" (resetSequence `isInfixOf` output)
     , testCase "toolLabelText labels commandless tool calls" $
         toolLabelText "jobs" @?= boldTeal ++ "tool jobs:" ++ reset
+    , testCase "subagent prompts use blue and show the submitted task" $ do
+        let output = subagentPromptText "cheap" 80 "summarize the page"
+        assertBool "blue prefix" ((boldBlue ++ "subagent cheap:") `isInfixOf` output)
+        assertBool
+          "task sits below the label"
+          ("subagent cheap:\nsummarize the page" `isInfixOf` stripAnsi output)
+        let prompt = setPromptText "work" initialPrompt
+            (rendered, position) = promptRenderText (SubagentPrompt "cheap") 0 80 prompt
+        assertBool "blue prefix" ((boldBlue ++ "subagent cheap:") `isInfixOf` rendered)
+        assertBool "label sits above the work" ("subagent cheap:\nwork" `isInfixOf` stripAnsi rendered)
+        position @?= cursorPosition 80 "subagent cheap:\n" prompt
+    , testCase "subagent tool prompts and output use the subagent blue" $ do
+        let promptOutput = toolPromptTextIn SubagentContext "shell" 80 "ls"
+        assertBool "blue prefix" ((boldBlue ++ "tool shell:") `isInfixOf` promptOutput)
+        assertBool "no teal prefix" (not ((boldTeal ++ "tool shell:") `isInfixOf` promptOutput))
+        toolLabelTextIn SubagentContext "jobs" @?= boldBlue ++ "tool jobs:" ++ reset
+        outputForegroundIn SubagentContext ToolOutput @?= dimBlueForeground
+        outputLabelTextIn SubagentContext ToolOutput True
+          @?= dimBlueForeground ++ "tool output:" ++ reset
+        assertBool
+          "subagent output does not keep the teal"
+          (outputForegroundIn SubagentContext ToolOutput /= dimTealForeground)
     , testCase "toolPromptText resets before the final newline" $ do
         let output = toolPromptText "shell" 80 "echo hi"
             (beforeNewline, afterNewline) = splitLastNewline output
@@ -150,6 +172,11 @@ tests =
     , testCase "output labels are plain when not interactive" $ do
         outputLabelText TermOutput False @?= "output:"
         outputLabelText ToolOutput False @?= "tool output:"
+    , testCase "reasoning and answer labels switch to blue for a subagent" $ do
+        reasoningLabelText MainContext @?= dimTealForeground ++ "think:" ++ reset
+        reasoningLabelText SubagentContext @?= dimBlueForeground ++ "think:" ++ reset
+        answerLabelText MainContext @?= boldTeal ++ "answer:" ++ reset
+        answerLabelText SubagentContext @?= boldBlue ++ "answer:" ++ reset
     , testCase "grayOutputText wraps terminal output and resets" $
         grayOutputText True "hello"
           @?= grayForeground ++ "hello" ++ reset
@@ -173,6 +200,14 @@ tests =
         cursorStyleText UserCursor @?= "\ESC]12;#FF1493\a\ESC[2 q"
     , testCase "responding cursor is teal and steady" $
         cursorStyleText RespondingCursor @?= "\ESC]12;#00FFC8\a\ESC[2 q"
+    , testCase "a subagent cursor is blue and steady" $
+        cursorStyleText SubagentCursor @?= "\ESC]12;#0099FF\a\ESC[2 q"
+    , testCase "cursor styles nest and restore the parent" $ do
+        popCursorStyle [] @?= (UserCursor, [])
+        let mainStack = pushCursorStyle RespondingCursor []
+            nested = pushCursorStyle SubagentCursor mainStack
+        popCursorStyle mainStack @?= (UserCursor, [])
+        popCursorStyle nested @?= (RespondingCursor, mainStack)
     , testCase "cursor blink uses visibility sequences" $ do
         hideCursorText @?= "\ESC[?25l"
         showCursorText @?= "\ESC[?25h"

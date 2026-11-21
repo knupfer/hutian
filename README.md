@@ -19,12 +19,23 @@ input is preceded by a bold pink `ask:` line and sent to the model. `Ctrl+X`
 switches to term mode, where a bold pink `shell:` line precedes input that runs
 through BusyBox `ash`, so shell builtins and redirection work as expected.
 
-The model's shell tools are controlled by the mandatory `model.shell` option:
+The model's tools are controlled by the mandatory `model.tools` option. Each
+tool has a three-way policy: `"deny"` hides it and refuses any call, `"ask"`
+advertises it but needs approval, and `"allow"` runs it automatically.
 
-- `"deny"` hides the tools from the model and refuses any tool call.
-- `"ask"` advertises the tools, but every `shell` or `shell_background` command
-  needs your approval. Listing jobs and reading or stopping one do not.
-- `"allow"` runs model-requested commands automatically.
+- `tools.shell` covers `shell`, `shell_background`, `jobs`, `job_output`, and
+  `job_kill`. Listing jobs and reading or stopping one do not need approval in
+  `"ask"` mode; only starting a command does.
+- `tools.webfetch` covers the `webfetch` tool, which fetches an http or https URL
+  from inside the sandbox.
+- `tools.websearch` is `null` to disable search, a search URL, or an attribute
+  set with `url` and `policy`. The `websearch` tool fetches that endpoint with
+  the URL-encoded query substituted for `{query}` or `%s`, or appended as `q=`.
+- `tools.subagent` maps selector names to subagents. Each has an upstream
+  `model`, a `description`, a `systemPrompt`, and its own `tools`. The main
+  model sees the names and descriptions and calls one by selector through the
+  `subagent` tool. Subagents run serially, use the same model API and
+  conversation loop, and return only their final answer to the caller.
 
 Term mode is always available. Model commands run through the same `/bin/sh -c`
 path as term mode and are shown with a bold teal `tool shell:` line. In `"ask"`
@@ -33,7 +44,9 @@ the cursor is hidden, with `[y] Yes` and `[n] No` on their own lines. The choice
 collapses into a single `Yes` or `No` line; only `y` or `n` decides, other keys
 are ignored, and `Ctrl+C` aborts the current LLM turn. Shell output is preceded
 by a dimmed pink `output:` line and tool output by a dimmed teal `tool output:`
-line.
+line. Subagent work starts under a blue `subagent <name>:` line, followed by
+the task it was given. Every tool prompt and tool output label inside that
+subagent also uses the subagent blue instead of teal.
 
 ## Quick start
 
@@ -60,9 +73,10 @@ root is read-only.
 ## Input modes
 
 The prompt starts in LLM mode. `Ctrl+X` switches between LLM and term mode
-regardless of `model.shell`. Each mode keeps its own input buffer: switching
-saves the current text and restores the text of the mode being entered.
-Submitted text goes to llama.cpp in LLM mode and to `/bin/sh -c` in term mode.
+regardless of `model.tools.shell`. Each mode keeps its own input buffer:
+switching saves the current text and restores the text of the mode being
+entered. Submitted text goes to llama.cpp in LLM mode and to `/bin/sh -c` in
+term mode.
 
 | Key | Effect |
 | --- | --- |
@@ -88,20 +102,29 @@ Every LLM request includes the session's prior conversation: earlier prompts,
 assistant replies, commands submitted in term mode, and tool calls with their
 results.
 
-The model can call the `shell` tool according to `model.shell`. Each command
-runs with `/bin/sh -c` in the sandbox working directory, its output is streamed
-to the terminal in gray under a dimmed teal `tool output:` line, and the output
-is sent back to the model. Every call runs in a fresh shell, so `cd`, exported
-variables, and other shell state do not persist between calls. The requested
-command is shown under a bold teal `tool shell:` line, syntax-highlighted as
-shell, which distinguishes it from commands typed by the user. In `"ask"` mode,
-non-interactive runs deny tool calls automatically.
+The model can call the `shell` tool according to `model.tools.shell`. Each
+command runs with `/bin/sh -c` in the sandbox working directory, its output is
+streamed to the terminal in gray under a dimmed teal `tool output:` line, and
+the output is sent back to the model. Every call runs in a fresh shell, so `cd`,
+exported variables, and other shell state do not persist between calls. The
+requested command is shown under a bold teal `tool shell:` line,
+syntax-highlighted as shell, which distinguishes it from commands typed by the
+user. In `"ask"` mode, non-interactive runs deny tool calls automatically.
 
 For servers, watchers, and long builds, the model can call `shell_background`
 instead of `shell`. It receives a job id immediately and uses `jobs`,
 `job_output`, and `job_kill` to inspect and control the job. The requested
 command is shown under a bold teal `tool shell_background:` line, and the start
 result follows under `tool output:` in gray.
+
+The model can also fetch pages with `webfetch`, search with `websearch`, and
+delegate a self-contained task to a configured subagent. Web tools run in the
+sandbox and need direct networking (`sandbox.network = true`) unless the URL is
+reachable another way. A subagent gets its own system prompt and tools and runs
+synchronously inside the tool call; only its final answer becomes the tool
+result in the main conversation. Its streamed output appears under a blue
+`subagent <name>:` line, which is followed by the task prompt, and its own
+tool prompts and output labels stay in that same blue.
 
 ```console
 Explain what a syscall is.
@@ -169,7 +192,7 @@ system message, model name, llama.cpp endpoint, and model permissions:
 | `model.name` | model | Model name sent to the endpoint. |
 | `model.url` | relay | OpenAI-compatible chat or native `/completion` URL. `http://` and `https://` are supported. |
 | `model.systemPrompt` | model | System message for every LLM request. |
-| `model.shell` | model | `"deny"`, `"ask"`, or `"allow"` for the model's shell and background-job tools. |
+| `model.tools` | model | Tool policies and configuration: `shell`, `webfetch`, `websearch`, and `subagent`. |
 | `model.apiKeyCommand` | host relay | Command that prints the upstream key, or `null` for unauthenticated forwarding. |
 
 Every option above is mandatory and has no default. Omitting one fails with an
@@ -211,7 +234,12 @@ A complete configuration:
         systemPrompt = ''
           You are a careful coding assistant working in a sandboxed shell.
         '';
-        shell = "allow";
+        tools = {
+          shell = "allow";
+          webfetch = "deny";
+          websearch = null;
+          subagent = { };
+        };
         apiKeyCommand = null;
       };
     };
@@ -227,11 +255,52 @@ Set `sandbox.network = false` to give the sandbox gVisor's `none` network mode.
 This is a hard gate: `GVISOR_NETWORK` cannot re-enable networking. The host
 relay still provides model traffic over its Unix socket.
 
-Set `model.shell = "deny"` to disable the model's shell tools. Term mode remains
-available for your own commands. Hutian omits the tools from every LLM request
-and also refuses to execute any tool call that arrives anyway. Use `"ask"` to
-keep the tools available with per-command approval (job inspection stays free),
-or `"allow"` to run model-requested commands automatically.
+Set `model.tools.shell = "deny"` to disable the model's shell tools. Term mode
+remains available for your own commands. Hutian omits the tools from every LLM
+request and also refuses to execute any tool call that arrives anyway. Use
+`"ask"` to keep the tools available with per-command approval (job inspection
+stays free), or `"allow"` to run model-requested commands automatically.
+`model.tools.webfetch` uses the same three values for the `webfetch` tool.
+
+`model.tools.websearch` is `null` to disable search, a URL string, or an
+attribute set such as `{ url = "https://search.example/?q="; policy = "ask"; }`.
+The endpoint is fetched in the sandbox, so `sandbox.network = true` is required
+for normal internet access. The query replaces `{query}` or `%s`, or is
+appended as `q=` when the URL has neither placeholder.
+
+`model.tools.subagent` maps selector names to subagents. Each selector has an
+upstream `model` name, a `description`, a `systemPrompt`, and its own `tools`
+with the same shape. The description and selector list appear in the
+`subagent` tool schema, so the main model knows when each subagent is useful.
+The model calls a selector with a self-contained prompt; the subagent cannot
+see the main conversation. A subagent runs serially with the same API and tool
+loop, never in parallel or in the background, and the caller receives only the
+final answer. For example, a cheap summarization model can be given only
+`webfetch` and `websearch` while the main model keeps the shell.
+
+```nix
+tools = {
+  shell = "ask";
+  webfetch = "deny";
+  websearch = null;
+  subagent = {
+    summarize = {
+      model = "cheap-summary-model";
+      description = "Fetch and summarize web pages when current information is needed.";
+      systemPrompt = "Fetch pages and summarize them concisely.";
+      tools = {
+        shell = "deny";
+        webfetch = "allow";
+        websearch = {
+          url = "https://search.example/?q=";
+          policy = "allow";
+        };
+        subagent = { };
+      };
+    };
+  };
+};
+```
 
 Then run `nix run .#hutian` from that project. Package versions come from the
 consumer flake's lock file.
@@ -250,7 +319,12 @@ hutian.lib.mkPackage pkgs {
     name = "your-model";
     url = "http://127.0.0.1:8080/v1/chat/completions";
     systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
-    shell = "allow";
+    tools = {
+      shell = "allow";
+      webfetch = "deny";
+      websearch = null;
+      subagent = { };
+    };
     apiKeyCommand = null;
   };
 }
@@ -426,7 +500,7 @@ read the key from `/source` or the Nix store: the sandbox can read both. Use
 ## Permission model
 
 Hutian separates sandbox capabilities from model-tool permissions. The
-`sandbox.*` options apply to everything running in the sandbox; `model.shell`
+`sandbox.*` options apply to everything running in the sandbox; `model.tools`
 restricts only the model, and `model.apiKeyCommand` only affects the host relay.
 
 - `sandbox.network = false` removes direct sandbox networking only. The relay
@@ -439,14 +513,17 @@ restricts only the model, and `model.apiKeyCommand` only affects the host relay.
   created or changed on the host appear in the next sandbox command; a command
   that keeps its own working directory there sees the view from when it started.
 - `sandbox.writable = false` does not prevent the model from reading `/source`
-  and sending what it reads upstream. Set `model.shell = "deny"` or use a local
-  model endpoint if confidentiality matters.
+  and sending what it reads upstream. Set `model.tools.shell = "deny"`,
+  `model.tools.webfetch = "deny"`, and disable subagents or use a local model
+  endpoint if confidentiality matters.
 - `sandbox.network = true` defaults to gVisor's `host` mode, so the sandbox
   shares the host network namespace: loopback, LAN, and the Internet.
   `GVISOR_NETWORK` can narrow it to `none` but cannot widen
   `sandbox.network = false`.
-- `model.shell = "deny"` restricts only the model. Term mode can always run
-  commands in the sandbox, including background jobs.
+- `model.tools.shell = "deny"` restricts only the model. Term mode can always run
+  commands in the sandbox, including background jobs. The same applies to
+  `webfetch`, `websearch`, and subagents; subagents can use only the tools in
+  their own `tools` attribute.
 - Every process in the sandbox can connect to the relay socket. Shell commands
   can therefore use the configured model endpoint, but cannot choose a
   different upstream or read the key.
@@ -466,10 +543,12 @@ restricts only the model, and `model.apiKeyCommand` only affects the host relay.
   be used as a general proxy. With `model.apiKeyCommand`, the key stays on the
   host and is never visible to the sandbox. Without a key
   (`model.apiKeyCommand = null`), the relay forwards unauthenticated.
-- With `model.shell = "deny"`, the model cannot run commands: the shell tool is
-  omitted from LLM requests and tool calls are refused. `"ask"` requires
+- With `model.tools.shell = "deny"`, the model cannot run commands: the shell
+  tool is omitted from LLM requests and tool calls are refused. `"ask"` requires
   approval before each command, while `"allow"` runs model commands
-  automatically. Term mode still lets you run commands yourself.
+  automatically. `webfetch` and `websearch` have their own policies, and a
+  subagent can use only its configured tools. Term mode still lets you run
+  commands yourself.
 - A static `dumb-init` runs as PID 1 so background jobs that outlive their shell
   are reaped rather than left as zombies. It runs in single-child mode so the
   sandbox keeps its controlling terminal and interactive programs can open
@@ -488,13 +567,15 @@ The code keeps pure logic separate from IO:
 
 - `Hutian.Command` classifies submitted term-mode text as blank, single-line,
   or multi-line.
-- `Hutian.Policy` defines the model's shell-tool policy (`deny`, `ask`, or
-  `allow`) used by the LLM protocol and the tool loop. Term mode is not gated
-  by it.
-- `Hutian.Tool` turns a model tool call and the policy into a pure `ToolPlan`.
-  `Hutian.Tool.Exec` performs only the terminal or shell IO that the plan
-  requests, so refusals, approvals, commands, and job actions can be tested
-  without a terminal.
+- `Hutian.Policy` defines the shared three-way tool policy (`deny`, `ask`, or
+  `allow`) used by the LLM protocol and the tool loop. `Hutian.Tool.Config`
+  holds the tool policies, websearch endpoint, and serial subagent
+  configuration, with JSON parsing for the launcher-provided tools file.
+- `Hutian.Tool` turns a model tool call and the tool configuration into a pure
+  `ToolPlan`. `Hutian.Tool.Exec` performs only the terminal, shell, web, or
+  subagent IO that the plan requests, so refusals, approvals, commands, and job
+  actions can be tested without a terminal. `Hutian.Web` builds search URLs and
+  performs bounded HTTP fetches.
 - `Hutian.Jobs` is the pure job model: ids, status, log paths, and the text
   used by the model tools. `Hutian.Jobs.Runtime` owns the process handles,
   bounded log tails, and process-group signalling.
@@ -573,7 +654,7 @@ src/Hutian/Llm/Stream.hs        Stream parsing, tool-call assembly, and result
 src/Hutian/Llm/UnixSocket.hs    Relay client over a Unix socket
 src/Hutian/Markdown.hs          Pure streaming Markdown renderer
 src/Hutian/Paths.hs             Pure path completion helpers
-src/Hutian/Policy.hs            Model shell-tool policy
+src/Hutian/Policy.hs            Shared model tool policy
 src/Hutian/Prompt.hs            Pure prompt reducer
 src/Hutian/Relay.hs             Host-side LLM relay
 src/Hutian/Relay/Protocol.hs    Relay status framing
@@ -581,8 +662,10 @@ src/Hutian/Render.hs            Pure ANSI rendering and approval decisions
 src/Hutian/Session.hs           Interactive prompt/history/session loop
 src/Hutian/Shell.hs             Captured shell command execution
 src/Hutian/Terminal.hs          Prompt driver over Prompt and Console
-src/Hutian/Tool.hs              Pure tool-call planning
+src/Hutian/Tool.hs              Pure tool schemas, decoding, and planning
+src/Hutian/Tool/Config.hs       Tool policies, websearch, and subagent config
 src/Hutian/Tool/Exec.hs         Terminal execution of tool-call plans
+src/Hutian/Web.hs               Bounded HTTP fetches and search URLs
 app/Main.hs                     Shell executable entry point
 app/RelayMain.hs                Relay executable entry point
 test/                           Unit and property tests
@@ -603,7 +686,8 @@ The test suite combines HUnit tests with QuickCheck properties for the editor
 state machine, the pure prompt reducer, prompt layout and rendering, command
 parsing, completion selection, history codecs, conversation history, LLM
 requests, streaming tool calls, Markdown rendering, code highlighting, path and
-shell helpers, strict option parsing, tool-call plans, the background-job model,
+shell helpers, strict option parsing, tool-call plans, tool and subagent
+configuration, web search URLs, stream presentation, the background-job model,
 socket framing, and interrupt handling. It also includes integration tests for:
 
 - streaming LLM responses through a local HTTP server, including bounded

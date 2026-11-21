@@ -9,16 +9,20 @@ module Hutian.Tool
   , ToolRequest (..)
   , ToolPlan (..)
   , toolDefinitions
+  , toolDefinitionsFor
   , toolRequest
   , planTool
+  , planToolWith
   ) where
 
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as AesonKey
 import Data.Aeson.KeyMap (KeyMap)
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (Result (..))
-import Data.Char (isSpace)
+import Data.Char (isControl, isSpace)
+import Data.List (intercalate, isPrefixOf)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import Hutian.Conversation (ToolCall (..))
@@ -30,7 +34,13 @@ import Hutian.Jobs
   , lineCountValue
   , maxJobOutputLines
   )
-import Hutian.Policy (ModelShell (..))
+import Hutian.Policy (ToolPolicy (..), toolPolicyAdvertised)
+import Hutian.Tool.Config
+  ( SubagentConfig (..)
+  , ToolConfig (..)
+  , WebsearchConfig (..)
+  , defaultToolConfig
+  )
 
 -- | Whether a shell command should block the current turn or run as a job.
 data CommandMode
@@ -46,6 +56,9 @@ data ToolRequest
   | RequestJobs
   | RequestJobOutput JobId LineCount
   | RequestJobKill JobId
+  | RequestWebfetch String
+  | RequestWebsearch String
+  | RequestSubagent String String
   deriving stock (Eq, Show)
 
 -- | What the caller should do with one requested tool call.
@@ -62,18 +75,55 @@ data ToolPlan
     PlanJobOutput JobId LineCount
   | -- | Stop a background job.
     PlanJobKill JobId
+  | -- | Fetch a URL without asking.
+    PlanRunWebfetch String
+  | -- | Show a URL and ask the user before fetching it.
+    PlanApproveWebfetch String
+  | -- | Search the configured endpoint without asking.
+    PlanRunWebsearch WebsearchConfig String
+  | -- | Show a search query and ask the user before running it.
+    PlanApproveWebsearch WebsearchConfig String
+  | -- | Run one configured subagent serially and return its answer.
+    PlanSubagent SubagentConfig String
   deriving stock (Eq, Show)
+
+-- | The policy-aware planners. 'planTool' covers the shell-only entry point;
+-- 'planToolWith' resolves every configured tool.
+-- | The shell tools, advertised when a caller only supplies a shell policy.
+-- Request bodies use 'toolDefinitionsFor' with the full configuration.
+toolDefinitions :: [Value]
+toolDefinitions =
+  toolDefinitionsFor (defaultToolConfig {toolShell = ToolAllow})
 
 -- | The tools advertised to the model. They stay together in one module so the
 -- request body and the call planner cannot drift apart.
-toolDefinitions :: [Value]
-toolDefinitions =
-  [ commandTool "shell" shellDescription
-  , commandTool "shell_background" backgroundDescription
-  , jobsTool
-  , jobOutputTool
-  , jobKillTool
-  ]
+toolDefinitionsFor :: ToolConfig -> [Value]
+toolDefinitionsFor config =
+  shellTools
+    ++ webfetchTools
+    ++ websearchTools
+    ++ subagentTools
+  where
+    shellTools
+      | toolPolicyAdvertised (toolShell config) =
+          [ commandTool "shell" shellDescription
+          , commandTool "shell_background" backgroundDescription
+          , jobsTool
+          , jobOutputTool
+          , jobKillTool
+          ]
+      | otherwise = []
+    webfetchTools
+      | toolPolicyAdvertised (toolWebfetch config) = [webfetchTool]
+      | otherwise = []
+    websearchTools =
+      case toolWebsearch config of
+        Just websearch
+          | toolPolicyAdvertised (websearchPolicy websearch) -> [websearchTool]
+        _ -> []
+    subagentTools
+      | null (toolSubagent config) = []
+      | otherwise = [subagentTool (toolSubagent config)]
 
 shellDescription :: String
 shellDescription =
@@ -140,6 +190,82 @@ jobKillTool =
         ]
     )
 
+webfetchTool :: Value
+webfetchTool =
+  functionTool
+    "webfetch"
+    ( "Fetch an http or https URL and return its response body. "
+        ++ "Use it to read documentation, issues, or pages the user points to. "
+        ++ "The response is bounded and non-success statuses are reported in the result."
+    )
+    ( object
+        [ "type" .= ("object" :: String)
+        , "properties" .=
+            object
+              ["url" .= stringProperty "The http or https URL to fetch."]
+        , "required" .= ["url" :: String]
+        ]
+    )
+
+websearchTool :: Value
+websearchTool =
+  functionTool
+    "websearch"
+    ( "Search the web using the configured search endpoint and return the "
+        ++ "result page. Use webfetch to read a promising result in full."
+    )
+    ( object
+        [ "type" .= ("object" :: String)
+        , "properties" .=
+            object
+              ["query" .= stringProperty "The search query."]
+        , "required" .= ["query" :: String]
+        ]
+    )
+
+subagentTool :: [SubagentConfig] -> Value
+subagentTool agents =
+  functionTool
+    "subagent"
+    ( "Delegate a self-contained task to one configured subagent and return only "
+        ++ "its final answer. Subagents cannot see this conversation, so include "
+        ++ "all relevant context in the prompt and state the final output you "
+        ++ "need. They run one at a time, use their own system prompt and tools, "
+        ++ "and share this model API.\n\nConfigured subagents:\n"
+        ++ subagentCatalogue agents
+    )
+    ( object
+        [ "type" .= ("object" :: String)
+        , "properties" .=
+            object
+              [ "name"
+                  .= enumProperty
+                    "The configured subagent name."
+                    (map subagentName agents)
+              , "prompt"
+                  .= stringProperty
+                    "A self-contained task. The subagent cannot see this conversation, so include all relevant context and state the final output you need."
+              ]
+        , "required" .= ["name" :: String, "prompt" :: String]
+        ]
+    )
+
+-- | List the configured selectors with the descriptions their owners supplied.
+-- The main model sees this in the tool description, which is how it learns when
+-- a subagent is appropriate and what each one can do.
+subagentCatalogue :: [SubagentConfig] -> String
+subagentCatalogue = intercalate "\n" . map entry
+  where
+    entry agent = "- " ++ subagentName agent ++ ": " ++ subagentDescription agent
+
+enumProperty :: String -> [String] -> Value
+enumProperty description values =
+  object
+    [ "type" .= ("string" :: String)
+    , "description" .= (description :: String)
+    , "enum" .= values
+    ]
+
 commandTool :: String -> String -> Value
 commandTool name description =
   functionTool
@@ -192,20 +318,129 @@ toolRequest call =
       arguments <- argumentsObject call
       RequestJobOutput <$> jobIdFrom arguments <*> linesFrom arguments
     "job_kill" -> RequestJobKill <$> (argumentsObject call >>= jobIdFrom)
+    "webfetch" -> RequestWebfetch <$> stringArgument "url" call
+    "websearch" -> RequestWebsearch <$> stringArgument "query" call
+    "subagent" -> do
+      arguments <- argumentsObject call
+      name <- stringFrom "name" arguments
+      prompt <- stringFrom "prompt" arguments
+      pure (RequestSubagent name prompt)
     name -> Left ("unknown tool: " ++ name)
 
--- | Resolve the policy and the request into an action. Unknown tools,
--- malformed arguments, empty commands, and a denied policy all become a
--- refusal message that is fed back to the model instead of reaching the shell.
--- In ask mode, only commands need approval; reading job state does not.
-planTool :: ModelShell -> ToolCall -> ToolPlan
+-- | Resolve every configured tool and the request into an action. Unknown
+-- tools, malformed arguments, empty values, and a denied policy all become a
+-- refusal message that is fed back to the model instead of reaching the tool.
+-- In ask mode, only the action itself needs approval; checking job state and
+-- running a configured subagent do not.
+planToolWith :: ToolConfig -> ToolCall -> ToolPlan
+planToolWith config call =
+  case toolCallName call of
+    "shell" -> shellPlan (toolShell config) Foreground
+    "shell_background" -> shellPlan (toolShell config) Background
+    "jobs" -> shellInspectionPlan (toolShell config)
+    "job_output" -> shellInspectionPlan (toolShell config)
+    "job_kill" -> shellInspectionPlan (toolShell config)
+    "webfetch" -> webfetchPlan (toolWebfetch config)
+    "websearch" -> websearchPlan (toolWebsearch config)
+    "subagent" -> subagentPlan (toolSubagent config)
+    name -> PlanRefuse ("tool error: unknown tool: " ++ name)
+  where
+    shellPlan policy mode =
+      case policy of
+        -- Refuse before inspecting the call, so a denied model cannot probe
+        -- which tool names or argument shapes exist.
+        ToolDeny -> PlanRefuse "tool error: the model shell tools are disabled"
+        ToolAllow -> runShell mode
+        ToolAsk -> approveShell mode
+
+    runShell mode =
+      case toolRequest call of
+        Left message -> PlanRefuse ("tool error: " ++ message)
+        Right (RequestShell command)
+          | all isSpace command -> PlanRefuse "tool error: the shell command is empty"
+          | otherwise -> PlanRun mode command
+        Right (RequestShellBackground command)
+          | all isSpace command -> PlanRefuse "tool error: the shell command is empty"
+          | otherwise -> PlanRun mode command
+        Right _ -> PlanRefuse "tool error: the shell command is missing"
+
+    approveShell mode =
+      case toolRequest call of
+        Left message -> PlanRefuse ("tool error: " ++ message)
+        Right (RequestShell command)
+          | all isSpace command -> PlanRefuse "tool error: the shell command is empty"
+          | otherwise -> PlanApprove mode command
+        Right (RequestShellBackground command)
+          | all isSpace command -> PlanRefuse "tool error: the shell command is empty"
+          | otherwise -> PlanApprove mode command
+        Right _ -> PlanRefuse "tool error: the shell command is missing"
+
+    shellInspectionPlan policy =
+      case policy of
+        ToolDeny -> PlanRefuse "tool error: the model shell tools are disabled"
+        _ ->
+          case toolRequest call of
+            Left message -> PlanRefuse ("tool error: " ++ message)
+            Right RequestJobs -> PlanListJobs
+            Right (RequestJobOutput target requestedLines) ->
+              PlanJobOutput target requestedLines
+            Right (RequestJobKill target) -> PlanJobKill target
+            Right _ -> PlanRefuse "tool error: unknown shell inspection tool"
+
+    webfetchPlan policy =
+      case policy of
+        ToolDeny -> PlanRefuse "tool error: the model webfetch tool is disabled"
+        _ ->
+          case toolRequest call of
+            Left message -> PlanRefuse ("tool error: " ++ message)
+            Right (RequestWebfetch url) ->
+              case webUrl url of
+                Left message -> PlanRefuse ("tool error: " ++ message)
+                Right validUrl
+                  | policy == ToolAsk -> PlanApproveWebfetch validUrl
+                  | otherwise -> PlanRunWebfetch validUrl
+            Right _ -> PlanRefuse "tool error: the webfetch request is missing"
+
+    websearchPlan configured =
+      case configured of
+        Nothing -> PlanRefuse "tool error: the model websearch tool is disabled"
+        Just websearch
+          | websearchPolicy websearch == ToolDeny ->
+              PlanRefuse "tool error: the model websearch tool is disabled"
+          | all isSpace (websearchUrl websearch) ->
+              PlanRefuse "tool error: the websearch endpoint is empty"
+          | otherwise ->
+              case toolRequest call of
+                Left message -> PlanRefuse ("tool error: " ++ message)
+                Right (RequestWebsearch query)
+                  | all isSpace query ->
+                      PlanRefuse "tool error: the search query is empty"
+                  | websearchPolicy websearch == ToolAsk ->
+                      PlanApproveWebsearch websearch query
+                  | otherwise -> PlanRunWebsearch websearch query
+                Right _ -> PlanRefuse "tool error: the websearch request is missing"
+
+    subagentPlan agents
+      | null agents = PlanRefuse "tool error: the model subagent tool is disabled"
+      | otherwise =
+          case toolRequest call of
+            Left message -> PlanRefuse ("tool error: " ++ message)
+            Right (RequestSubagent name prompt)
+              | all isSpace prompt ->
+                  PlanRefuse "tool error: the subagent prompt is empty"
+              | otherwise ->
+                  case filter ((== name) . subagentName) agents of
+                    agent : _ -> PlanSubagent agent prompt
+                    [] -> PlanRefuse ("tool error: unknown subagent: " ++ name)
+            Right _ -> PlanRefuse "tool error: the subagent request is missing"
+
+-- | Shell-only planning, kept for callers that have no full tool configuration.
+planTool :: ToolPolicy -> ToolCall -> ToolPlan
 planTool policy call =
   case policy of
-    -- Refuse before inspecting the call, so a denied model cannot probe which
-    -- tool names or argument shapes exist.
-    ModelShellDenied -> PlanRefuse "tool error: the model shell tools are disabled"
-    ModelShellAllowed -> planned (run Foreground) (run Background)
-    ModelShellAsk -> planned (approve Foreground) (approve Background)
+    ToolDeny -> PlanRefuse "tool error: the model shell tools are disabled"
+    ToolAllow -> planned (run Foreground) (run Background)
+    ToolAsk -> planned (approve Foreground) (approve Background)
   where
     planned shellCommand background =
       case toolRequest call of
@@ -219,6 +454,9 @@ planTool policy call =
         RequestJobKill target -> PlanJobKill target
         RequestShell command -> shell command
         RequestShellBackground command -> background command
+        RequestWebfetch _ -> PlanRefuse "tool error: the model webfetch tool is disabled"
+        RequestWebsearch _ -> PlanRefuse "tool error: the model websearch tool is disabled"
+        RequestSubagent _ _ -> PlanRefuse "tool error: the model subagent tool is disabled"
 
     run mode command
       | all isSpace command = PlanRefuse "tool error: the shell command is empty"
@@ -228,12 +466,26 @@ planTool policy call =
       | all isSpace command = PlanRefuse "tool error: the shell command is empty"
       | otherwise = PlanApprove mode command
 
+-- | Reject non-http URLs and whitespace before the HTTP client sees them.
+webUrl :: String -> Either String String
+webUrl url
+  | all isSpace url = Left "the URL is empty"
+  | any isControl url || any isSpace url = Left "the URL contains whitespace or control characters"
+  | "http://" `isPrefixOf` url = Right url
+  | "https://" `isPrefixOf` url = Right url
+  | otherwise = Left "only http and https URLs are supported"
+
+stringArgument :: String -> ToolCall -> Either String String
+stringArgument name call = argumentsObject call >>= stringFrom name
+
+stringFrom :: String -> KeyMap Value -> Either String String
+stringFrom name arguments =
+  case KeyMap.lookup (AesonKey.fromText (Text.pack name)) arguments of
+    Just (String value) -> Right (Text.unpack value)
+    _ -> Left ("missing string argument: " ++ name)
+
 commandArgument :: ToolCall -> Either String String
-commandArgument call = do
-  arguments <- argumentsObject call
-  case KeyMap.lookup "command" arguments of
-    Just (String command) -> Right (Text.unpack command)
-    _ -> Left "missing string argument: command"
+commandArgument = stringArgument "command"
 
 argumentsObject :: ToolCall -> Either String (KeyMap Value)
 argumentsObject call =

@@ -34,9 +34,48 @@
     # apiKeyCommand = "pass show llama/api-key";
     apiKeyCommand = null;
 
-    # Grant the model's shell tool. Term mode is always available. Use "deny"
-    # to hide the tool, "ask" to confirm each call, or "allow" to run
-    # model-requested commands automatically.
-    shell = "ask";
+    # Tool policies for the model. Term mode is always available.
+    #
+    # - `shell` controls the `shell`, `shell_background`, `jobs`, `job_output`,
+    #   and `job_kill` tools.
+    # - `webfetch` controls direct http/https fetches.
+    # - `websearch` is null to disable search, a search URL, or an attribute
+    #   set with `url` and `policy`. `{query}` or `%s` in the URL is replaced
+    #   by the URL-encoded query; without one, `q=` is appended.
+    # - `subagent` maps selector names to subagents. The main model sees each
+    #   name and description in the tool schema. Each subagent runs serially
+    #   with its own upstream model, system prompt, and tools, and returns only
+    #   its final answer.
+    #
+    # Use "deny" to hide a tool, "ask" to confirm each call, or "allow" to run
+    # model-requested calls automatically.
+    tools = {
+      shell = "ask";
+      webfetch = "deny";
+      websearch = null;
+      subagent = { };
+
+      # Example web search and summarization subagent:
+      # websearch = {
+      #   url = "https://search.example/?q=";
+      #   policy = "ask";
+      # };
+      # subagent = {
+      #   summarize = {
+      #     model = "cheap-summary-model";
+      #     description = "Fetch and summarize web pages when current information is needed.";
+      #     systemPrompt = "Fetch pages and summarize them concisely.";
+      #     tools = {
+      #       shell = "deny";
+      #       webfetch = "allow";
+      #       websearch = {
+      #         url = "https://search.example/?q=";
+      #         policy = "allow";
+      #       };
+      #       subagent = { };
+      #     };
+      #   };
+      # };
+    };
   };
 }

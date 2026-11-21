@@ -28,7 +28,9 @@ import qualified ShellSpec
 import System.Environment (getArgs, withArgs)
 import Test.Tasty (testGroup)
 import TestReporter (bufferedMain)
+import qualified ToolConfigSpec
 import qualified ToolSpec
+import qualified WebSpec
 import qualified WireSpec
 
 -- The report is buffered until the last test finished because some suites
@@ -68,7 +70,9 @@ main = do
         , RenderSpec.tests
         , SessionSpec.tests
         , ShellSpec.tests
+        , ToolConfigSpec.tests
         , ToolSpec.tests
+        , WebSpec.tests
         , WireSpec.tests
         , InterruptSpec.tests
         ]

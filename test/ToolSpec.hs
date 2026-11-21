@@ -3,7 +3,9 @@
 module ToolSpec (tests) where
 
 import Data.Aeson (Value (..))
+import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Data.List (isInfixOf)
 import qualified Data.Text as Text
 import Hutian.Conversation
@@ -20,8 +22,14 @@ import Hutian.Jobs
   , maxJobOutputLines
   )
 import Hutian.Jobs.Runtime (withJobRuntime)
-import Hutian.Policy (ModelShell (..))
+import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool
+import Hutian.Tool.Config
+  ( SubagentConfig (..)
+  , ToolConfig (..)
+  , WebsearchConfig (..)
+  , defaultToolConfig
+  )
 import Hutian.Tool.Exec (runToolCalls)
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -32,81 +40,81 @@ tests =
   testGroup
     "tool"
     [ testCase "allowed policies run a valid shell command" $
-        planTool ModelShellAllowed shellCall @?= PlanRun Foreground "ls -la"
+        planTool ToolAllow shellCall @?= PlanRun Foreground "ls -la"
     , testCase "ask policies request approval for a valid command" $
-        planTool ModelShellAsk shellCall @?= PlanApprove Foreground "ls -la"
+        planTool ToolAsk shellCall @?= PlanApprove Foreground "ls -la"
     , testCase "allowed policies start a background command" $
-        planTool ModelShellAllowed backgroundCall
+        planTool ToolAllow backgroundCall
           @?= PlanRun Background "sleep 10"
     , testCase "ask policies request approval for a background command" $
-        planTool ModelShellAsk backgroundCall
+        planTool ToolAsk backgroundCall
           @?= PlanApprove Background "sleep 10"
     , testCase "deny policies refuse every shell tool without reaching the shell" $ do
-        planTool ModelShellDenied shellCall
+        planTool ToolDeny shellCall
           @?= PlanRefuse "tool error: the model shell tools are disabled"
-        planTool ModelShellDenied backgroundCall
+        planTool ToolDeny backgroundCall
           @?= PlanRefuse "tool error: the model shell tools are disabled"
-        planTool ModelShellDenied jobsCall
+        planTool ToolDeny jobsCall
           @?= PlanRefuse "tool error: the model shell tools are disabled"
-        planTool ModelShellDenied (ToolCall "call-1" "other" "not-json")
+        planTool ToolDeny (ToolCall "call-1" "other" "not-json")
           @?= PlanRefuse "tool error: the model shell tools are disabled"
     , testCase "job inspection runs without approval in ask mode" $ do
-        planTool ModelShellAsk jobsCall @?= PlanListJobs
-        planTool ModelShellAsk (jobOutputCall 2 "{\"job_id\":2}")
+        planTool ToolAsk jobsCall @?= PlanListJobs
+        planTool ToolAsk (jobOutputCall 2 "{\"job_id\":2}")
           @?= PlanJobOutput (JobId 2) defaultJobOutputLines
-        planTool ModelShellAsk (jobKillCall 3 "{\"job_id\":3}")
+        planTool ToolAsk (jobKillCall 3 "{\"job_id\":3}")
           @?= PlanJobKill (JobId 3)
     , testCase "job output accepts an explicit line count" $
         planTool
-          ModelShellAllowed
+          ToolAllow
           (jobOutputCall 2 "{\"job_id\":2,\"lines\":20}")
           @?= PlanJobOutput (JobId 2) (lineCount 20)
     , testCase "job ids must be positive integers" $ do
-        planTool ModelShellAllowed (jobOutputCall 0 "{\"job_id\":0}")
+        planTool ToolAllow (jobOutputCall 0 "{\"job_id\":0}")
           @?= PlanRefuse "tool error: job_id must be a positive integer"
-        planTool ModelShellAllowed (jobKillCall 1 "{\"job_id\":-1}")
+        planTool ToolAllow (jobKillCall 1 "{\"job_id\":-1}")
           @?= PlanRefuse "tool error: job_id must be a positive integer"
-        planTool ModelShellAllowed (jobKillCall 1 "{\"job_id\":\"1\"}")
+        planTool ToolAllow (jobKillCall 1 "{\"job_id\":\"1\"}")
           @?= PlanRefuse "tool error: job_id must be a positive integer"
     , testCase "a missing job id is refused" $
-        planTool ModelShellAllowed (jobKillCall 1 "{}")
+        planTool ToolAllow (jobKillCall 1 "{}")
           @?= PlanRefuse "tool error: missing integer argument: job_id"
     , testCase "job output line counts are clamped" $ do
         planTool
-          ModelShellAllowed
+          ToolAllow
           (jobOutputCall 1 "{\"job_id\":1,\"lines\":0}")
           @?= PlanJobOutput (JobId 1) (lineCount 0)
         planTool
-          ModelShellAllowed
+          ToolAllow
           (jobOutputCall 1 ("{\"job_id\":1,\"lines\":" ++ show (maxJobOutputLines + 1) ++ "}"))
           @?= PlanJobOutput (JobId 1) (lineCount maxJobOutputLines)
     , testCase "a non-integer line count is refused" $
         planTool
-          ModelShellAllowed
+          ToolAllow
           (jobOutputCall 1 "{\"job_id\":1,\"lines\":\"10\"}")
           @?= PlanRefuse "tool error: lines must be an integer"
     , testCase "unknown tools are refused" $
         planTool
-          ModelShellAllowed
+          ToolAllow
           (ToolCall "call-1" "other" "{\"command\":\"ls\"}")
           @?= PlanRefuse "tool error: unknown tool: other"
     , testCase "malformed arguments are refused" $
-        planTool ModelShellAllowed (ToolCall "call-1" "shell" "not-json")
+        planTool ToolAllow (ToolCall "call-1" "shell" "not-json")
           @?= PlanRefuse "tool error: tool arguments are not a JSON object"
     , testCase "a missing command argument is refused" $
-        planTool ModelShellAllowed (ToolCall "call-1" "shell" "{}")
+        planTool ToolAllow (ToolCall "call-1" "shell" "{}")
           @?= PlanRefuse "tool error: missing string argument: command"
     , testCase "empty and whitespace-only commands are refused" $ do
-        planTool ModelShellAllowed (ToolCall "call-1" "shell" "{\"command\":\"\"}")
+        planTool ToolAllow (ToolCall "call-1" "shell" "{\"command\":\"\"}")
           @?= PlanRefuse "tool error: the shell command is empty"
-        planTool ModelShellAllowed (ToolCall "call-1" "shell" "{\"command\":\"  \\n\\t\"}")
+        planTool ToolAllow (ToolCall "call-1" "shell" "{\"command\":\"  \\n\\t\"}")
           @?= PlanRefuse "tool error: the shell command is empty"
     , testCase "empty background commands are refused" $
-        planTool ModelShellAllowed (ToolCall "call-1" "shell_background" "{\"command\":\" \"}")
+        planTool ToolAllow (ToolCall "call-1" "shell_background" "{\"command\":\" \"}")
           @?= PlanRefuse "tool error: the shell command is empty"
     , testCase "command text is preserved exactly" $
         planTool
-          ModelShellAllowed
+          ToolAllow
           (ToolCall "call-1" "shell" "{\"command\":\"  printf 'hi'  \"}")
           @?= PlanRun Foreground "  printf 'hi'  "
     , testCase "tool definitions describe every advertised tool" $
@@ -116,6 +124,77 @@ tests =
         assertBool
           "expected the plain numeric limits"
           ("defaults to 50 and is capped at 500" `isInfixOf` show toolDefinitions)
+    , testCase "configured tools are advertised together" $
+        map toolNameOf (toolDefinitionsFor configuredTools)
+          @?= [ "shell"
+              , "shell_background"
+              , "jobs"
+              , "job_output"
+              , "job_kill"
+              , "webfetch"
+              , "websearch"
+              , "subagent"
+              ]
+    , testCase "webfetch plans follow the configured policy" $ do
+        planToolWith
+          (defaultToolConfig {toolWebfetch = ToolAllow})
+          webfetchCall
+          @?= PlanRunWebfetch "https://example.test/page"
+        planToolWith
+          (defaultToolConfig {toolWebfetch = ToolAsk})
+          webfetchCall
+          @?= PlanApproveWebfetch "https://example.test/page"
+        planToolWith defaultToolConfig webfetchCall
+          @?= PlanRefuse "tool error: the model webfetch tool is disabled"
+    , testCase "webfetch rejects non-http URLs" $
+        planToolWith
+          (defaultToolConfig {toolWebfetch = ToolAllow})
+          (ToolCall "call-1" "webfetch" "{\"url\":\"file:///etc/passwd\"}")
+          @?= PlanRefuse "tool error: only http and https URLs are supported"
+    , testCase "websearch requires configuration and a query" $ do
+        planToolWith defaultToolConfig websearchCall
+          @?= PlanRefuse "tool error: the model websearch tool is disabled"
+        planToolWith
+          configuredTools
+          websearchCall
+          @?= PlanRunWebsearch configuredWebsearch "hutian tools"
+        planToolWith
+          ( defaultToolConfig
+              { toolWebsearch =
+                  Just (configuredWebsearch {websearchPolicy = ToolAsk})
+              }
+          )
+          websearchCall
+          @?= PlanApproveWebsearch (configuredWebsearch {websearchPolicy = ToolAsk}) "hutian tools"
+        planToolWith
+          configuredTools
+          (ToolCall "call-1" "websearch" "{\"query\":\"  \"}")
+          @?= PlanRefuse "tool error: the search query is empty"
+    , testCase "subagent plans select a configured selector" $ do
+        planToolWith configuredTools subagentCall
+          @?= PlanSubagent cheapAgent "summarize this"
+        planToolWith
+          configuredTools
+          (ToolCall "call-1" "subagent" "{\"name\":\"missing\",\"prompt\":\"hi\"}")
+          @?= PlanRefuse "tool error: unknown subagent: missing"
+        planToolWith
+          configuredTools
+          (ToolCall "call-1" "subagent" "{\"name\":\"cheap\",\"prompt\":\"  \"}")
+          @?= PlanRefuse "tool error: the subagent prompt is empty"
+        planToolWith defaultToolConfig subagentCall
+          @?= PlanRefuse "tool error: the model subagent tool is disabled"
+    , testCase "the subagent tool advertises its selectors and descriptions" $ do
+        let definitions =
+              LBS8.unpack (Aeson.encode (toolDefinitionsFor configuredTools))
+        assertBool
+          "the selector enum"
+          ("\"enum\":[\"cheap\"]" `isInfixOf` definitions)
+        assertBool
+          "the configured description"
+          ("cheap: Summarize pages when current information is needed." `isInfixOf` definitions)
+        assertBool
+          "the prompt guidance"
+          ("cannot see this conversation" `isInfixOf` definitions)
     , testCase "aborting tool calls records a result for every call" $
         abortToolCalls
           emptyConversation
@@ -131,7 +210,7 @@ tests =
                 runToolCalls
                   jobs
                   directory
-                  ModelShellAllowed
+                  ToolAllow
                   emptyConversation
                   [ToolCall "call-1" "shell" "{\"command\":\"printf out; printf err >&2\"}"]
               output <- readOutput
@@ -142,6 +221,41 @@ tests =
 
 shellCall :: ToolCall
 shellCall = ToolCall "call-1" "shell" "{\"command\":\"ls -la\"}"
+
+webfetchCall :: ToolCall
+webfetchCall = ToolCall "call-1" "webfetch" "{\"url\":\"https://example.test/page\"}"
+
+websearchCall :: ToolCall
+websearchCall = ToolCall "call-1" "websearch" "{\"query\":\"hutian tools\"}"
+
+subagentCall :: ToolCall
+subagentCall = ToolCall "call-1" "subagent" "{\"name\":\"cheap\",\"prompt\":\"summarize this\"}"
+
+cheapAgent :: SubagentConfig
+cheapAgent =
+  SubagentConfig
+    { subagentName = "cheap"
+    , subagentModel = "cheap-upstream"
+    , subagentDescription = "Summarize pages when current information is needed."
+    , subagentSystemPrompt = "Summarize pages."
+    , subagentTools = defaultToolConfig
+    }
+
+configuredWebsearch :: WebsearchConfig
+configuredWebsearch =
+  WebsearchConfig
+    { websearchUrl = "https://search.test/?q="
+    , websearchPolicy = ToolAllow
+    }
+
+configuredTools :: ToolConfig
+configuredTools =
+  defaultToolConfig
+    { toolShell = ToolAllow
+    , toolWebfetch = ToolAllow
+    , toolWebsearch = Just configuredWebsearch
+    , toolSubagent = [cheapAgent]
+    }
 
 backgroundCall :: ToolCall
 backgroundCall = ToolCall "call-1" "shell_background" "{\"command\":\"sleep 10\"}"

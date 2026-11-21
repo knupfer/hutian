@@ -89,7 +89,9 @@ library
       Hutian.Shell
       Hutian.Terminal
       Hutian.Tool
+      Hutian.Tool.Config
       Hutian.Tool.Exec
+      Hutian.Web
   build-depends:
       network
     , terminal-size
@@ -144,7 +146,9 @@ test-suite hutian-shell-test
       ShellSpec
       TestReporter
       TestSupport
+      ToolConfigSpec
       ToolSpec
+      WebSpec
       WireSpec
   hs-source-dirs:   test
   build-depends:

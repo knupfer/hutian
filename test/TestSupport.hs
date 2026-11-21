@@ -18,6 +18,7 @@ import Control.Exception (IOException, finally, try)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Hutian.Llm (LlmOutput (..))
+import Hutian.Render (TurnContext (..))
 import System.Directory
   ( createDirectory
   , getTemporaryDirectory
@@ -81,6 +82,7 @@ stdoutLlmOutput =
   LlmOutput
     { llmOutputWrite = putStr
     , llmOutputErrorLine = hPutStrLn stderr
+    , llmOutputContext = MainContext
     }
 
 -- | Captures install a process-wide redirection, so two of them must never be

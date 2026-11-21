@@ -5,12 +5,20 @@
 module Hutian.Render
   ( PromptKind (..)
   , OutputKind (..)
+  , TurnContext (..)
   , promptRenderText
   , toolPromptText
+  , toolPromptTextIn
+  , subagentPromptText
   , toolLabelText
+  , toolLabelTextIn
   , prefixFor
+  , reasoningLabelText
+  , answerLabelText
   , outputForeground
+  , outputForegroundIn
   , outputLabelText
+  , outputLabelTextIn
   , grayOutputText
   , trailingNewline
   , ToolApproval (..)
@@ -22,10 +30,14 @@ module Hutian.Render
   , grayForeground
   , boldVibrantPink
   , boldTeal
+  , boldBlue
   , dimPinkForeground
   , dimTealForeground
+  , dimBlueForeground
   , CursorStyle (..)
   , cursorStyleText
+  , pushCursorStyle
+  , popCursorStyle
   , hideCursorText
   , showCursorText
   , resetCursorText
@@ -62,7 +74,16 @@ import System.Console.ANSI
 data PromptKind
   = LlmPrompt
   | ShellPrompt
-  | ToolPrompt String
+  | ToolPrompt TurnContext String
+  | SubagentPrompt String
+  deriving stock (Eq, Show)
+
+-- | Which agent turn is producing output. Everything a subagent prints uses
+-- the subagent blue instead of the main teal, so the nested turn reads as one
+-- block from its reasoning label through its tool output.
+data TurnContext
+  = MainContext
+  | SubagentContext
   deriving stock (Eq, Show)
 
 -- | Which label and palette to use for captured output.
@@ -92,6 +113,11 @@ promptRenderText kind previousRow width prompt =
     suggestionCount = suggestionRowCount width prompt
     inputRowCount = total - suggestionCount
     markdownRows = kind == LlmPrompt
+    plainTextRows =
+      case kind of
+        LlmPrompt -> True
+        SubagentPrompt _ -> True
+        _ -> False
     rows
       | markdownRows = renderMarkdownRows (take inputRowCount plainRows) ++ drop inputRowCount plainRows
       | otherwise = plainRows
@@ -107,7 +133,7 @@ promptRenderText kind previousRow width prompt =
             | prefixCount > 0 = prefixForegroundFor kind ++ prefixPart ++ reset
             | otherwise = ""
           restRendered
-            | markdownRows = rest
+            | plainTextRows = rest
             | index < inputRowCount = highlightShellLine rest
             | otherwise = rest
           styleReset
@@ -122,24 +148,69 @@ promptRenderText kind previousRow width prompt =
 -- newline. Tool calls use a bright teal prompt so they stand out from
 -- user-entered commands.
 toolPromptText :: String -> Int -> String -> String
-toolPromptText toolName width command =
-  fst (promptRenderText (ToolPrompt toolName) 0 width (setPromptText command initialPrompt))
+toolPromptText = toolPromptTextIn MainContext
+
+-- | Like 'toolPromptText', but tools run by a subagent use the subagent blue.
+toolPromptTextIn :: TurnContext -> String -> Int -> String -> String
+toolPromptTextIn context toolName width command =
+  fst (promptRenderText (ToolPrompt context toolName) 0 width (setPromptText command initialPrompt))
     ++ reset
     ++ "\n"
 
 -- | A label for a tool call that has no command to show.
 toolLabelText :: String -> String
-toolLabelText toolName = boldTeal ++ "tool " ++ toolName ++ ":" ++ reset
+toolLabelText = toolLabelTextIn MainContext
+
+toolLabelTextIn :: TurnContext -> String -> String
+toolLabelTextIn context toolName =
+  toolPromptForeground context ++ "tool " ++ toolName ++ ":" ++ reset
+
+-- | A blue label announcing which subagent is working, followed by the task
+-- prompt it was given. The task is plain text rather than shell input.
+subagentPromptText :: String -> Int -> String -> String
+subagentPromptText modelName width prompt =
+  fst (promptRenderText (SubagentPrompt modelName) 0 width (setPromptText prompt initialPrompt))
+    ++ reset
+    ++ "\n"
 
 -- | The prefix shown above a prompt. Every prompt label occupies its own line.
 prefixFor :: PromptKind -> String
 prefixFor LlmPrompt = "ask:\n"
 prefixFor ShellPrompt = "shell:\n"
-prefixFor (ToolPrompt toolName) = "tool " ++ toolName ++ ":\n"
+prefixFor (ToolPrompt _ toolName) = "tool " ++ toolName ++ ":\n"
+prefixFor (SubagentPrompt modelName) = "subagent " ++ modelName ++ ":\n"
 
 prefixForegroundFor :: PromptKind -> String
-prefixForegroundFor (ToolPrompt _) = boldTeal
+prefixForegroundFor (ToolPrompt context _) = toolPromptForeground context
+prefixForegroundFor (SubagentPrompt _) = boldBlue
 prefixForegroundFor _ = boldVibrantPink
+
+toolPromptForeground :: TurnContext -> String
+toolPromptForeground MainContext = boldTeal
+toolPromptForeground SubagentContext = boldBlue
+
+toolOutputForeground :: TurnContext -> String
+toolOutputForeground MainContext = dimTealForeground
+toolOutputForeground SubagentContext = dimBlueForeground
+
+-- | The label above streamed reasoning. A subagent's reasoning uses its blue
+-- so the nested turn stays visually distinct from the main model.
+reasoningLabelText :: TurnContext -> String
+reasoningLabelText context =
+  reasoningForeground context ++ "think:" ++ reset
+
+-- | The label above a streamed final answer.
+answerLabelText :: TurnContext -> String
+answerLabelText context =
+  answerForeground context ++ "answer:" ++ reset
+
+reasoningForeground :: TurnContext -> String
+reasoningForeground MainContext = dimTealForeground
+reasoningForeground SubagentContext = dimBlueForeground
+
+answerForeground :: TurnContext -> String
+answerForeground MainContext = boldTeal
+answerForeground SubagentContext = boldBlue
 
 -- | The user's decision about a model-requested command. Only an explicit
 -- @y@ or @n@ decides; @Ctrl+C@ aborts the whole LLM turn.
@@ -194,13 +265,20 @@ startPromptText = clearLine
 -- | Foreground for the label printed before command output. The colour is the
 -- command's mode colour, dimmed like a thinking block.
 outputForeground :: OutputKind -> String
-outputForeground TermOutput = dimPinkForeground
-outputForeground ToolOutput = dimTealForeground
+outputForeground = outputForegroundIn MainContext
+
+-- | Like 'outputForeground', but subagent tool output uses the dimmed blue.
+outputForegroundIn :: TurnContext -> OutputKind -> String
+outputForegroundIn _ TermOutput = dimPinkForeground
+outputForegroundIn context ToolOutput = toolOutputForeground context
 
 -- | The label printed above captured output, coloured when interactive.
 outputLabelText :: OutputKind -> Bool -> String
-outputLabelText kind interactive
-  | interactive = outputForeground kind ++ label ++ reset
+outputLabelText = outputLabelTextIn MainContext
+
+outputLabelTextIn :: TurnContext -> OutputKind -> Bool -> String
+outputLabelTextIn context kind interactive
+  | interactive = outputForegroundIn context kind ++ label ++ reset
   | otherwise = label
   where
     label
@@ -225,15 +303,30 @@ trailingNewline text
 data CursorStyle
   = UserCursor
   | RespondingCursor
+  | SubagentCursor
   deriving stock (Eq, Show)
 
 -- | User input gets a pink steady cursor; a responding model gets a teal
--- steady cursor. The cursor is blinked by toggling 'hideCursorText' and
--- 'showCursorText', because streaming output resets the terminal's own blink
--- timer and would otherwise keep the cursor solid.
+-- steady cursor, and a running subagent gets blue. The cursor is blinked by
+-- toggling 'hideCursorText' and 'showCursorText', because streaming output
+-- resets the terminal's own blink timer and would otherwise keep the cursor
+-- solid.
 cursorStyleText :: CursorStyle -> String
 cursorStyleText UserCursor = pinkCursorColor ++ steadyBlockCursor
 cursorStyleText RespondingCursor = tealCursorColor ++ steadyBlockCursor
+cursorStyleText SubagentCursor = blueCursorColor ++ steadyBlockCursor
+
+-- | Enter a responding scope. The stack is innermost first, so a subagent's
+-- blue sits above the main turn's teal.
+pushCursorStyle :: CursorStyle -> [CursorStyle] -> [CursorStyle]
+pushCursorStyle = (:)
+
+-- | Leave a responding scope and return the style that becomes active again.
+-- Popping the last scope returns the user cursor.
+popCursorStyle :: [CursorStyle] -> (CursorStyle, [CursorStyle])
+popCursorStyle [] = (UserCursor, [])
+popCursorStyle [_] = (UserCursor, [])
+popCursorStyle (_ : parent : rest) = (parent, parent : rest)
 
 -- | Restore the terminal's default cursor colour and shape, and make sure the
 -- cursor is visible.
@@ -242,11 +335,14 @@ resetCursorText = showCursorText ++ resetCursorColor ++ defaultCursorShape
 
 boldVibrantPink,
   boldTeal,
+  boldBlue,
   dimPinkForeground,
   dimTealForeground,
+  dimBlueForeground,
   grayForeground,
   pinkCursorColor,
   tealCursorColor,
+  blueCursorColor,
   resetCursorColor,
   hideCursorText,
   showCursorText,
@@ -256,24 +352,30 @@ boldVibrantPink,
   clearLine,
   reset :: String
 
-pinkColour, tealColour :: Ansi.Colour
+pinkColour, tealColour, blueColour :: Ansi.Colour
 pinkColour = Ansi.rgb 255 20 147
 tealColour = Ansi.rgb 0 255 200
+blueColour = Ansi.rgb 0 153 255
 
-pinkStyle, tealStyle, dimPinkStyle, dimTealStyle, grayStyle :: Ansi.Style
+pinkStyle, tealStyle, blueStyle, dimPinkStyle, dimTealStyle, dimBlueStyle, grayStyle :: Ansi.Style
 pinkStyle = Ansi.bold <> Ansi.foreground pinkColour
 tealStyle = Ansi.bold <> Ansi.foreground tealColour
+blueStyle = Ansi.bold <> Ansi.foreground blueColour
 dimPinkStyle = Ansi.darkenStyle 0.6 pinkStyle
 dimTealStyle = Ansi.darkenStyle 0.6 tealStyle
+dimBlueStyle = Ansi.darkenStyle 0.6 blueStyle
 grayStyle = Ansi.darkenStyle 0.6 $ Ansi.foreground (Ansi.rgb 255 255 255)
 
 boldVibrantPink = Ansi.styleCode pinkStyle
 boldTeal = Ansi.styleCode tealStyle
+boldBlue = Ansi.styleCode blueStyle
 dimPinkForeground = Ansi.styleCode dimPinkStyle
 dimTealForeground = Ansi.styleCode dimTealStyle
+dimBlueForeground = Ansi.styleCode dimBlueStyle
 grayForeground = Ansi.styleCode grayStyle
 pinkCursorColor = cursorColourCode pinkColour
 tealCursorColor = cursorColourCode tealColour
+blueCursorColor = cursorColourCode blueColour
 resetCursorColor = "\ESC]112\a"
 hideCursorText = hideCursorCode
 showCursorText = showCursorCode

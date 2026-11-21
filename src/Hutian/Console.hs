@@ -5,6 +5,7 @@
 module Hutian.Console
   ( configureConsole
   , confirmToolCommand
+  , confirmToolCommandIn
   , consoleFlush
   , consoleInputReady
   , consoleIsErrorInteractive
@@ -15,21 +16,27 @@ module Hutian.Console
   , consoleWriteErrorLine
   , consoleWriteGrayLine
   , consoleWriteLine
+  , consoleWriteSubagentPrompt
   , consoleWriteToolCommand
+  , consoleWriteToolCommandIn
   , consoleWriteToolLabel
+  , consoleWriteToolLabelIn
   , printOutputLabel
+  , printOutputLabelIn
   , resetTerminal
   , startPromptLine
   , withGrayOutput
   , withRawTerminal
   , withRespondingCursor
+  , withSubagentCursor
   , withoutEcho
   ) where
 
-import Control.Concurrent (forkIO, killThread, threadDelay)
-import Control.Concurrent.MVar (MVar, newMVar, withMVar)
-import Control.Exception (IOException, catch, finally)
+import Control.Concurrent (ThreadId, forkIO, killThread, threadDelay)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, withMVar)
+import Control.Exception (IOException, catch, finally, mask)
 import Control.Monad (when)
+import Data.Foldable (for_)
 import Foreign.Marshal.Alloc (allocaBytes)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Hutian.Highlight (sanitize, sanitizeOutput)
@@ -37,6 +44,7 @@ import Hutian.Render
   ( CursorStyle (..)
   , OutputKind
   , ToolApproval (..)
+  , TurnContext (..)
   , approvalDecisionText
   , approvalForKey
   , approvePromptText
@@ -44,13 +52,16 @@ import Hutian.Render
   , grayForeground
   , grayOutputText
   , hideCursorText
-  , outputLabelText
+  , outputLabelTextIn
+  , popCursorStyle
+  , pushCursorStyle
   , reset
   , resetCursorText
   , showCursorText
   , startPromptText
-  , toolLabelText
-  , toolPromptText
+  , subagentPromptText
+  , toolLabelTextIn
+  , toolPromptTextIn
   )
 import System.Console.Terminal.Size (Window (Window), size)
 import System.IO
@@ -142,25 +153,51 @@ consoleWidth = do
 
 -- | Show a command requested by the model with the tool-call prefix.
 consoleWriteToolCommand :: String -> String -> IO ()
-consoleWriteToolCommand toolName command = do
+consoleWriteToolCommand = consoleWriteToolCommandIn MainContext
+
+-- | Like 'consoleWriteToolCommand', but a subagent's tools use the subagent
+-- blue instead of the main tool teal.
+consoleWriteToolCommandIn :: TurnContext -> String -> String -> IO ()
+consoleWriteToolCommandIn context toolName command = do
   interactive <- consoleIsInteractive
   if interactive
     then do
       width <- consoleWidth
-      consoleWrite (toolPromptText (sanitize toolName) width command)
+      consoleWrite (toolPromptTextIn context (sanitize toolName) width command)
     else consoleWriteLine (sanitizeOutput command)
   consoleFlush
 
 -- | Show a tool call that has no command of its own.
 consoleWriteToolLabel :: String -> IO ()
-consoleWriteToolLabel toolName = do
+consoleWriteToolLabel = consoleWriteToolLabelIn MainContext
+
+consoleWriteToolLabelIn :: TurnContext -> String -> IO ()
+consoleWriteToolLabelIn context toolName = do
   interactive <- consoleIsInteractive
   let name = sanitize toolName
   consoleWriteLine $
     if interactive
-      then toolLabelText name
+      then toolLabelTextIn context name
       else "tool " ++ name ++ ":"
   consoleFlush
+
+-- | Announce the subagent and the task prompt it was given. The label is blue
+-- when output goes to a terminal and plain otherwise.
+consoleWriteSubagentPrompt :: String -> String -> IO ()
+consoleWriteSubagentPrompt modelName prompt = do
+  interactive <- consoleIsInteractive
+  let name = sanitize modelName
+      task = sanitize prompt
+  if interactive
+    then do
+      width <- consoleWidth
+      consoleWrite (subagentPromptText name width task)
+    else consoleWrite ("subagent " ++ name ++ ":\n" ++ task ++ taskNewline)
+  consoleFlush
+  where
+    taskNewline
+      | null prompt = ""
+      | otherwise = "\n"
 
 -- | Show one line of command or job output in gray. Streamed and multi-line
 -- output goes through 'withGrayOutput'; a single line is written atomically so
@@ -182,8 +219,11 @@ approvalResult ToolAborted = "Aborted"
 -- while the model was streaming is discarded after switching to raw mode,
 -- because canonical-mode buffering hides it from 'hReady'.
 confirmToolCommand :: String -> String -> IO ToolApproval
-confirmToolCommand toolName command = do
-  consoleWriteToolCommand toolName command
+confirmToolCommand = confirmToolCommandIn MainContext
+
+confirmToolCommandIn :: TurnContext -> String -> String -> IO ToolApproval
+confirmToolCommandIn context toolName command = do
+  consoleWriteToolCommandIn context toolName command
   interactive <- consoleIsInteractive
   inputIsTerminal <- hIsTerminalDevice stdin
   if not interactive || not inputIsTerminal
@@ -233,9 +273,12 @@ drainChunk = 4096
 
 -- | Print the label shown on its own line before shell or tool output.
 printOutputLabel :: OutputKind -> IO ()
-printOutputLabel kind = do
+printOutputLabel = printOutputLabelIn MainContext
+
+printOutputLabelIn :: TurnContext -> OutputKind -> IO ()
+printOutputLabelIn context kind = do
   interactive <- consoleIsInteractive
-  consoleWriteLine (outputLabelText kind interactive)
+  consoleWriteLine (outputLabelTextIn context kind interactive)
   consoleFlush
 
 -- | Print streamed output in gray, restoring the terminal afterwards. When
@@ -270,22 +313,67 @@ sameTerminal = do
     )
 
 -- | Show a blinking teal cursor while the model streams an answer, then return
--- to the pink user cursor. The blink is driven here because every streamed
--- write resets the terminal's own cursor blink timer. Non-terminal output is
--- left alone.
+-- to the pink user cursor. Scopes nest: a subagent switches the cursor to blue
+-- for its turn and restores the parent's colour when it finishes.
 withRespondingCursor :: IO a -> IO a
-withRespondingCursor action = do
+withRespondingCursor = withRespondingCursorIn RespondingCursor
+
+-- | Show the blinking cursor in the subagent blue for the duration of a nested
+-- subagent turn.
+withSubagentCursor :: IO a -> IO a
+withSubagentCursor = withRespondingCursorIn SubagentCursor
+
+withRespondingCursorIn :: CursorStyle -> IO a -> IO a
+withRespondingCursorIn style action = do
   interactive <- consoleIsInteractive
   if not interactive
     then action
-    else do
-      consoleWrite (showCursorText ++ cursorStyleText RespondingCursor)
-      consoleFlush
-      blinkThread <- forkIO blinkCursor
-      action `finally` do
-        killThread blinkThread
-        consoleWrite (showCursorText ++ cursorStyleText UserCursor)
+    else mask $ \restore -> do
+      enterRespondingCursor style
+      restore action `finally` exitRespondingCursor
+
+-- | Cursor state shared by nested responding scopes. The stack records the
+-- colour each scope entered with, so leaving a subagent restores the main
+-- turn's teal rather than assuming the user cursor.
+data CursorState = CursorState
+  { cursorBlinkThread :: Maybe ThreadId
+  , cursorStyleStack :: [CursorStyle]
+  }
+
+{-# NOINLINE respondingCursorState #-}
+respondingCursorState :: MVar CursorState
+respondingCursorState = unsafePerformIO (newMVar (CursorState Nothing []))
+
+enterRespondingCursor :: CursorStyle -> IO ()
+enterRespondingCursor style =
+  modifyMVar_ respondingCursorState $ \state -> do
+    blinkThread <-
+      case cursorBlinkThread state of
+        Just thread -> pure (Just thread)
+        Nothing -> Just <$> forkIO blinkCursor
+    consoleWrite (showCursorText ++ cursorStyleText style)
+    consoleFlush
+    pure
+      state
+        { cursorBlinkThread = blinkThread
+        , cursorStyleStack = pushCursorStyle style (cursorStyleStack state)
+        }
+
+exitRespondingCursor :: IO ()
+exitRespondingCursor =
+  modifyMVar_ respondingCursorState $ \state -> do
+    let (activeStyle, remaining) = popCursorStyle (cursorStyleStack state)
+        state' = state {cursorStyleStack = remaining}
+    case remaining of
+      [] -> do
+        for_ (cursorBlinkThread state') killThread
+        consoleWrite (showCursorText ++ cursorStyleText activeStyle)
         consoleFlush
+        pure state' {cursorBlinkThread = Nothing}
+      _ -> do
+        consoleWrite (showCursorText ++ cursorStyleText activeStyle)
+        consoleFlush
+        pure state'
 
 -- | Toggle the cursor independently of streamed output, starting visible.
 -- Cursor writes share 'cursorVisibilityLock' so a modal prompt can keep the

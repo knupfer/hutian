@@ -8,7 +8,15 @@ import Data.List (isInfixOf)
 import qualified Data.Text as Text
 import Hutian.Llm.Presentation
 import Hutian.Llm.Stream (StreamEvent (..))
-import Hutian.Render (boldTeal, dimTealForeground, grayForeground, reset)
+import Hutian.Render
+  ( TurnContext (..)
+  , boldBlue
+  , boldTeal
+  , dimBlueForeground
+  , dimTealForeground
+  , grayForeground
+  , reset
+  )
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -43,10 +51,28 @@ tests =
         assertBool "partial answer flushed" ("partial" `isInfixOf` finished)
     , testCase "empty content events emit nothing" $ do
         presentAll [contentEvent ""] @?= ""
+    , testCase "a subagent uses blue reasoning and answer labels" $ do
+        let output =
+              presentAllIn
+                SubagentContext
+                [reasoningEvent "thinking\n", contentEvent "hello\n"]
+        assertBool
+          "blue think label"
+          ((dimBlueForeground ++ "think:" ++ reset) `isInfixOf` output)
+        assertBool
+          "blue answer label"
+          ((boldBlue ++ "answer:" ++ reset) `isInfixOf` output)
+        assertBool
+          "no teal labels"
+          (not ((dimTealForeground ++ "think:") `isInfixOf` output))
     ]
 
 presentAll :: [StreamEvent] -> String
-presentAll = snd . foldl presentStep (initialStreamPresenter, "")
+presentAll = presentAllIn MainContext
+
+presentAllIn :: TurnContext -> [StreamEvent] -> String
+presentAllIn context =
+  snd . foldl presentStep (initialStreamPresenterIn context, "")
 
 finishAll :: [StreamEvent] -> String
 finishAll events =

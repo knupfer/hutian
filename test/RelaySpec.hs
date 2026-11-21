@@ -21,7 +21,8 @@ import Hutian.Conversation (ConversationEntry (..))
 import Hutian.Http.Wire (recvAll, recvExactly, recvUntil)
 import Hutian.Interrupt (newInterruptFlag)
 import Hutian.Llm (LlmSettings (..), LlmUrl (..), ModelName (..), SystemPrompt (..), runLlm)
-import Hutian.Policy (ModelShell (..))
+import Hutian.Policy (ToolPolicy (..))
+import Hutian.Tool.Config (ToolConfig (..), defaultToolConfig)
 import Hutian.Relay
   ( RelayAuth (..)
   , RelayAuthPolicy (..)
@@ -376,7 +377,7 @@ endToEndTests =
                     (ModelName "test-model")
                     (SystemPrompt "system prompt")
                     (Just socketPath)
-                    ModelShellAllowed
+                    (defaultToolConfig {toolShell = ToolAllow})
             runtime <-
               newRelayRuntime
                 silentLogger

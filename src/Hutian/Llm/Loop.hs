@@ -3,6 +3,7 @@
 module Hutian.Llm.Loop
   ( LlmLoop (..)
   , runToolLoop
+  , runToolLoopWithResult
   ) where
 
 import Hutian.Conversation
@@ -28,20 +29,26 @@ data LlmLoop = LlmLoop
 -- aborted results instead of running anything, because the call arguments may
 -- be truncated.
 runToolLoop :: LlmLoop -> InterruptFlag -> Conversation -> LlmResult -> IO Conversation
-runToolLoop loop interruptFlag conversation result
-  | null (llmToolCalls result) = pure conversation
+runToolLoop loop interruptFlag conversation result =
+  fst <$> runToolLoopWithResult loop interruptFlag conversation result
+
+-- | 'runToolLoop' plus the result that ended the turn. A caller that needs the
+-- final answer, such as a subagent returning only its conclusion, uses this.
+runToolLoopWithResult :: LlmLoop -> InterruptFlag -> Conversation -> LlmResult -> IO (Conversation, LlmResult)
+runToolLoopWithResult loop interruptFlag conversation result
+  | null (llmToolCalls result) = pure (conversation, result)
   | otherwise = do
       interrupted <- isInterrupted interruptFlag
       if interrupted
-        then pure (abortToolCalls conversation (llmToolCalls result))
+        then pure (abortToolCalls conversation (llmToolCalls result), result)
         else do
           (aborted, conversation') <-
             loopRunTools loop conversation (llmToolCalls result)
           if aborted
-            then pure conversation'
+            then pure (conversation', result)
             else do
               next <- loopContinue loop conversation'
-              runToolLoop
+              runToolLoopWithResult
                 loop
                 interruptFlag
                 (appendResult Nothing (llmResponseText next) (llmToolCalls next) conversation')

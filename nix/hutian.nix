@@ -10,7 +10,7 @@
   writable,
   nixDaemon,
   network,
-  modelShell,
+  tools,
   apiKeyCommand ? null,
 }:
 
@@ -43,6 +43,11 @@ let
     in
     if path == null then "" else path;
   relayLogicalUrl = "http://hutian-relay" + relayUrlPath;
+
+  # One JSON document carries every tool policy and the nested subagent
+  # configuration. The shell reads it once and removes it before running a
+  # command, so it never appears in the process listing.
+  toolsJson = builtins.toJSON tools;
 
   # The relay is always present. Without a configured key it forwards without
   # an Authorization header and never reads standard input.
@@ -263,7 +268,7 @@ let
       # The sandbox helper mounts the relay directory read-only. The socket is
       # still connectable, but a shell command cannot unlink or replace it.
       relay_runsc_args=(--host-uds=open)
-      llm_args=(--llama-socket /run/hutian/llm.sock --model-shell ${escapeShellArg modelShell})
+      llm_args=(--llama-socket /run/hutian/llm.sock --model-shell ${escapeShellArg tools.shell} --tools-file /run/hutian-config/tools)
 
       ${optionalString nixDaemon ''
         # The launcher exposes the host store in the rootfs. Mount the Nix
@@ -294,7 +299,8 @@ let
         config_dir=$(private_dir hutian-config)
         printf '%s' ${escapeShellArg modelName} > "$config_dir/model"
         printf '%s' ${escapeShellArg systemPrompt} > "$config_dir/system-prompt"
-        chmod 600 "$config_dir/model" "$config_dir/system-prompt"
+        printf '%s' ${escapeShellArg toolsJson} > "$config_dir/tools"
+        chmod 600 "$config_dir/model" "$config_dir/system-prompt" "$config_dir/tools"
         config_volumes=(-volume "$config_dir:/run/hutian-config")
 
         set -- ${hutianShell}/bin/hutian-shell \

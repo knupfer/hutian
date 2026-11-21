@@ -1,11 +1,13 @@
 -- | Terminal-side execution of model tool calls. Planning is pure and lives in
 -- "Hutian.Tool"; this module only carries out the resulting plan.
 module Hutian.Tool.Exec
-  ( runToolCalls
+  ( ToolRuntime (..)
+  , runToolCalls
+  , runToolCallsWith
   ) where
 
 import Hutian.Console
-  ( confirmToolCommand
+  ( confirmToolCommandIn
   , consoleFlush
   , consoleIsErrorInteractive
   , consoleIsInteractive
@@ -14,10 +16,12 @@ import Hutian.Console
   , consoleWriteErrorLine
   , consoleWriteGrayLine
   , consoleWriteLine
-  , consoleWriteToolCommand
-  , consoleWriteToolLabel
-  , printOutputLabel
+  , consoleWriteSubagentPrompt
+  , consoleWriteToolCommandIn
+  , consoleWriteToolLabelIn
+  , printOutputLabelIn
   , withGrayOutput
+  , withSubagentCursor
   )
 import Hutian.Conversation
   ( Conversation
@@ -41,8 +45,14 @@ import Hutian.Jobs.Runtime
   , readJobOutput
   , startJob
   )
-import Hutian.Policy (ModelShell)
-import Hutian.Render (OutputKind (..), ToolApproval (..), grayOutputText, trailingNewline)
+import Hutian.Policy (ToolPolicy)
+import Hutian.Render
+  ( OutputKind (..)
+  , ToolApproval (..)
+  , TurnContext (..)
+  , grayOutputText
+  , trailingNewline
+  )
 import Hutian.Shell
   ( CommandResult (..)
   , commandResultText
@@ -52,29 +62,75 @@ import Hutian.Tool
   ( CommandMode (..)
   , ToolPlan (..)
   , planTool
+  , planToolWith
   )
+import Hutian.Tool.Config
+  ( SubagentConfig (..)
+  , ToolConfig (..)
+  , WebsearchConfig (..)
+  )
+import Hutian.Web (fetchResultText, fetchUrl, websearchRequestUrl)
 
--- | Run each requested call in order. Once a call aborts the turn, the
--- remaining calls get an error result instead of running.
-runToolCalls :: JobRuntime -> FilePath -> ModelShell -> Conversation -> [ToolCall] -> IO (Bool, Conversation)
-runToolCalls jobs workingDirectory policy = go False
+-- | The effects a tool run can reach. 'toolRuntimeContext' selects the main or
+-- subagent palette. 'toolRuntimeSubagent' is a callback so the executor stays
+-- independent of the model loop that runs a subagent.
+data ToolRuntime = ToolRuntime
+  { toolRuntimeJobs :: JobRuntime
+  , toolRuntimeWorkingDirectory :: FilePath
+  , toolRuntimeContext :: TurnContext
+  , toolRuntimeSubagent :: SubagentConfig -> String -> IO (Either String String)
+  }
+
+-- | Run each requested call in order with a shell-only policy. This preserves
+-- the shell tool entry point used by tests and direct callers.
+runToolCalls :: JobRuntime -> FilePath -> ToolPolicy -> Conversation -> [ToolCall] -> IO (Bool, Conversation)
+runToolCalls jobs workingDirectory policy =
+  runToolCallsPlanned
+    (planTool policy)
+    ToolRuntime
+      { toolRuntimeJobs = jobs
+      , toolRuntimeWorkingDirectory = workingDirectory
+      , toolRuntimeContext = MainContext
+      , toolRuntimeSubagent = \_ _ ->
+          pure (Left "tool error: the model subagent tool is disabled")
+      }
+
+-- | Run each requested call in order using the full tool configuration. Once a
+-- call aborts the turn, the remaining calls get an error result instead of
+-- running.
+runToolCallsWith :: ToolRuntime -> ToolConfig -> Conversation -> [ToolCall] -> IO (Bool, Conversation)
+runToolCallsWith runtime config =
+  runToolCallsPlanned (planToolWith config) runtime
+
+runToolCallsPlanned
+  :: (ToolCall -> ToolPlan)
+  -> ToolRuntime
+  -> Conversation
+  -> [ToolCall]
+  -> IO (Bool, Conversation)
+runToolCallsPlanned planner runtime = go False
   where
     go aborted conversation [] = pure (aborted, conversation)
     go True conversation (call : rest) =
       go True (appendToolResult (toolCallId call) abortedToolMessage conversation) rest
     go False conversation (call : rest) = do
-      (callAborted, conversation') <- runToolCall jobs workingDirectory policy conversation call
+      (callAborted, conversation') <- runToolCall planner runtime conversation call
       go callAborted conversation' rest
 
-runToolCall :: JobRuntime -> FilePath -> ModelShell -> Conversation -> ToolCall -> IO (Bool, Conversation)
-runToolCall jobs workingDirectory policy conversation call =
-  case planTool policy call of
+runToolCall
+  :: (ToolCall -> ToolPlan)
+  -> ToolRuntime
+  -> Conversation
+  -> ToolCall
+  -> IO (Bool, Conversation)
+runToolCall planner runtime conversation call =
+  case planner call of
     PlanRefuse message -> refuse message
     PlanRun mode command -> do
-      consoleWriteToolCommand (toolCallName call) command
+      consoleWriteToolCommandIn context (toolCallName call) command
       runPlanned mode command
     PlanApprove mode command -> do
-      approval <- confirmToolCommand (toolCallName call) command
+      approval <- confirmToolCommandIn context (toolCallName call) command
       case approval of
         ToolApproved -> runPlanned mode command
         ToolDenied -> refuse "tool error: the user did not approve the shell command"
@@ -83,29 +139,55 @@ runToolCall jobs workingDirectory policy conversation call =
     PlanListJobs -> runJobsTool
     PlanJobOutput target requestedLines -> runJobOutputTool target requestedLines
     PlanJobKill target -> runJobKillTool target
+    PlanRunWebfetch url -> do
+      consoleWriteToolCommandIn context "webfetch" url
+      runWebfetchTool url
+    PlanApproveWebfetch url -> do
+      approval <- confirmToolCommandIn context "webfetch" url
+      case approval of
+        ToolApproved -> runWebfetchTool url
+        ToolDenied -> refuse "tool error: the user did not approve the webfetch"
+        ToolAborted -> aborted
+    PlanRunWebsearch configured query -> do
+      consoleWriteToolCommandIn context "websearch" query
+      runWebsearchTool configured query
+    PlanApproveWebsearch configured query -> do
+      approval <- confirmToolCommandIn context "websearch" query
+      case approval of
+        ToolApproved -> runWebsearchTool configured query
+        ToolDenied -> refuse "tool error: the user did not approve the websearch"
+        ToolAborted -> aborted
+    PlanSubagent agent prompt -> runSubagentTool agent prompt
   where
+    jobs = toolRuntimeJobs runtime
+    workingDirectory = toolRuntimeWorkingDirectory runtime
+    context = toolRuntimeContext runtime
+
     refuse message =
       pure (False, appendToolResult (toolCallId call) message conversation)
+
+    aborted =
+      pure (True, appendToolResult (toolCallId call) abortedToolMessage conversation)
 
     runPlanned mode command =
       case mode of
         Foreground -> do
-          conversation' <- executeShellTool workingDirectory conversation call command
+          conversation' <- executeShellTool context workingDirectory conversation call command
           pure (False, conversation')
         Background -> do
-          conversation' <- executeBackgroundTool jobs conversation call command
+          conversation' <- executeBackgroundTool context jobs conversation call command
           pure (False, conversation')
 
     runJobsTool = do
-      consoleWriteToolLabel "jobs"
-      printOutputLabel ToolOutput
+      consoleWriteToolLabelIn context "jobs"
+      printOutputLabelIn context ToolOutput
       current <- listJobs jobs
       printJobRows current
       pure (False, appendToolResult (toolCallId call) (jobListResult current) conversation)
 
     runJobOutputTool target requestedLines = do
-      consoleWriteToolLabel "job_output"
-      printOutputLabel ToolOutput
+      consoleWriteToolLabelIn context "job_output"
+      printOutputLabelIn context ToolOutput
       result <- readJobOutput jobs target requestedLines
       case result of
         Left message -> do
@@ -119,8 +201,8 @@ runToolCall jobs workingDirectory policy conversation call =
             )
 
     runJobKillTool target = do
-      consoleWriteToolLabel "job_kill"
-      printOutputLabel ToolOutput
+      consoleWriteToolLabelIn context "job_kill"
+      printOutputLabelIn context ToolOutput
       result <- killJob jobs target
       case result of
         Left message -> do
@@ -131,11 +213,37 @@ runToolCall jobs workingDirectory policy conversation call =
           consoleWriteGrayLine message
           pure (False, appendToolResult (toolCallId call) message conversation)
 
+    runWebfetchTool url = do
+      printOutputLabelIn context ToolOutput
+      result <- fetchUrl url
+      case result of
+        Left message -> do
+          consoleWriteErrorLine message
+          pure (False, appendToolResult (toolCallId call) message conversation)
+        Right fetched -> do
+          let text = fetchResultText fetched
+          displayWebText text
+          pure (False, appendToolResult (toolCallId call) text conversation)
+
+    runWebsearchTool configured query = do
+      let url = websearchRequestUrl (websearchUrl configured) query
+      runWebfetchTool url
+
+    runSubagentTool agent prompt = do
+      consoleWriteSubagentPrompt (subagentName agent) prompt
+      result <- withSubagentCursor (toolRuntimeSubagent runtime agent prompt)
+      case result of
+        Left message -> do
+          consoleWriteErrorLine message
+          pure (False, appendToolResult (toolCallId call) message conversation)
+        Right answer ->
+          pure (False, appendToolResult (toolCallId call) answer conversation)
+
 -- | Run a command the model is already allowed to execute. The caller is
 -- responsible for showing the command first.
-executeShellTool :: FilePath -> Conversation -> ToolCall -> String -> IO Conversation
-executeShellTool workingDirectory conversation call command = do
-  printOutputLabel ToolOutput
+executeShellTool :: TurnContext -> FilePath -> Conversation -> ToolCall -> String -> IO Conversation
+executeShellTool context workingDirectory conversation call command = do
+  printOutputLabelIn context ToolOutput
   result <- runShellCommandOutput workingDirectory command
   case result of
     Left message -> do
@@ -147,9 +255,9 @@ executeShellTool workingDirectory conversation call command = do
 
 -- | Start a command as a job and return its id to the model. The job's output
 -- goes to its log, so the turn is not held open by a long-running process.
-executeBackgroundTool :: JobRuntime -> Conversation -> ToolCall -> String -> IO Conversation
-executeBackgroundTool jobs conversation call command = do
-  printOutputLabel ToolOutput
+executeBackgroundTool :: TurnContext -> JobRuntime -> Conversation -> ToolCall -> String -> IO Conversation
+executeBackgroundTool context jobs conversation call command = do
+  printOutputLabelIn context ToolOutput
   result <- startJob jobs command
   case result of
     Left message -> do
@@ -170,6 +278,12 @@ displayCommandResult result = do
   consoleWrite (grayOutputText stdoutInteractive output)
   consoleWriteError (grayOutputText stderrInteractive errors)
   consoleFlush
+
+-- | Print a fetched page or search result in the same muted style as other
+-- tool output.
+displayWebText :: String -> IO ()
+displayWebText text =
+  withGrayOutput (consoleWrite (sanitizeOutput text) >> consoleFlush)
 
 -- | Print the job table in gray.
 printJobRows :: [Job] -> IO ()

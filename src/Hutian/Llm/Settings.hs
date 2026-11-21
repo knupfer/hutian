@@ -11,9 +11,12 @@ module Hutian.Llm.Settings
   , urlPath
   ) where
 
+import qualified Data.Aeson as Aeson
 import Data.Char (isControl, isSpace)
 import Data.List (isPrefixOf, nub)
 import Data.Maybe (catMaybes)
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as TextEncoding
 import Hutian.Cli
   ( OptionKind (..)
   , hasOption
@@ -21,7 +24,13 @@ import Hutian.Cli
   , optionValueFor
   , parseOptions
   )
-import Hutian.Policy (ModelShell (..), modelShellFromArgument)
+import Hutian.Policy (ToolPolicy (..), toolPolicyFromArgument)
+import Hutian.Tool.Config
+  ( SubagentConfigs (..)
+  , ToolConfig (..)
+  , WebsearchConfig (..)
+  , defaultToolConfig
+  )
 
 -- | Connection settings supplied by the launcher.
 data LlmSettings = LlmSettings
@@ -29,8 +38,9 @@ data LlmSettings = LlmSettings
   , settingModel :: ModelName
   , settingSystemPrompt :: SystemPrompt
   , settingSocket :: Maybe FilePath
-  -- | How the model's shell tool is handled. Term mode is unaffected.
-  , settingModelShell :: ModelShell
+  -- | The model's tool policies and any nested subagent configuration. Term
+  -- mode is unaffected.
+  , settingTools :: ToolConfig
   }
   deriving stock (Eq, Show)
 
@@ -68,13 +78,13 @@ parseLlmSettingsWithFiles loaded arguments = do
       url <- required "--llama-url" options
       model <- valueOrFile "--model" "--model-file" loaded options
       systemPrompt <- valueOrFile "--system-prompt" "--system-prompt-file" loaded options
-      policy <- policyOption options
+      tools <- toolsOption loaded options
       settingsFrom
         (LlmUrl url)
         (ModelName model)
         (SystemPrompt systemPrompt)
         (optionValueFor "--llama-socket" options)
-        policy
+        tools
     _ -> Left (missingMessage missing)
   where
     required name options =
@@ -94,24 +104,78 @@ parseLlmSettingsWithFiles loaded arguments = do
         (Nothing, Nothing) ->
           Left ("missing required argument: " ++ inline ++ " or " ++ file ++ "\n" ++ llmUsage)
 
-    policyOption options =
-      case optionValueFor "--model-shell" options of
-        Nothing -> Right ModelShellDenied
+    toolsOption fileContents options =
+      case optionValueFor "--tools-file" options of
+        Just path ->
+          case lookup path fileContents of
+            Just contents -> decodeFile "--tools-file" path contents
+            Nothing -> Left ("missing contents for --tools-file: " ++ path ++ "\n" ++ llmUsage)
+        Nothing -> do
+          shell <- policyOption "--model-shell" ToolDeny options
+          webfetch <- policyOption "--model-webfetch" ToolDeny options
+          websearch <- websearchOption options
+          subagent <- subagentsOption fileContents options
+          pure
+            defaultToolConfig
+              { toolShell = shell
+              , toolWebfetch = webfetch
+              , toolWebsearch = websearch
+              , toolSubagent = subagent
+              }
+
+    policyOption flag fallback options =
+      case optionValueFor flag options of
+        Nothing -> Right fallback
         Just value ->
-          case modelShellFromArgument value of
+          case toolPolicyFromArgument value of
             Just policy -> Right policy
             Nothing ->
               Left
-                ( "invalid value for --model-shell: "
+                ( "invalid value for "
+                    ++ flag
+                    ++ ": "
                     ++ value
                     ++ " (expected deny, ask, or allow)\n"
                     ++ llmUsage
                 )
 
+    websearchOption options =
+      case optionValueFor "--websearch-url" options of
+        Nothing -> Right Nothing
+        Just url -> do
+          policy <- policyOption "--model-websearch" ToolAsk options
+          pure (Just (WebsearchConfig url policy))
+
+    subagentsOption fileContents options =
+      case optionValueFor "--subagent-file" options of
+        Nothing -> Right []
+        Just path ->
+          case lookup path fileContents of
+            Just contents ->
+              unSubagentConfigs <$> decodeFile "--subagent-file" path contents
+            Nothing -> Left ("missing contents for --subagent-file: " ++ path ++ "\n" ++ llmUsage)
+
     withUsage result =
       case result of
         Left message -> Left (message ++ "\n" ++ llmUsage)
         Right options -> Right options
+
+decodeFile :: Aeson.FromJSON value => String -> FilePath -> String -> Either String value
+decodeFile flag path contents =
+  case Aeson.eitherDecodeStrict' (TextEncoding.encodeUtf8 (Text.pack contents)) of
+    Right value -> Right value
+    Left message -> Left (invalidFile flag path message)
+
+invalidFile :: String -> FilePath -> String -> String
+invalidFile flag path message =
+  "invalid "
+    ++ flag
+    ++ " file "
+    ++ path
+    ++ ": "
+    ++ message
+    ++ "\n"
+    ++ llmUsage
 
 -- | File paths the caller must read before 'parseLlmSettingsWithFiles'. The
 -- paths are deduplicated so a caller can point both options at one file.
@@ -124,6 +188,8 @@ llmFilePaths arguments =
         catMaybes
           [ optionValueFor "--model-file" options
           , optionValueFor "--system-prompt-file" options
+          , optionValueFor "--tools-file" options
+          , optionValueFor "--subagent-file" options
           ]
 
 llmOptionSpec :: [(String, OptionKind)]
@@ -135,20 +201,33 @@ llmOptionSpec =
   , ("--system-prompt-file", OptionValue)
   , ("--llama-socket", OptionValue)
   , ("--model-shell", OptionValue)
+  , ("--model-webfetch", OptionValue)
+  , ("--websearch-url", OptionValue)
+  , ("--model-websearch", OptionValue)
+  , ("--tools-file", OptionValue)
+  , ("--subagent-file", OptionValue)
   ]
 
--- | Reject malformed URLs, empty model names, and empty socket paths; an empty
--- system prompt is allowed.
-settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Maybe FilePath -> ModelShell -> Either String LlmSettings
-settingsFrom url model systemPrompt socket policy = do
+-- | Reject malformed URLs, empty model names, empty socket paths, and an empty
+-- search endpoint; an empty system prompt is allowed.
+settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Maybe FilePath -> ToolConfig -> Either String LlmSettings
+settingsFrom url model systemPrompt socket tools = do
   validateLlmUrl url
   validateNonEmpty "--model" (unModelName model)
   maybe (Right ()) (validateNonEmpty "--llama-socket") socket
-  pure (LlmSettings url model systemPrompt socket policy)
+  validateWebsearch tools
+  pure (LlmSettings url model systemPrompt socket tools)
   where
     validateNonEmpty name value
       | null value = Left ("empty value for " ++ name ++ "\n" ++ llmUsage)
       | otherwise = Right ()
+
+    validateWebsearch config =
+      case toolWebsearch config of
+        Just websearch
+          | null (websearchUrl websearch) ->
+              Left ("empty value for the websearch URL\n" ++ llmUsage)
+        _ -> Right ()
 
 -- | A URL must use http or https, name a host, and, if it has a path, start
 -- that path with a slash. Validation happens before any request is attempted.
@@ -198,4 +277,4 @@ missingMessage missing =
 
 llmUsage :: String
 llmUsage =
-  "usage: hutian-shell --llama-url URL (--model MODEL | --model-file PATH) (--system-prompt PROMPT | --system-prompt-file PATH) [--llama-socket PATH] [--model-shell deny|ask|allow]"
+  "usage: hutian-shell --llama-url URL (--model MODEL | --model-file PATH) (--system-prompt PROMPT | --system-prompt-file PATH) [--llama-socket PATH] [--tools-file PATH] [--model-shell deny|ask|allow] [--model-webfetch deny|ask|allow] [--websearch-url URL] [--model-websearch deny|ask|allow] [--subagent-file PATH]"

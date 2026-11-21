@@ -5,6 +5,38 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `model.tools` now configures every model tool. It has `shell`, `webfetch`,
+  `websearch`, and `subagent` keys, each validated recursively for subagents.
+- A `webfetch` tool with `deny`, `ask`, and `allow` policies. It runs in the
+  sandbox, returns a bounded response body, and reports non-success statuses.
+- A configurable `websearch` tool. Set the key to `null` to disable it, or give
+  a URL with an optional policy. `{query}` and `%s` are replaced by the encoded
+  query; otherwise the query is appended with `q=`.
+- A serial `subagent` tool. `model.tools.subagent` maps selector names to
+  subagents. Each selector has an upstream `model`, a `description`, a
+  `systemPrompt`, and its own tools; the selector list and descriptions appear
+  in the tool schema so the main model can decide when to delegate. A subagent
+  shares the main API and tool loop and returns only its final answer. Its work
+  starts under a blue `subagent <name>:` line, followed by the submitted task.
+  Reasoning, answer, tool prompts, and output labels inside a subagent use the
+  subagent blue, and the cursor blinks blue while it runs.
+- `--tools-file` carries the complete tool JSON to the shell, alongside
+  `--model-webfetch`, `--websearch-url`, `--model-websearch`, and
+  `--subagent-file` for direct use.
+
+### Changed
+
+- Replaced the mandatory top-level `model.shell` option with `model.tools.shell`.
+  Tool configuration is written to `/run/hutian-config/tools` and removed by the
+  shell before it accepts input.
+- `Hutian.Policy` now exposes one shared `ToolPolicy` (`ToolDeny`, `ToolAsk`,
+  `ToolAllow`) with JSON instances, and `Hutian.Tool.Config` owns the JSON shape
+  and safe defaults for the whole tool tree.
+- `Hutian.Llm.Loop` can return the final model result for subagents while the
+  existing conversation-only loop remains available.
+
 ## [0.8.0.0] - 2026-11-19
 
 ### Fixed
