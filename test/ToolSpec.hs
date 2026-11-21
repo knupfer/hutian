@@ -2,7 +2,7 @@
 
 module ToolSpec (tests) where
 
-import Data.Aeson (Value (..))
+import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy.Char8 as LBS8
@@ -24,8 +24,15 @@ import Hutian.Jobs
 import Hutian.Jobs.Runtime (withJobRuntime)
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool
+import Hutian.Tool.Catalog
+  ( McpServer (..)
+  , McpTool (..)
+  , ToolCatalog (..)
+  , toolCatalog
+  )
 import Hutian.Tool.Config
-  ( SubagentConfig (..)
+  ( McpServerConfig (..)
+  , SubagentConfig (..)
   , ToolConfig (..)
   , WebsearchConfig (..)
   , defaultToolConfig
@@ -137,32 +144,34 @@ tests =
               ]
     , testCase "webfetch plans follow the configured policy" $ do
         planToolWith
-          (defaultToolConfig {toolWebfetch = ToolAllow})
+          (toolCatalog (defaultToolConfig {toolWebfetch = ToolAllow}))
           webfetchCall
           @?= PlanRunWebfetch "https://example.test/page"
         planToolWith
-          (defaultToolConfig {toolWebfetch = ToolAsk})
+          (toolCatalog (defaultToolConfig {toolWebfetch = ToolAsk}))
           webfetchCall
           @?= PlanApproveWebfetch "https://example.test/page"
-        planToolWith defaultToolConfig webfetchCall
+        planToolWith (toolCatalog defaultToolConfig) webfetchCall
           @?= PlanRefuse "tool error: the model webfetch tool is disabled"
     , testCase "webfetch rejects non-http URLs" $
         planToolWith
-          (defaultToolConfig {toolWebfetch = ToolAllow})
+          (toolCatalog (defaultToolConfig {toolWebfetch = ToolAllow}))
           (ToolCall "call-1" "webfetch" "{\"url\":\"file:///etc/passwd\"}")
           @?= PlanRefuse "tool error: only http and https URLs are supported"
     , testCase "websearch requires configuration and a query" $ do
-        planToolWith defaultToolConfig websearchCall
+        planToolWith (toolCatalog defaultToolConfig) websearchCall
           @?= PlanRefuse "tool error: the model websearch tool is disabled"
         planToolWith
           configuredTools
           websearchCall
           @?= PlanRunWebsearch configuredWebsearch "hutian tools"
         planToolWith
-          ( defaultToolConfig
-              { toolWebsearch =
-                  Just (configuredWebsearch {websearchPolicy = ToolAsk})
-              }
+          ( toolCatalog
+              ( defaultToolConfig
+                  { toolWebsearch =
+                      Just (configuredWebsearch {websearchPolicy = ToolAsk})
+                  }
+              )
           )
           websearchCall
           @?= PlanApproveWebsearch (configuredWebsearch {websearchPolicy = ToolAsk}) "hutian tools"
@@ -181,8 +190,39 @@ tests =
           configuredTools
           (ToolCall "call-1" "subagent" "{\"name\":\"cheap\",\"prompt\":\"  \"}")
           @?= PlanRefuse "tool error: the subagent prompt is empty"
-        planToolWith defaultToolConfig subagentCall
+        planToolWith (toolCatalog defaultToolConfig) subagentCall
           @?= PlanRefuse "tool error: the model subagent tool is disabled"
+    , testCase "MCP tools are namespaced and planned with validated arguments" $ do
+        map toolNameOf (toolDefinitionsFor mcpToolsConfig)
+          @?= ["mcp__demo__search"]
+        planToolWith mcpToolsConfig mcpCall
+          @?= PlanRunMcp demoServer demoSearch (object ["query" .= ("haskell" :: String)])
+        planToolWith
+          (mcpToolsWith ToolAsk)
+          mcpCall
+          @?= PlanApproveMcp
+            (demoServer {mcpServerConfig = demoServerConfig {mcpServerPolicy = ToolAsk}})
+            demoSearch
+            (object ["query" .= ("haskell" :: String)])
+        planToolWith
+          (mcpToolsWith ToolDeny)
+          mcpCall
+          @?= PlanRefuse "tool error: the MCP server demo is disabled"
+        planToolWith mcpToolsConfig (ToolCall "call-1" "mcp__demo__search" "not-json")
+          @?= PlanRefuse "tool error: the MCP tool arguments are not valid JSON"
+        planToolWith mcpToolsConfig (ToolCall "call-1" "mcp__demo__search" "[]")
+          @?= PlanRefuse "tool error: the MCP tool arguments must be a JSON object"
+        planToolWith mcpToolsConfig (ToolCall "call-1" "mcp__demo__search" "")
+          @?= PlanRunMcp demoServer demoSearch (object [])
+    , testCase "MCP tool definitions carry the server name" $ do
+        let definitions =
+              LBS8.unpack (Aeson.encode (toolDefinitionsFor mcpToolsConfig))
+        assertBool
+          "namespaced tool"
+          ("\"name\":\"mcp__demo__search\"" `isInfixOf` definitions)
+        assertBool
+          "server description"
+          ("MCP server: demo." `isInfixOf` definitions)
     , testCase "the subagent tool advertises its selectors and descriptions" $ do
         let definitions =
               LBS8.unpack (Aeson.encode (toolDefinitionsFor configuredTools))
@@ -248,14 +288,64 @@ configuredWebsearch =
     , websearchPolicy = ToolAllow
     }
 
-configuredTools :: ToolConfig
-configuredTools =
-  defaultToolConfig
-    { toolShell = ToolAllow
-    , toolWebfetch = ToolAllow
-    , toolWebsearch = Just configuredWebsearch
-    , toolSubagent = [cheapAgent]
+demoServerConfig :: McpServerConfig
+demoServerConfig =
+  McpServerConfig
+    { mcpServerName = "demo"
+    , mcpServerUrl = "https://mcp.example.test/mcp"
+    , mcpServerPolicy = ToolAllow
     }
+
+demoServer :: McpServer
+demoServer =
+  McpServer
+    { mcpServerConfig = demoServerConfig
+    , mcpServerTools = [demoSearch]
+    , mcpServerSession = Nothing
+    }
+
+demoSearch :: McpTool
+demoSearch =
+  McpTool
+    { mcpToolName = "search"
+    , mcpToolDescription = "Search the web."
+    , mcpToolInputSchema =
+        object
+          [ "type" .= ("object" :: String)
+          , "properties"
+              .= object ["query" .= object ["type" .= ("string" :: String)]]
+          ]
+    }
+
+mcpToolsConfig :: ToolCatalog
+mcpToolsConfig =
+  ToolCatalog
+    (defaultToolConfig {toolMcp = [demoServerConfig]})
+    [demoServer]
+
+mcpToolsWith :: ToolPolicy -> ToolCatalog
+mcpToolsWith policy =
+  ToolCatalog
+    (defaultToolConfig {toolMcp = [demoServerConfig {mcpServerPolicy = policy}]})
+    [demoServer {mcpServerConfig = demoServerConfig {mcpServerPolicy = policy}}]
+
+mcpCall :: ToolCall
+mcpCall =
+  ToolCall
+    "call-1"
+    "mcp__demo__search"
+    "{\"query\":\"haskell\"}"
+
+configuredTools :: ToolCatalog
+configuredTools =
+  toolCatalog
+    ( defaultToolConfig
+        { toolShell = ToolAllow
+        , toolWebfetch = ToolAllow
+        , toolWebsearch = Just configuredWebsearch
+        , toolSubagent = [cheapAgent]
+        }
+    )
 
 backgroundCall :: ToolCall
 backgroundCall = ToolCall "call-1" "shell_background" "{\"command\":\"sleep 10\"}"

@@ -23,7 +23,7 @@ import Hutian.Conversation
   )
 import Hutian.Llm.Settings (LlmUrl (..), ModelName (..), SystemPrompt (..), urlPath)
 import Hutian.Tool (toolDefinitionsFor)
-import Hutian.Tool.Config (HasToolConfig, ToolConfig, toolConfigFor)
+import Hutian.Tool.Catalog (HasToolCatalog, ToolCatalog, toolCatalogFor)
 
 data Api
   = ChatApi
@@ -35,10 +35,10 @@ apiFor url
   | "/v1/chat/completions" `isSuffixOf` urlPath url = ChatApi
   | otherwise = CompletionApi
 
-requestBodyFor :: HasToolConfig tools => tools -> Api -> ModelName -> SystemPrompt -> Conversation -> String -> Aeson.Value
+requestBodyFor :: HasToolCatalog tools => tools -> Api -> ModelName -> SystemPrompt -> Conversation -> String -> Aeson.Value
 requestBodyFor tools api model systemPrompt conversation prompt =
   case api of
-    ChatApi -> chatBody (toolConfigFor tools) model (requestMessages (unSystemPrompt systemPrompt) conversation prompt)
+    ChatApi -> chatBody (toolCatalogFor tools) model (requestMessages (unSystemPrompt systemPrompt) conversation prompt)
     CompletionApi ->
       object
         [ "model" .= unModelName model
@@ -47,10 +47,10 @@ requestBodyFor tools api model systemPrompt conversation prompt =
         ]
 
 -- | Build a follow-up request after tool results, without a new user message.
-continuationBodyFor :: HasToolConfig tools => tools -> Api -> ModelName -> SystemPrompt -> Conversation -> Aeson.Value
+continuationBodyFor :: HasToolCatalog tools => tools -> Api -> ModelName -> SystemPrompt -> Conversation -> Aeson.Value
 continuationBodyFor tools api model systemPrompt conversation =
   case api of
-    ChatApi -> chatBody (toolConfigFor tools) model (continuationMessages (unSystemPrompt systemPrompt) conversation)
+    ChatApi -> chatBody (toolCatalogFor tools) model (continuationMessages (unSystemPrompt systemPrompt) conversation)
     CompletionApi ->
       object
         [ "model" .= unModelName model
@@ -58,8 +58,8 @@ continuationBodyFor tools api model systemPrompt conversation =
         , "stream" .= True
         ]
 
-chatBody :: ToolConfig -> ModelName -> [ChatMessage] -> Aeson.Value
-chatBody config model messages =
+chatBody :: ToolCatalog -> ModelName -> [ChatMessage] -> Aeson.Value
+chatBody catalog model messages =
   object $
     [ "model" .= unModelName model
     , "messages" .= map messageValue messages
@@ -67,7 +67,7 @@ chatBody config model messages =
     ]
       ++ toolFields
   where
-    definitions = toolDefinitionsFor config
+    definitions = toolDefinitionsFor catalog
     toolFields
       | null definitions = []
       | otherwise =

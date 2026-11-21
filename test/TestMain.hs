@@ -18,6 +18,8 @@ import qualified LlmSocketSpec
 import qualified LlmSpec
 import qualified LlmStreamSpec
 import qualified MarkdownSpec
+import qualified McpProtocolSpec
+import qualified McpSpec
 import qualified PathsSpec
 import qualified PolicySpec
 import qualified PromptSpec
@@ -63,6 +65,8 @@ main = do
         , LlmStreamSpec.tests
         , LlmPresentationSpec.tests
         , MarkdownSpec.tests
+        , McpProtocolSpec.tests
+        , McpSpec.tests
         , PathsSpec.tests
         , PolicySpec.tests
         , PromptSpec.tests

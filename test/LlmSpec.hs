@@ -14,6 +14,7 @@ import Data.Word (Word8)
 import Hutian.Conversation (ConversationEntry (..), ToolCall (..), emptyConversation)
 import Hutian.Llm
 import Hutian.Policy (ToolPolicy (..))
+import Hutian.Tool.Catalog (ToolCatalog, toolCatalog)
 import Hutian.Tool.Config (SubagentConfig (..), ToolConfig (..), defaultToolConfig)
 import System.Directory (doesFileExist, getTemporaryDirectory)
 import System.IO (hClose, hPutStr, openTempFile)
@@ -22,8 +23,8 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck (testProperty)
 
-shellTools :: ToolPolicy -> ToolConfig
-shellTools policy = defaultToolConfig {toolShell = policy}
+shellTools :: ToolPolicy -> ToolCatalog
+shellTools policy = toolCatalog (defaultToolConfig {toolShell = policy})
 
 tests :: TestTree
 tests =
@@ -154,17 +155,20 @@ unitTests =
                 (ModelName "m")
                 (SystemPrompt "")
                 Nothing
-                ( (shellTools ToolDeny)
-                    { toolSubagent =
-                        [ SubagentConfig
-                            { subagentName = "cheap"
-                            , subagentModel = "cheap-upstream"
-                            , subagentDescription = "Summarize pages."
-                            , subagentSystemPrompt = "Summarize."
-                            , subagentTools = defaultToolConfig {toolWebfetch = ToolAllow}
-                            }
-                        ]
-                    }
+                ( toolCatalog
+                    ( defaultToolConfig
+                        { toolShell = ToolDeny
+                        , toolSubagent =
+                            [ SubagentConfig
+                                { subagentName = "cheap"
+                                , subagentModel = "cheap-upstream"
+                                , subagentDescription = "Summarize pages."
+                                , subagentSystemPrompt = "Summarize."
+                                , subagentTools = defaultToolConfig {toolWebfetch = ToolAllow}
+                                }
+                            ]
+                        }
+                    )
                 )
             )
     , testCase "parseLlmSettings parses each model shell policy" $ do

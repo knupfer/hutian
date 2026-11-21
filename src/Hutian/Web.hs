@@ -23,6 +23,7 @@ import Data.List (isInfixOf, isSuffixOf)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import qualified Data.Text.Encoding.Error as TextEncodingError
+import Hutian.Http.Body (readBodyAtMost)
 import Hutian.Render (trailingNewline)
 import Network.HTTP.Client
   ( Request (..)
@@ -104,19 +105,6 @@ webTimeoutMicros = 30 * 1000 * 1000
 -- useful prefix instead of an arbitrarily large page.
 maxWebBody :: Int
 maxWebBody = 256 * 1024
-
-readBodyAtMost :: Int -> IO BS.ByteString -> IO BS.ByteString
-readBodyAtMost limit reader = go 0 []
-  where
-    go total collected
-      | total >= limit = pure (BS.concat (reverse collected))
-      | otherwise = do
-          chunk <- reader
-          if BS.null chunk
-            then pure (BS.concat (reverse collected))
-            else do
-              let kept = BS.take (limit - total) chunk
-              go (total + BS.length kept) (kept : collected)
 
 decodeBody :: BS.ByteString -> String
 decodeBody =

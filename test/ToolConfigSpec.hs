@@ -6,7 +6,8 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Config
-  ( SubagentConfig (..)
+  ( McpServerConfig (..)
+  , SubagentConfig (..)
   , ToolConfig (..)
   , WebsearchConfig (..)
   , defaultToolConfig
@@ -102,6 +103,32 @@ tests =
         decodeConfig (withAgent "" (agentValue "m" "D.")) @?= (Nothing :: Maybe ToolConfig)
         decodeConfig (withAgent "cheap" (agentValue "" "D.")) @?= (Nothing :: Maybe ToolConfig)
         decodeConfig (withAgent "cheap" (agentValue "m" "")) @?= (Nothing :: Maybe ToolConfig)
+    , testCase "MCP servers are keyed by name" $
+        decodeConfig
+          ( toolsObject
+              (String "deny")
+              (String "deny")
+              Null
+              (object [])
+              ( object
+                  [ "demo"
+                      .= object
+                        [ "url" .= ("https://mcp.example.test/mcp" :: String)
+                        , "policy" .= String "allow"
+                        ]
+                  ]
+              )
+          )
+          @?= Just
+            defaultToolConfig
+              { toolMcp =
+                  [ McpServerConfig
+                      { mcpServerName = "demo"
+                      , mcpServerUrl = "https://mcp.example.test/mcp"
+                      , mcpServerPolicy = ToolAllow
+                      }
+                  ]
+              }
     , testCase "unknown policies and malformed shapes are rejected" $ do
         decodeConfig
           (toolsValue (String "sometimes") (String "deny") Null (object []))
@@ -132,6 +159,18 @@ tests =
               (object ["cheap" .= object ["modelName" .= ("m" :: String), "description" .= ("D." :: String), "systemPrompt" .= ("" :: String)]])
           )
           @?= (Nothing :: Maybe ToolConfig)
+        decodeConfig
+          (toolsObject (String "deny") (String "deny") Null (object []) (Aeson.toJSON ([] :: [()])))
+          @?= (Nothing :: Maybe ToolConfig)
+        decodeConfig
+          (toolsObject (String "deny") (String "deny") Null (object []) (object ["demo" .= object []]))
+          @?= (Nothing :: Maybe ToolConfig)
+        decodeConfig
+          (toolsObject (String "deny") (String "deny") Null (object []) (object ["demo" .= object ["url" .= ("" :: String)]]))
+          @?= (Nothing :: Maybe ToolConfig)
+        decodeConfig
+          (toolsObject (String "deny") (String "deny") Null (object []) (object ["" .= object ["url" .= ("https://mcp.example.test/mcp" :: String)]]))
+          @?= (Nothing :: Maybe ToolConfig)
     , testCase "encoding round-trips through the parser" $
         let config =
               defaultToolConfig
@@ -152,6 +191,13 @@ tests =
                         , subagentTools = defaultToolConfig
                         }
                     ]
+                , toolMcp =
+                    [ McpServerConfig
+                        { mcpServerName = "demo"
+                        , mcpServerUrl = "https://mcp.example.test/mcp"
+                        , mcpServerPolicy = ToolAsk
+                        }
+                    ]
                 }
          in Aeson.decode (Aeson.encode config) @?= Just config
     ]
@@ -164,11 +210,16 @@ decodeConfig value =
 
 toolsValue :: Value -> Value -> Value -> Value -> Value
 toolsValue shell webfetch websearch subagent =
+  toolsObject shell webfetch websearch subagent (object [])
+
+toolsObject :: Value -> Value -> Value -> Value -> Value -> Value
+toolsObject shell webfetch websearch subagent mcp =
   object
     [ "shell" .= shell
     , "webfetch" .= webfetch
     , "websearch" .= websearch
     , "subagent" .= subagent
+    , "mcp" .= mcp
     ]
 
 agentValue :: String -> String -> Value

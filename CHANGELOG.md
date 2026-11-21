@@ -8,7 +8,8 @@ All notable changes to Hutian are documented here. The format follows
 ### Added
 
 - `model.tools` now configures every model tool. It has `shell`, `webfetch`,
-  `websearch`, and `subagent` keys, each validated recursively for subagents.
+  `websearch`, `subagent`, and `mcp` keys, each validated recursively for
+  subagents.
 - A `webfetch` tool with `deny`, `ask`, and `allow` policies. It runs in the
   sandbox, returns a bounded response body, and reports non-success statuses.
 - A configurable `websearch` tool. Set the key to `null` to disable it, or give
@@ -22,6 +23,9 @@ All notable changes to Hutian are documented here. The format follows
   starts under a blue `subagent <name>:` line, followed by the submitted task.
   Reasoning, answer, tool prompts, and output labels inside a subagent use the
   subagent blue, and the cursor blinks blue while it runs.
+- Remote MCP servers through `model.tools.mcp`. Hutian performs the Streamable
+  HTTP handshake at startup, discovers each server's tools, advertises them as
+  `mcp__<server>__<tool>`, and calls them with the server's session id.
 - `--tools-file` carries the complete tool JSON to the shell, alongside
   `--model-webfetch`, `--websearch-url`, `--model-websearch`, and
   `--subagent-file` for direct use.
@@ -40,7 +44,8 @@ All notable changes to Hutian are documented here. The format follows
   shell before it accepts input.
 - `Hutian.Policy` now exposes one shared `ToolPolicy` (`ToolDeny`, `ToolAsk`,
   `ToolAllow`) with JSON instances, and `Hutian.Tool.Config` owns the JSON shape
-  and safe defaults for the whole tool tree.
+  and safe defaults for the whole tool tree. `Hutian.Tool.Catalog` keeps the
+  runtime MCP sessions and discovered tools separate from that configuration.
 - `Hutian.Llm.Loop` can return the final model result for subagents while the
   existing conversation-only loop remains available.
 

@@ -66,6 +66,7 @@ library
       Hutian.Highlight
       Hutian.History
       Hutian.History.Store
+      Hutian.Http.Body
       Hutian.Http.Wire
       Hutian.Interrupt
       Hutian.Jobs
@@ -79,6 +80,8 @@ library
       Hutian.Llm.Stream
       Hutian.Llm.UnixSocket
       Hutian.Markdown
+      Hutian.Mcp
+      Hutian.Mcp.Protocol
       Hutian.Paths
       Hutian.Policy
       Hutian.Prompt
@@ -89,6 +92,7 @@ library
       Hutian.Shell
       Hutian.Terminal
       Hutian.Tool
+      Hutian.Tool.Catalog
       Hutian.Tool.Config
       Hutian.Tool.Exec
       Hutian.Web
@@ -115,6 +119,7 @@ executable hutian-llm-relay
     , hutian-shell
     , unix
 
+
 test-suite hutian-shell-test
   import:           defaults
   type:             exitcode-stdio-1.0
@@ -137,6 +142,8 @@ test-suite hutian-shell-test
       LlmSpec
       LlmStreamSpec
       MarkdownSpec
+      McpProtocolSpec
+      McpSpec
       PathsSpec
       PolicySpec
       PromptSpec

@@ -129,6 +129,7 @@
         "webfetch"
         "websearch"
         "subagent"
+        "mcp"
       ];
 
       toolPolicy =
@@ -171,6 +172,7 @@
             webfetch = toolPolicy "${path}.webfetch" present.webfetch;
             websearch = checkedWebsearch "${path}.websearch" present.websearch;
             subagent = checkedSubagents "${path}.subagent" present.subagent;
+            mcp = checkedMcp "${path}.mcp" present.mcp;
           };
 
       checkedWebsearch =
@@ -251,6 +253,41 @@
             tools = checkedTools "${path}.tools" present.tools;
           };
 
+      checkedMcp =
+        path: value:
+        if !(builtins.isAttrs value) then
+          throw "hutian: option `${path}` must be an attribute set keyed by MCP server name"
+        else
+          lib.mapAttrs (
+            name:
+            if name == "" then
+              throw "hutian: option `${path}` has an empty MCP server name"
+            else
+              checkedMcpServer "${path}.${name}"
+          ) value;
+
+      checkedMcpServer =
+        path: value:
+        if !(builtins.isAttrs value) then
+          throw "hutian: option `${path}` must be an attribute set"
+        else
+          let
+            names = [
+              "url"
+              "policy"
+            ];
+            present = allowedKeys path names (requiredKeys path [ "url" ] value);
+            policy = if present ? policy then toolPolicy "${path}.policy" present.policy else "ask";
+          in
+          {
+            url =
+              if builtins.isString present.url && present.url != "" then
+                present.url
+              else
+                throw "hutian: option `${path}.url` must be a non-empty string";
+            inherit policy;
+          };
+
       # Normalize and validate the options shared by every helper. The result
       # is passed unchanged to the internal package builder.
       checkedOptions =
@@ -293,6 +330,7 @@
             webfetch = "deny";
             websearch = null;
             subagent = { };
+            mcp = { };
           };
           apiKeyCommand = null;
         };
@@ -439,6 +477,16 @@
                   description = "probe subagent description";
                   systemPrompt = "probe subagent prompt";
                   tools = defaults.model.tools;
+                };
+              };
+            };
+          };
+          mcpLauncher = withModel {
+            tools = {
+              mcp = {
+                demo = {
+                  url = "https://mcp.example.test/mcp";
+                  policy = "ask";
                 };
               };
             };
@@ -610,6 +658,13 @@
             (contains "\"model\":\"probe-subagent\"" subagentLauncher)
             (contains "\"description\":\"probe subagent description\"" subagentLauncher)
             (contains "\"systemPrompt\":\"probe subagent prompt\"" subagentLauncher)
+          ];
+
+          mcp-option = check "mcp-option" [
+            (contains "\"mcp\":{}" probeLauncher)
+            (contains "\"mcp\":{\"demo\":{" mcpLauncher)
+            (contains "\"url\":\"https://mcp.example.test/mcp\"" mcpLauncher)
+            (contains "\"policy\":\"ask\"" mcpLauncher)
           ];
 
           launcher-volumes = check "launcher-volumes" [

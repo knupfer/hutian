@@ -117,6 +117,18 @@ tests =
         assertBool "command text" ("echo hi" `isInfixOf` stripAnsi output)
         assertBool "label sits above the command" ("tool shell:\necho hi" `isInfixOf` stripAnsi output)
         assertBool "resets colors" (resetSequence `isInfixOf` output)
+    , testCase "plain tool prompts show data without shell highlighting" $ do
+        let output =
+              toolTextPromptTextIn
+                MainContext
+                "mcp__demo__search"
+                80
+                "{\"query\":\"haskell\"}"
+        assertBool "teal prefix" ((boldTeal ++ "tool mcp__demo__search:") `isInfixOf` output)
+        assertBool
+          "arguments sit below the label"
+          ("tool mcp__demo__search:\n{\"query\":\"haskell\"}" `isInfixOf` stripAnsi output)
+        assertBool "no shell syntax style" (not ("\ESC[38;2;" `isInfixOf` output))
     , testCase "toolLabelText labels commandless tool calls" $
         toolLabelText "jobs" @?= boldTeal ++ "tool jobs:" ++ reset
     , testCase "subagent prompts use blue and show the submitted task" $ do

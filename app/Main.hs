@@ -59,6 +59,7 @@ import Hutian.Llm
   , runLlmWithTools
   )
 import Hutian.Llm.Loop (LlmLoop (..), runToolLoopWithResult)
+import Hutian.Mcp (discoverMcpServers)
 import Hutian.Render (OutputKind (..), TurnContext (..))
 import Hutian.Session
   ( Session (..)
@@ -72,7 +73,8 @@ import Hutian.Shell
   , runShellCommandStreaming
   )
 import Hutian.Terminal (promptForInput)
-import Hutian.Tool.Config (SubagentConfig (..))
+import Hutian.Tool.Catalog (ToolCatalog (..), toolCatalog)
+import Hutian.Tool.Config (SubagentConfig (..), ToolConfig (..))
 import Hutian.Tool.Exec (ToolRuntime (..), runToolCallsWith)
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.Environment (getArgs)
@@ -100,7 +102,8 @@ main = do
     Left message -> do
       consoleWriteErrorLine message
       exitWith (ExitFailure 2)
-    Right settings -> do
+    Right loaded -> do
+      settings <- discoverMcpSettings loaded
       -- The launcher starts the shell in /source. Leave it before the session
       -- begins so the long-lived process does not pin that mount in gVisor;
       -- each command enters the working directory for its own lifetime.
@@ -123,6 +126,18 @@ main = do
           (sessionEffects workingDirectory commands jobs settings interruptFlag)
           session
           `finally` resetTerminal
+
+discoverMcpSettings :: LlmSettings -> IO LlmSettings
+discoverMcpSettings settings = do
+  servers <-
+    discoverMcpServers
+      consoleWriteErrorLine
+      (toolMcp (catalogConfig (settingTools settings)))
+  pure
+    settings
+      { settingTools =
+          (settingTools settings) {catalogMcp = servers}
+      }
 
 historyFileFor :: HistoryTarget -> HistoryFile
 historyFileFor TermHistory = termHistoryFile
@@ -196,11 +211,16 @@ runSubagent
   -> String
   -> IO (Either String String)
 runSubagent workingDirectory jobs settings interruptFlag agent prompt = do
+  servers <-
+    discoverMcpServers
+      consoleWriteErrorLine
+      (toolMcp (subagentTools agent))
   let subagentSettings =
         settings
           { settingModel = ModelName (subagentModel agent)
           , settingSystemPrompt = SystemPrompt (subagentSystemPrompt agent)
-          , settingTools = subagentTools agent
+          , settingTools =
+              (toolCatalog (subagentTools agent)) {catalogMcp = servers}
           }
       runtime =
         toolRuntime SubagentContext workingDirectory jobs subagentSettings interruptFlag

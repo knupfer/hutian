@@ -23,6 +23,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (Result (..))
 import Data.Char (isControl, isSpace)
 import Data.List (intercalate, isPrefixOf)
+import Data.Maybe (listToMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import Hutian.Conversation (ToolCall (..))
@@ -34,9 +35,17 @@ import Hutian.Jobs
   , lineCountValue
   , maxJobOutputLines
   )
+import Hutian.Mcp.Protocol (mcpToolDefinition, mcpToolFunctionName)
 import Hutian.Policy (ToolPolicy (..), toolPolicyAdvertised)
+import Hutian.Tool.Catalog
+  ( McpServer (..)
+  , McpTool (..)
+  , ToolCatalog (..)
+  , toolCatalog
+  )
 import Hutian.Tool.Config
-  ( SubagentConfig (..)
+  ( McpServerConfig (..)
+  , SubagentConfig (..)
   , ToolConfig (..)
   , WebsearchConfig (..)
   , defaultToolConfig
@@ -85,6 +94,10 @@ data ToolPlan
     PlanApproveWebsearch WebsearchConfig String
   | -- | Run one configured subagent serially and return its answer.
     PlanSubagent SubagentConfig String
+  | -- | Call an MCP tool without asking.
+    PlanRunMcp McpServer McpTool Value
+  | -- | Show an MCP tool call and ask the user before running it.
+    PlanApproveMcp McpServer McpTool Value
   deriving stock (Eq, Show)
 
 -- | The policy-aware planners. 'planTool' covers the shell-only entry point;
@@ -93,17 +106,19 @@ data ToolPlan
 -- Request bodies use 'toolDefinitionsFor' with the full configuration.
 toolDefinitions :: [Value]
 toolDefinitions =
-  toolDefinitionsFor (defaultToolConfig {toolShell = ToolAllow})
+  toolDefinitionsFor (toolCatalog (defaultToolConfig {toolShell = ToolAllow}))
 
 -- | The tools advertised to the model. They stay together in one module so the
 -- request body and the call planner cannot drift apart.
-toolDefinitionsFor :: ToolConfig -> [Value]
-toolDefinitionsFor config =
+toolDefinitionsFor :: ToolCatalog -> [Value]
+toolDefinitionsFor catalog =
   shellTools
     ++ webfetchTools
     ++ websearchTools
     ++ subagentTools
+    ++ mcpTools
   where
+    config = catalogConfig catalog
     shellTools
       | toolPolicyAdvertised (toolShell config) =
           [ commandTool "shell" shellDescription
@@ -124,6 +139,13 @@ toolDefinitionsFor config =
     subagentTools
       | null (toolSubagent config) = []
       | otherwise = [subagentTool (toolSubagent config)]
+    mcpTools = concatMap serverTools (catalogMcp catalog)
+    serverTools server
+      | toolPolicyAdvertised (mcpServerPolicy (mcpServerConfig server)) =
+          map
+            (mcpToolDefinition (mcpServerName (mcpServerConfig server)))
+            (mcpServerTools server)
+      | otherwise = []
 
 shellDescription :: String
 shellDescription =
@@ -332,19 +354,39 @@ toolRequest call =
 -- refusal message that is fed back to the model instead of reaching the tool.
 -- In ask mode, only the action itself needs approval; checking job state and
 -- running a configured subagent do not.
-planToolWith :: ToolConfig -> ToolCall -> ToolPlan
-planToolWith config call =
-  case toolCallName call of
-    "shell" -> shellPlan (toolShell config) Foreground
-    "shell_background" -> shellPlan (toolShell config) Background
-    "jobs" -> shellInspectionPlan (toolShell config)
-    "job_output" -> shellInspectionPlan (toolShell config)
-    "job_kill" -> shellInspectionPlan (toolShell config)
-    "webfetch" -> webfetchPlan (toolWebfetch config)
-    "websearch" -> websearchPlan (toolWebsearch config)
-    "subagent" -> subagentPlan (toolSubagent config)
-    name -> PlanRefuse ("tool error: unknown tool: " ++ name)
+planToolWith :: ToolCatalog -> ToolCall -> ToolPlan
+planToolWith catalog call
+  | Just (server, tool) <- findMcpTool (catalogMcp catalog) (toolCallName call) =
+      mcpPlan server tool
+  | otherwise =
+      case toolCallName call of
+        "shell" -> shellPlan (toolShell config) Foreground
+        "shell_background" -> shellPlan (toolShell config) Background
+        "jobs" -> shellInspectionPlan (toolShell config)
+        "job_output" -> shellInspectionPlan (toolShell config)
+        "job_kill" -> shellInspectionPlan (toolShell config)
+        "webfetch" -> webfetchPlan (toolWebfetch config)
+        "websearch" -> websearchPlan (toolWebsearch config)
+        "subagent" -> subagentPlan (toolSubagent config)
+        name -> PlanRefuse ("tool error: unknown tool: " ++ name)
   where
+    config = catalogConfig catalog
+    mcpPlan server tool =
+      case mcpServerPolicy (mcpServerConfig server) of
+        ToolDeny ->
+          PlanRefuse
+            ( "tool error: the MCP server "
+                ++ mcpServerName (mcpServerConfig server)
+                ++ " is disabled"
+            )
+        ToolAsk -> planned (PlanApproveMcp server tool)
+        ToolAllow -> planned (PlanRunMcp server tool)
+      where
+        planned makePlan =
+          case mcpArguments call of
+            Left message -> PlanRefuse ("tool error: " ++ message)
+            Right arguments -> makePlan arguments
+
     shellPlan policy mode =
       case policy of
         -- Refuse before inspecting the call, so a denied model cannot probe
@@ -465,6 +507,28 @@ planTool policy call =
     approve mode command
       | all isSpace command = PlanRefuse "tool error: the shell command is empty"
       | otherwise = PlanApprove mode command
+
+findMcpTool :: [McpServer] -> String -> Maybe (McpServer, McpTool)
+findMcpTool servers name =
+  listToMaybe
+    [ (server, tool)
+    | server <- servers
+    , tool <- mcpServerTools server
+    , mcpToolFunctionName (mcpServerName (mcpServerConfig server)) (mcpToolName tool) == name
+    ]
+
+mcpArguments :: ToolCall -> Either String Value
+mcpArguments call
+  | all isSpace (toolCallArguments call) = Right (object [])
+  | otherwise =
+      case
+          Aeson.decodeStrict'
+            (TextEncoding.encodeUtf8 (Text.pack (toolCallArguments call)))
+        of
+          Just value@(Object _) -> Right value
+          Just Null -> Right (object [])
+          Just _ -> Left "the MCP tool arguments must be a JSON object"
+          Nothing -> Left "the MCP tool arguments are not valid JSON"
 
 -- | Reject non-http URLs and whitespace before the HTTP client sees them.
 webUrl :: String -> Either String String

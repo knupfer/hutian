@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Configuration for the tools the model may call. Policies are pure values
--- so request building, planning, and execution all use the same data.
+-- | Pure configuration for the tools the model may call. Runtime-discovered
+-- tools and sessions live in "Hutian.Tool.Catalog".
 --
 -- The launcher passes one JSON document for the whole tree, including the
 -- nested tools of every configured subagent. Keeping the parser here means a
@@ -11,8 +11,9 @@ module Hutian.Tool.Config
   , WebsearchConfig (..)
   , SubagentConfig (..)
   , SubagentConfigs (..)
+  , McpServerConfig (..)
+  , McpServers (..)
   , defaultToolConfig
-  , HasToolConfig (..)
   ) where
 
 import Data.Aeson
@@ -61,12 +62,28 @@ data WebsearchConfig = WebsearchConfig
   }
   deriving stock (Eq, Show)
 
+-- | One configured MCP server. The JSON configuration is keyed by name; the
+-- discovered tools and session live in "Hutian.Tool.Catalog".
+data McpServerConfig = McpServerConfig
+  { mcpServerName :: String
+  , mcpServerUrl :: String
+  , mcpServerPolicy :: ToolPolicy
+  }
+  deriving stock (Eq, Show)
+
+-- | The name-keyed MCP server document used by the launcher.
+newtype McpServers = McpServers
+  { unMcpServers :: [McpServerConfig]
+  }
+  deriving stock (Eq, Show)
+
 -- | Every tool policy and configuration the model can use.
 data ToolConfig = ToolConfig
   { toolShell :: ToolPolicy
   , toolWebfetch :: ToolPolicy
   , toolWebsearch :: Maybe WebsearchConfig
   , toolSubagent :: [SubagentConfig]
+  , toolMcp :: [McpServerConfig]
   }
   deriving stock (Eq, Show)
 
@@ -79,18 +96,8 @@ defaultToolConfig =
     , toolWebfetch = ToolDeny
     , toolWebsearch = Nothing
     , toolSubagent = []
+    , toolMcp = []
     }
-
--- | Treat a plain policy value as a full configuration with every other tool
--- disabled. This keeps the old shell-only entry points convenient.
-class HasToolConfig a where
-  toolConfigFor :: a -> ToolConfig
-
-instance HasToolConfig ToolConfig where
-  toolConfigFor = id
-
-instance HasToolConfig ToolPolicy where
-  toolConfigFor policy = defaultToolConfig {toolShell = policy}
 
 instance ToJSON ToolConfig where
   toJSON config =
@@ -99,6 +106,7 @@ instance ToJSON ToolConfig where
       , "webfetch" .= toolWebfetch config
       , "websearch" .= toolWebsearch config
       , "subagent" .= SubagentConfigs (toolSubagent config)
+      , "mcp" .= McpServers (toolMcp config)
       ]
 
 instance FromJSON ToolConfig where
@@ -107,12 +115,14 @@ instance FromJSON ToolConfig where
     webfetch <- policyField values "webfetch" ToolDeny
     websearch <- values .:? "websearch" >>= traverse parseWebsearch
     subagent <- values .:? "subagent" .!= SubagentConfigs []
+    mcp <- values .:? "mcp" .!= McpServers []
     pure
       ToolConfig
         { toolShell = shell
         , toolWebfetch = webfetch
         , toolWebsearch = websearch
         , toolSubagent = unSubagentConfigs subagent
+        , toolMcp = unMcpServers mcp
         }
 
 instance ToJSON WebsearchConfig where
@@ -145,6 +155,42 @@ instance FromJSON SubagentConfigs where
     SubagentConfigs . sortOn subagentName
       <$> traverse (uncurry parseSubagent) (KeyMap.toList agents)
 
+instance ToJSON McpServerConfig where
+  toJSON config =
+    object
+      [ "url" .= mcpServerUrl config
+      , "policy" .= mcpServerPolicy config
+      ]
+
+instance ToJSON McpServers where
+  toJSON = mcpServersObject . unMcpServers
+
+instance FromJSON McpServers where
+  parseJSON = withObject "mcp" $ \servers ->
+    McpServers . sortOn mcpServerName
+      <$> traverse (uncurry parseMcpServer) (KeyMap.toList servers)
+
+mcpServersObject :: [McpServerConfig] -> Value
+mcpServersObject servers =
+  Object
+    ( KeyMap.fromList
+        [ (AesonKey.fromString (mcpServerName server), toJSON server)
+        | server <- servers
+        ]
+    )
+
+parseMcpServer :: AesonKey.Key -> Value -> Parser McpServerConfig
+parseMcpServer nameKey = withObject "mcp server" $ \values -> do
+  name <- requireName "MCP server" nameKey
+  url <- values .: "url" >>= requireNonEmpty ("MCP server " ++ name ++ " URL")
+  policy <- values .:? "policy" .!= ToolAsk
+  pure
+    McpServerConfig
+      { mcpServerName = name
+      , mcpServerUrl = Text.unpack url
+      , mcpServerPolicy = policy
+      }
+
 subagentObject :: [SubagentConfig] -> Value
 subagentObject agents =
   Object
@@ -156,9 +202,13 @@ subagentObject agents =
 
 parseSubagent :: AesonKey.Key -> Value -> Parser SubagentConfig
 parseSubagent nameKey = withObject "subagent" $ \values -> do
-  name <- requireName (AesonKey.toText nameKey)
-  model <- values .: "model" >>= requireField name "model"
-  description <- values .: "description" >>= requireField name "description"
+  name <- requireName "subagent" nameKey
+  model <-
+    values .: "model"
+      >>= requireNonEmpty ("subagent " ++ name ++ " model")
+  description <-
+    values .: "description"
+      >>= requireNonEmpty ("subagent " ++ name ++ " description")
   systemPrompt <- values .: "systemPrompt"
   tools <- values .:? "tools" .!= defaultToolConfig
   pure
@@ -169,14 +219,6 @@ parseSubagent nameKey = withObject "subagent" $ \values -> do
       , subagentSystemPrompt = Text.unpack systemPrompt
       , subagentTools = tools
       }
-  where
-    requireName text
-      | Text.null text = fail "subagent name must be non-empty"
-      | otherwise = pure (Text.unpack text)
-    requireField name field text
-      | Text.null text =
-          fail ("subagent " ++ name ++ " needs a non-empty " ++ field)
-      | otherwise = pure text
 
 parseWebsearch :: Value -> Parser WebsearchConfig
 parseWebsearch (String url) = do
@@ -188,6 +230,10 @@ requireNonEmpty :: String -> Text.Text -> Parser Text.Text
 requireNonEmpty label text
   | Text.null text = fail (label ++ " must be non-empty")
   | otherwise = pure text
+
+requireName :: String -> AesonKey.Key -> Parser String
+requireName label key =
+  Text.unpack <$> requireNonEmpty label (AesonKey.toText key)
 
 policyField :: Object -> Text.Text -> ToolPolicy -> Parser ToolPolicy
 policyField values key fallback =

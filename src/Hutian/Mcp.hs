@@ -1,0 +1,247 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
+-- | HTTP client for remote MCP servers. Discovery happens before a model turn;
+-- tool calls use the session id from that handshake.
+module Hutian.Mcp
+  ( discoverMcpServers
+  , callMcpTool
+  ) where
+
+import Control.Exception
+  ( SomeAsyncException
+  , SomeException
+  , displayException
+  , fromException
+  , tryJust
+  )
+import Data.Aeson (Value (..))
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
+import Data.List (isInfixOf)
+import Hutian.Http.Body (readBodyAtMost)
+import Hutian.Mcp.Protocol
+  ( McpError (..)
+  , decodeSsePayloads
+  , mcpCallToolRequest
+  , mcpErrorText
+  , mcpInitializeRequest
+  , mcpInitializedNotification
+  , mcpListToolsRequest
+  , mcpProtocolVersion
+  , mcpToolResultText
+  , parseTools
+  , selectJsonRpcResponse
+  )
+import Hutian.Policy (ToolPolicy (..))
+import Hutian.Tool.Catalog
+  ( McpServer (..)
+  , McpSessionId (..)
+  , McpTool (..)
+  )
+import Hutian.Tool.Config (McpServerConfig (..))
+import Network.HTTP.Client
+  ( Manager
+  , Request (..)
+  , RequestBody (RequestBodyLBS)
+  , Response (..)
+  , brRead
+  , newManager
+  , parseRequest
+  , responseTimeoutMicro
+  , withResponse
+  )
+import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Network.HTTP.Types.Header (HeaderName, hContentType)
+import Network.HTTP.Types.Status (statusCode)
+
+-- | Discover every configured MCP server. A failure is reported through the
+-- logger and leaves that server with no advertised tools.
+discoverMcpServers :: (String -> IO ()) -> [McpServerConfig] -> IO [McpServer]
+discoverMcpServers report = mapM (discoverServer report)
+
+discoverServer :: (String -> IO ()) -> McpServerConfig -> IO McpServer
+discoverServer report config
+  | mcpServerPolicy config == ToolDeny = pure (emptyServer config)
+  | otherwise = do
+      manager <- newManager tlsManagerSettings
+      initialized <-
+        postMcp manager config Nothing 1 (mcpInitializeRequest 1)
+      case initialized of
+        Left failure -> reportFailure failure >> pure (emptyServer config)
+        Right (session, _) -> do
+          _ <-
+            postNotification
+              manager
+              config
+              session
+              mcpInitializedNotification
+          listed <-
+            postMcp manager config session 2 (mcpListToolsRequest 2)
+          case listed of
+            Left failure -> do
+              reportFailure failure
+              pure (McpServer config [] session)
+            Right (session', result) ->
+              case parseTools result of
+                Left failure -> do
+                  reportFailure failure
+                  pure (McpServer config [] (session' `orElse` session))
+                Right tools ->
+                  pure (McpServer config tools (session' `orElse` session))
+  where
+    reportFailure failure =
+      report ("mcp " ++ mcpServerName config ++ ": " ++ mcpErrorText failure)
+
+emptyServer :: McpServerConfig -> McpServer
+emptyServer config = McpServer config [] Nothing
+
+-- | Call one discovered MCP tool and format its content as tool output.
+callMcpTool :: McpServer -> McpTool -> Value -> IO (Either McpError String)
+callMcpTool server tool arguments = do
+  manager <- newManager tlsManagerSettings
+  result <-
+    postMcp
+      manager
+      (mcpServerConfig server)
+      (mcpServerSession server)
+      1
+      (mcpCallToolRequest 1 (mcpToolName tool) arguments)
+  pure $ do
+    (_, value) <- result
+    mcpToolResultText value
+
+-- * HTTP transport
+
+data McpHttpReply = McpHttpReply
+  { mcpHttpSession :: Maybe McpSessionId
+  , mcpHttpContentType :: String
+  , mcpHttpBody :: BS.ByteString
+  }
+
+-- | Send one JSON-RPC request and return the session id plus the unwrapped
+-- result. Non-2xx responses and malformed bodies become typed errors.
+postMcp
+  :: Manager
+  -> McpServerConfig
+  -> Maybe McpSessionId
+  -> Int
+  -> Value
+  -> IO (Either McpError (Maybe McpSessionId, Value))
+postMcp manager config session expectedId message = do
+  raw <- postMcpRaw manager config session message
+  pure $ do
+    reply <- raw
+    values <- responseValues reply
+    result <- selectJsonRpcResponse expectedId values
+    pure (mcpHttpSession reply, result)
+
+-- | Send a JSON-RPC notification. The server normally answers with 202 and no
+-- body; a new session id is still captured if it appears.
+postNotification
+  :: Manager
+  -> McpServerConfig
+  -> Maybe McpSessionId
+  -> Value
+  -> IO (Either McpError (Maybe McpSessionId))
+postNotification manager config session message = do
+  raw <- postMcpRaw manager config session message
+  pure (mcpHttpSession <$> raw)
+
+postMcpRaw
+  :: Manager
+  -> McpServerConfig
+  -> Maybe McpSessionId
+  -> Value
+  -> IO (Either McpError McpHttpReply)
+postMcpRaw manager config session message = do
+  outcome <- tryJust synchronous (send manager)
+  pure $ case outcome of
+    Left failure -> Left (McpTransportError failure)
+    Right value -> value
+  where
+    send currentManager = do
+      initialRequest <- parseRequest (mcpServerUrl config)
+      let request =
+            initialRequest
+              { method = "POST"
+              , requestHeaders =
+                  [ ("Content-Type", "application/json")
+                  , ("Accept", "application/json, text/event-stream")
+                  , ("MCP-Protocol-Version", BS8.pack mcpProtocolVersion)
+                  ]
+                    ++ sessionHeaders
+              , requestBody = RequestBodyLBS (Aeson.encode message)
+              , responseTimeout = responseTimeoutMicro mcpTimeoutMicros
+              , redirectCount = 0
+              , checkResponse = \_ _ -> pure ()
+              }
+      withResponse request currentManager $ \response -> do
+        body <- readBodyAtMost maxMcpBody (brRead (responseBody response))
+        if statusCode (responseStatus response) >= 400
+          then
+            pure
+              ( Left
+                  ( McpHttpError
+                      (statusCode (responseStatus response))
+                      (BS8.unpack (BS.take 1024 body))
+                  )
+              )
+          else
+            pure
+              ( Right
+                  McpHttpReply
+                    { mcpHttpSession =
+                        McpSessionId . BS8.unpack
+                          <$> lookup hMcpSessionId (responseHeaders response)
+                    , mcpHttpContentType =
+                        maybe "" BS8.unpack (lookup hContentType (responseHeaders response))
+                    , mcpHttpBody = body
+                    }
+              )
+
+    sessionHeaders =
+      case session of
+        Nothing -> []
+        Just value -> [("Mcp-Session-Id", BS8.pack (unMcpSessionId value))]
+
+    synchronous :: SomeException -> Maybe String
+    synchronous exception =
+      case fromException exception :: Maybe SomeAsyncException of
+        Just _ -> Nothing
+        Nothing -> Just (displayException exception)
+
+-- | Decode either an SSE stream or a plain JSON response into JSON-RPC values.
+responseValues :: McpHttpReply -> Either McpError [Value]
+responseValues reply
+  | "text/event-stream" `isInfixOf` mcpHttpContentType reply =
+      traverse decodeValue (decodeSsePayloads (mcpHttpBody reply))
+  | BS.null (mcpHttpBody reply) =
+      protocolError "MCP response body is empty"
+  | otherwise =
+      (: []) <$> decodeValue (mcpHttpBody reply)
+  where
+    decodeValue bytes =
+      case Aeson.decodeStrict' bytes of
+        Just value -> Right value
+        Nothing -> protocolError "MCP response is not valid JSON"
+
+protocolError :: String -> Either McpError a
+protocolError = Left . McpProtocolError
+
+-- | MCP tool results can be large pages or search bundles. A complete JSON
+-- document must fit, so this is larger than the web-tool body limit while still
+-- bounding one call.
+maxMcpBody :: Int
+maxMcpBody = 16 * 1024 * 1024
+
+mcpTimeoutMicros :: Int
+mcpTimeoutMicros = 60 * 1000 * 1000
+
+hMcpSessionId :: HeaderName
+hMcpSessionId = "Mcp-Session-Id"
+
+orElse :: Maybe a -> Maybe a -> Maybe a
+orElse (Just value) _ = Just value
+orElse Nothing fallback = fallback

@@ -25,6 +25,7 @@ import Hutian.Cli
   , parseOptions
   )
 import Hutian.Policy (ToolPolicy (..), toolPolicyFromArgument)
+import Hutian.Tool.Catalog (ToolCatalog, toolCatalog)
 import Hutian.Tool.Config
   ( SubagentConfigs (..)
   , ToolConfig (..)
@@ -38,9 +39,9 @@ data LlmSettings = LlmSettings
   , settingModel :: ModelName
   , settingSystemPrompt :: SystemPrompt
   , settingSocket :: Maybe FilePath
-  -- | The model's tool policies and any nested subagent configuration. Term
-  -- mode is unaffected.
-  , settingTools :: ToolConfig
+  -- | The model's tool policies, nested subagent configuration, and discovered
+  -- MCP tools. Term mode is unaffected.
+  , settingTools :: ToolCatalog
   }
   deriving stock (Eq, Show)
 
@@ -216,7 +217,7 @@ settingsFrom url model systemPrompt socket tools = do
   validateNonEmpty "--model" (unModelName model)
   maybe (Right ()) (validateNonEmpty "--llama-socket") socket
   validateWebsearch tools
-  pure (LlmSettings url model systemPrompt socket tools)
+  pure (LlmSettings url model systemPrompt socket (toolCatalog tools))
   where
     validateNonEmpty name value
       | null value = Left ("empty value for " ++ name ++ "\n" ++ llmUsage)

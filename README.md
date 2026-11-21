@@ -36,6 +36,9 @@ advertises it but needs approval, and `"allow"` runs it automatically.
   model sees the names and descriptions and calls one by selector through the
   `subagent` tool. Subagents run serially, use the same model API and
   conversation loop, and return only their final answer to the caller.
+- `tools.mcp` maps names to MCP servers. At startup Hutian initializes each
+  server, lists its tools, and advertises them as
+  `mcp__<server>__<tool>`. The server policy applies to every tool it exposes.
 
 Term mode is always available. Model commands run through the same `/bin/sh -c`
 path as term mode and are shown with a bold teal `tool shell:` line. In `"ask"`
@@ -192,7 +195,7 @@ system message, model name, llama.cpp endpoint, and model permissions:
 | `model.name` | model | Model name sent to the endpoint. |
 | `model.url` | relay | OpenAI-compatible chat or native `/completion` URL. `http://` and `https://` are supported. |
 | `model.systemPrompt` | model | System message for every LLM request. |
-| `model.tools` | model | Tool policies and configuration: `shell`, `webfetch`, `websearch`, and `subagent`. |
+| `model.tools` | model | Tool policies and configuration: `shell`, `webfetch`, `websearch`, `subagent`, and `mcp`. |
 | `model.apiKeyCommand` | host relay | Command that prints the upstream key, or `null` for unauthenticated forwarding. |
 
 Every option above is mandatory and has no default. Omitting one fails with an
@@ -239,6 +242,7 @@ A complete configuration:
           webfetch = "deny";
           websearch = null;
           subagent = { };
+          mcp = { };
         };
         apiKeyCommand = null;
       };
@@ -296,11 +300,33 @@ tools = {
           policy = "allow";
         };
         subagent = { };
+        mcp = { };
       };
     };
   };
 };
 ```
+
+`model.tools.mcp` maps names to remote MCP servers. Hutian performs the
+Streamable HTTP handshake at startup, listens to `tools/list`, and advertises
+each tool to the model as `mcp__<server>__<tool>`. Tool calls use the session
+id returned by the server. The policy applies to every tool on that server.
+
+```nix
+tools = {
+  # ...
+  mcp = {
+    search = {
+      url = "https://mcp.example.test/mcp";
+      policy = "ask";
+    };
+  };
+};
+```
+
+MCP discovery and calls run in the sandbox, so `sandbox.network = true` is
+required for normal internet access. Use a local MCP proxy when the server
+needs credentials or a fixed network path.
 
 Then run `nix run .#hutian` from that project. Package versions come from the
 consumer flake's lock file.
@@ -324,6 +350,7 @@ hutian.lib.mkPackage pkgs {
       webfetch = "deny";
       websearch = null;
       subagent = { };
+      mcp = { };
     };
     apiKeyCommand = null;
   };
@@ -571,13 +598,17 @@ The code keeps pure logic separate from IO:
   or multi-line.
 - `Hutian.Policy` defines the shared three-way tool policy (`deny`, `ask`, or
   `allow`) used by the LLM protocol and the tool loop. `Hutian.Tool.Config`
-  holds the tool policies, websearch endpoint, and serial subagent
-  configuration, with JSON parsing for the launcher-provided tools file.
+  holds the pure tool policies, websearch endpoint, subagent configuration, and
+  MCP server list; `Hutian.Tool.Catalog` pairs that configuration with the MCP
+  tools and sessions discovered at runtime.
 - `Hutian.Tool` turns a model tool call and the tool configuration into a pure
-  `ToolPlan`. `Hutian.Tool.Exec` performs only the terminal, shell, web, or
+  `ToolPlan`. `Hutian.Tool.Exec` performs only the terminal, shell, web, MCP, or
   subagent IO that the plan requests, so refusals, approvals, commands, and job
   actions can be tested without a terminal. `Hutian.Web` builds search URLs and
   performs bounded HTTP fetches.
+- `Hutian.Mcp.Protocol` builds pure MCP JSON-RPC messages and decodes tools and
+  results. `Hutian.Mcp` performs the Streamable HTTP handshake, discovery, and
+  tool calls.
 - `Hutian.Jobs` is the pure job model: ids, status, log paths, and the text
   used by the model tools. `Hutian.Jobs.Runtime` owns the process handles,
   bounded log tails, and process-group signalling.
@@ -642,6 +673,7 @@ src/Hutian/Editor.hs            Prompt text, cursor, and layout state
 src/Hutian/Highlight.hs         Skylighting for fenced code and shell input
 src/Hutian/History.hs           Pure history codec and navigation
 src/Hutian/History/Store.hs     History file IO
+src/Hutian/Http/Body.hs         Bounded HTTP response body reads
 src/Hutian/Http/Wire.hs         Shared socket framing helpers
 src/Hutian/Interrupt.hs         Interrupt flag and signal handling
 src/Hutian/Jobs.hs              Pure background-job model and text
@@ -655,6 +687,8 @@ src/Hutian/Llm/Settings.hs      Launcher settings parsing
 src/Hutian/Llm/Stream.hs        Stream parsing, tool-call assembly, and result
 src/Hutian/Llm/UnixSocket.hs    Relay client over a Unix socket
 src/Hutian/Markdown.hs          Pure streaming Markdown renderer
+src/Hutian/Mcp.hs               MCP discovery and tool-call client
+src/Hutian/Mcp/Protocol.hs      Pure MCP JSON-RPC and SSE helpers
 src/Hutian/Paths.hs             Pure path completion helpers
 src/Hutian/Policy.hs            Shared model tool policy
 src/Hutian/Prompt.hs            Pure prompt reducer
@@ -665,7 +699,8 @@ src/Hutian/Session.hs           Interactive prompt/history/session loop
 src/Hutian/Shell.hs             Captured shell command execution
 src/Hutian/Terminal.hs          Prompt driver over Prompt and Console
 src/Hutian/Tool.hs              Pure tool schemas, decoding, and planning
-src/Hutian/Tool/Config.hs       Tool policies, websearch, and subagent config
+src/Hutian/Tool/Catalog.hs      Runtime tool catalog and MCP state
+src/Hutian/Tool/Config.hs       Tool policies, websearch, subagent, and MCP config
 src/Hutian/Tool/Exec.hs         Terminal execution of tool-call plans
 src/Hutian/Web.hs               Bounded HTTP fetches and search URLs
 app/Main.hs                     Shell executable entry point
@@ -688,15 +723,18 @@ The test suite combines HUnit tests with QuickCheck properties for the editor
 state machine, the pure prompt reducer, prompt layout and rendering, command
 parsing, completion selection, history codecs, conversation history, LLM
 requests, streaming tool calls, Markdown rendering, code highlighting, path and
-shell helpers, strict option parsing, tool-call plans, tool and subagent
-configuration, web search URLs, stream presentation, the background-job model,
-socket framing, and interrupt handling. It also includes integration tests for:
+shell helpers, strict option parsing, tool-call plans, tool, subagent, and MCP
+configuration, web search URLs, MCP protocol messages, stream presentation, the
+background-job model, socket framing, and interrupt handling. It also includes
+integration tests for:
 
 - streaming LLM responses through a local HTTP server, including bounded
   non-success error reporting
 - streaming LLM responses through the host relay over a Unix socket, including
   key injection, no-auth forwarding, fixed upstream and headers, body limits,
   and response streaming
+- MCP discovery and tool calls against a local Streamable HTTP server, including
+  session ids, SSE messages, and JSON-RPC errors
 - history file persistence
 - shell command execution and command discovery
 - background jobs: output capture, status, bounded log tails, and stopping a

@@ -4,6 +4,7 @@
 -- and size. Other modules build strings and call these functions.
 module Hutian.Console
   ( configureConsole
+  , confirmToolApproval
   , confirmToolCommand
   , confirmToolCommandIn
   , consoleFlush
@@ -21,6 +22,7 @@ module Hutian.Console
   , consoleWriteToolCommandIn
   , consoleWriteToolLabel
   , consoleWriteToolLabelIn
+  , consoleWriteToolTextIn
   , printOutputLabel
   , printOutputLabelIn
   , resetTerminal
@@ -62,6 +64,7 @@ import Hutian.Render
   , subagentPromptText
   , toolLabelTextIn
   , toolPromptTextIn
+  , toolTextPromptTextIn
   )
 import System.Console.Terminal.Size (Window (Window), size)
 import System.IO
@@ -167,6 +170,17 @@ consoleWriteToolCommandIn context toolName command = do
     else consoleWriteLine (sanitizeOutput command)
   consoleFlush
 
+-- | Show a tool call whose argument is data, such as MCP JSON arguments.
+consoleWriteToolTextIn :: TurnContext -> String -> String -> IO ()
+consoleWriteToolTextIn context toolName text = do
+  interactive <- consoleIsInteractive
+  if interactive
+    then do
+      width <- consoleWidth
+      consoleWrite (toolTextPromptTextIn context (sanitize toolName) width text)
+    else consoleWriteLine (sanitizeOutput text)
+  consoleFlush
+
 -- | Show a tool call that has no command of its own.
 consoleWriteToolLabel :: String -> IO ()
 consoleWriteToolLabel = consoleWriteToolLabelIn MainContext
@@ -224,6 +238,12 @@ confirmToolCommand = confirmToolCommandIn MainContext
 confirmToolCommandIn :: TurnContext -> String -> String -> IO ToolApproval
 confirmToolCommandIn context toolName command = do
   consoleWriteToolCommandIn context toolName command
+  confirmToolApproval
+
+-- | Ask for single-key approval after the caller has shown the requested call.
+-- Returns 'ToolDenied' without prompting when output is not a terminal.
+confirmToolApproval :: IO ToolApproval
+confirmToolApproval = do
   interactive <- consoleIsInteractive
   inputIsTerminal <- hIsTerminalDevice stdin
   if not interactive || not inputIsTerminal

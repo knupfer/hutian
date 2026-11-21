@@ -23,6 +23,7 @@ import Hutian.Llm
   , runLlmWithTools
   )
 import Hutian.Policy (ToolPolicy (..))
+import Hutian.Tool.Catalog (toolCatalog)
 import Hutian.Tool.Config (ToolConfig (..), defaultToolConfig)
 import Hutian.Render (dimTealForeground, grayForeground)
 import Network.Socket
@@ -131,7 +132,7 @@ settingsFor port =
     , settingModel = ModelName "test-model"
     , settingSystemPrompt = SystemPrompt "system prompt"
     , settingSocket = Nothing
-    , settingTools = defaultToolConfig {toolShell = ToolAllow}
+    , settingTools = toolCatalog (defaultToolConfig {toolShell = ToolAllow})
     }
 
 emptyResult :: LlmResult

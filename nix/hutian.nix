@@ -44,8 +44,8 @@ let
     if path == null then "" else path;
   relayLogicalUrl = "http://hutian-relay" + relayUrlPath;
 
-  # One JSON document carries every tool policy and the nested subagent
-  # configuration. The shell reads it once and removes it before running a
+  # One JSON document carries every tool policy, the nested subagent tools, and
+  # the MCP servers. The shell reads it once and removes it before running a
   # command, so it never appears in the process listing.
   toolsJson = builtins.toJSON tools;
 

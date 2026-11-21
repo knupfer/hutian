@@ -7,7 +7,8 @@ module Hutian.Tool.Exec
   ) where
 
 import Hutian.Console
-  ( confirmToolCommandIn
+  ( confirmToolApproval
+  , confirmToolCommandIn
   , consoleFlush
   , consoleIsErrorInteractive
   , consoleIsInteractive
@@ -19,6 +20,7 @@ import Hutian.Console
   , consoleWriteSubagentPrompt
   , consoleWriteToolCommandIn
   , consoleWriteToolLabelIn
+  , consoleWriteToolTextIn
   , printOutputLabelIn
   , withGrayOutput
   , withSubagentCursor
@@ -29,6 +31,8 @@ import Hutian.Conversation
   , abortedToolMessage
   , appendToolResult
   )
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Hutian.Highlight (sanitizeOutput)
 import Hutian.Jobs
   ( Job
@@ -45,6 +49,8 @@ import Hutian.Jobs.Runtime
   , readJobOutput
   , startJob
   )
+import Hutian.Mcp (callMcpTool)
+import Hutian.Mcp.Protocol (mcpErrorText, mcpToolFunctionName)
 import Hutian.Policy (ToolPolicy)
 import Hutian.Render
   ( OutputKind (..)
@@ -64,9 +70,10 @@ import Hutian.Tool
   , planTool
   , planToolWith
   )
+import Hutian.Tool.Catalog (McpServer (..), McpTool (..), ToolCatalog)
 import Hutian.Tool.Config
-  ( SubagentConfig (..)
-  , ToolConfig (..)
+  ( McpServerConfig (..)
+  , SubagentConfig (..)
   , WebsearchConfig (..)
   )
 import Hutian.Web (fetchResultText, fetchUrl, websearchRequestUrl)
@@ -98,9 +105,9 @@ runToolCalls jobs workingDirectory policy =
 -- | Run each requested call in order using the full tool configuration. Once a
 -- call aborts the turn, the remaining calls get an error result instead of
 -- running.
-runToolCallsWith :: ToolRuntime -> ToolConfig -> Conversation -> [ToolCall] -> IO (Bool, Conversation)
-runToolCallsWith runtime config =
-  runToolCallsPlanned (planToolWith config) runtime
+runToolCallsWith :: ToolRuntime -> ToolCatalog -> Conversation -> [ToolCall] -> IO (Bool, Conversation)
+runToolCallsWith runtime catalog =
+  runToolCallsPlanned (planToolWith catalog) runtime
 
 runToolCallsPlanned
   :: (ToolCall -> ToolPlan)
@@ -158,6 +165,16 @@ runToolCall planner runtime conversation call =
         ToolDenied -> refuse "tool error: the user did not approve the websearch"
         ToolAborted -> aborted
     PlanSubagent agent prompt -> runSubagentTool agent prompt
+    PlanRunMcp server tool arguments -> do
+      showMcpCall server tool arguments
+      runMcpTool server tool arguments
+    PlanApproveMcp server tool arguments -> do
+      showMcpCall server tool arguments
+      approval <- confirmToolApproval
+      case approval of
+        ToolApproved -> runMcpTool server tool arguments
+        ToolDenied -> refuse "tool error: the user did not approve the MCP tool call"
+        ToolAborted -> aborted
   where
     jobs = toolRuntimeJobs runtime
     workingDirectory = toolRuntimeWorkingDirectory runtime
@@ -222,7 +239,7 @@ runToolCall planner runtime conversation call =
           pure (False, appendToolResult (toolCallId call) message conversation)
         Right fetched -> do
           let text = fetchResultText fetched
-          displayWebText text
+          displayToolText text
           pure (False, appendToolResult (toolCallId call) text conversation)
 
     runWebsearchTool configured query = do
@@ -238,6 +255,25 @@ runToolCall planner runtime conversation call =
           pure (False, appendToolResult (toolCallId call) message conversation)
         Right answer ->
           pure (False, appendToolResult (toolCallId call) answer conversation)
+
+    showMcpCall server tool arguments =
+      consoleWriteToolTextIn
+        context
+        (mcpToolFunctionName (mcpServerName (mcpServerConfig server)) (mcpToolName tool))
+        (LBS8.unpack (Aeson.encode arguments))
+
+    runMcpTool server tool arguments = do
+      printOutputLabelIn context ToolOutput
+      result <- callMcpTool server tool arguments
+      case result of
+        Left failure -> do
+          let message = mcpErrorText failure
+          consoleWriteErrorLine message
+          pure (False, appendToolResult (toolCallId call) message conversation)
+        Right text -> do
+          let formatted = trailingNewline text
+          displayToolText formatted
+          pure (False, appendToolResult (toolCallId call) formatted conversation)
 
 -- | Run a command the model is already allowed to execute. The caller is
 -- responsible for showing the command first.
@@ -279,10 +315,9 @@ displayCommandResult result = do
   consoleWriteError (grayOutputText stderrInteractive errors)
   consoleFlush
 
--- | Print a fetched page or search result in the same muted style as other
--- tool output.
-displayWebText :: String -> IO ()
-displayWebText text =
+-- | Print a web or MCP result in the same muted style as other tool output.
+displayToolText :: String -> IO ()
+displayToolText text =
   withGrayOutput (consoleWrite (sanitizeOutput text) >> consoleFlush)
 
 -- | Print the job table in gray.

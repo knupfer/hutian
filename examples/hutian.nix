@@ -46,6 +46,11 @@
     #   name and description in the tool schema. Each subagent runs serially
     #   with its own upstream model, system prompt, and tools, and returns only
     #   its final answer.
+    # - `mcp` maps names to MCP servers. Hutian discovers each server's tools at
+    #   startup and advertises them as `mcp__<server>__<tool>`. The Exa server
+    #   works without a key for search and fetch; add an explicit API key
+    #   through a local MCP proxy if you need higher limits. MCP runs in the
+    #   sandbox, so `sandbox.network = true` is required.
     #
     # Use "deny" to hide a tool, "ask" to confirm each call, or "allow" to run
     # model-requested calls automatically.
@@ -54,6 +59,15 @@
       webfetch = "deny";
       websearch = null;
       subagent = { };
+      mcp = { };
+
+      # Example MCP server:
+      # mcp = {
+      #   exa = {
+      #     url = "https://mcp.exa.ai/mcp";
+      #     policy = "ask";
+      #   };
+      # };
 
       # Example web search and summarization subagent:
       # websearch = {
@@ -73,6 +87,7 @@
       #         policy = "allow";
       #       };
       #       subagent = { };
+      #       mcp = { };
       #     };
       #   };
       # };

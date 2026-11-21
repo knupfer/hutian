@@ -9,6 +9,7 @@ module Hutian.Render
   , promptRenderText
   , toolPromptText
   , toolPromptTextIn
+  , toolTextPromptTextIn
   , subagentPromptText
   , toolLabelText
   , toolLabelTextIn
@@ -75,6 +76,7 @@ data PromptKind
   = LlmPrompt
   | ShellPrompt
   | ToolPrompt TurnContext String
+  | ToolTextPrompt TurnContext String
   | SubagentPrompt String
   deriving stock (Eq, Show)
 
@@ -116,6 +118,7 @@ promptRenderText kind previousRow width prompt =
     plainTextRows =
       case kind of
         LlmPrompt -> True
+        ToolTextPrompt _ _ -> True
         SubagentPrompt _ -> True
         _ -> False
     rows
@@ -157,6 +160,14 @@ toolPromptTextIn context toolName width command =
     ++ reset
     ++ "\n"
 
+-- | Render a tool call whose argument is data rather than shell input. JSON
+-- arguments are shown plainly; syntax highlighting is reserved for commands.
+toolTextPromptTextIn :: TurnContext -> String -> Int -> String -> String
+toolTextPromptTextIn context toolName width text =
+  fst (promptRenderText (ToolTextPrompt context toolName) 0 width (setPromptText text initialPrompt))
+    ++ reset
+    ++ "\n"
+
 -- | A label for a tool call that has no command to show.
 toolLabelText :: String -> String
 toolLabelText = toolLabelTextIn MainContext
@@ -178,10 +189,12 @@ prefixFor :: PromptKind -> String
 prefixFor LlmPrompt = "ask:\n"
 prefixFor ShellPrompt = "shell:\n"
 prefixFor (ToolPrompt _ toolName) = "tool " ++ toolName ++ ":\n"
+prefixFor (ToolTextPrompt _ toolName) = "tool " ++ toolName ++ ":\n"
 prefixFor (SubagentPrompt modelName) = "subagent " ++ modelName ++ ":\n"
 
 prefixForegroundFor :: PromptKind -> String
 prefixForegroundFor (ToolPrompt context _) = toolPromptForeground context
+prefixForegroundFor (ToolTextPrompt context _) = toolPromptForeground context
 prefixForegroundFor (SubagentPrompt _) = boldBlue
 prefixForegroundFor _ = boldVibrantPink
 

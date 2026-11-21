@@ -26,6 +26,7 @@ import Hutian.Llm
   )
 import Hutian.Llm.UnixSocket (postUnixStream)
 import Hutian.Policy (ToolPolicy (..))
+import Hutian.Tool.Catalog (toolCatalog)
 import Hutian.Tool.Config (ToolConfig (..), defaultToolConfig)
 import Hutian.Relay.Protocol (decodeStatus, encodeStatus)
 import Network.Socket
@@ -172,7 +173,7 @@ settingsForSocket socketPath =
     , settingModel = ModelName "test-model"
     , settingSystemPrompt = SystemPrompt "system prompt"
     , settingSocket = Just socketPath
-    , settingTools = defaultToolConfig {toolShell = ToolAllow}
+    , settingTools = toolCatalog (defaultToolConfig {toolShell = ToolAllow})
     }
 
 streamingResponse :: BS.ByteString
