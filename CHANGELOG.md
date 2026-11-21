@@ -26,6 +26,13 @@ All notable changes to Hutian are documented here. The format follows
   `--model-webfetch`, `--websearch-url`, `--model-websearch`, and
   `--subagent-file` for direct use.
 
+### Fixed
+
+- The LLM relay sends `Connection: close` upstream and retries once when a
+  server closes before sending response headers. This avoids `IncompleteHeaders`
+  failures caused by stale keep-alive connections or an upstream that drops the
+  first request.
+
 ### Changed
 
 - Replaced the mandatory top-level `model.shell` option with `model.tools.shell`.

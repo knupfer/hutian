@@ -483,8 +483,10 @@ but cannot unlink or replace the socket; the directory holds no key material.
 The relay uses a private framing protocol over the socket instead of HTTP. The
 sandbox sends only the request body and closes its write half. The relay sends
 that body to the fixed path and query of `model.url` with `Content-Type:
-application/json`, `Accept: text/event-stream`, and, when a key is configured,
-`Authorization: Bearer <key>`. It returns a four-byte status code followed by
+application/json`, `Accept: text/event-stream`, `Connection: close`, and, when
+a key is configured, `Authorization: Bearer <key>`. A fresh upstream connection
+is used for every request, so an idle keep-alive close cannot surface as a
+stale-connection failure. It returns a four-byte status code followed by
 the upstream body, including streaming SSE. Because the client never supplies a
 request line or header block, the sandbox cannot choose the upstream host, path,
 or headers, cannot redirect the key, and cannot use the relay as a general

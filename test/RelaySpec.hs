@@ -258,6 +258,7 @@ wireTests =
           let (headPart, _) = BS.breakSubstring "\r\n\r\n" upstream
           assertInfix "Content-Type: application/json" headPart
           assertInfix "Accept: text/event-stream" headPart
+          assertInfix "Connection: close" headPart
           assertInfix "Authorization: Bearer s3cret-key" headPart
           assertNotInfix "Cookie:" headPart
           assertNotInfix "X-Evil" headPart
@@ -271,6 +272,7 @@ wireTests =
           let (headPart, _) = BS.breakSubstring "\r\n\r\n" upstream
           assertInfix "Content-Type: application/json" headPart
           assertInfix "Accept: text/event-stream" headPart
+          assertInfix "Connection: close" headPart
           assertNotInfix "Authorization:" headPart
     , testCase "relay rejects a body larger than the limit" $
         withUpstream streamingResponse $ \port requests -> do
@@ -290,6 +292,14 @@ wireTests =
         (status, response) <- withRelaySession runtime (sendBody "{}")
         status @?= 502
         assertNotInfix "s3cret-key" response
+    , testCase "relay retries once when the upstream closes before headers" $
+        withFlakyUpstream streamingResponse $ \port requests -> do
+          runtime <- runtimeFor port defaultRelayMaxBody
+          (status, response) <- withRelaySession runtime (sendBody "{}")
+          status @?= 200
+          assertInfix "data: [DONE]" response
+          upstream <- awaitMVar "upstream did not receive the retried request" requests
+          assertInfix "POST /v1/chat/completions HTTP/1.1" upstream
     , testCase "relay treats a client disconnect as normal" $
         withUpstream largeStreamingResponse $ \port _requests -> do
           logs <- newIORef []
@@ -576,6 +586,35 @@ withUpstream response action =
             putMVar requests request
             sendAll connection response
             close connection
+        )
+          `catch` \(_ :: SomeException) -> pure ()
+      pure (port, requests, listener)
+    stop (_, _, listener) = close listener `catch` \(_ :: SomeException) -> pure ()
+
+-- | Accept one connection, close it without a response, then accept the retry
+-- on a second connection and answer normally. This reproduces the early-close
+-- that http-client reports as IncompleteHeaders or ConnectionClosed.
+withFlakyUpstream :: ByteString -> (Int -> MVar ByteString -> IO a) -> IO a
+withFlakyUpstream response action =
+  bracket start stop $ \(port, requests, _) -> action port requests
+  where
+    start = do
+      listener <- socket AF_INET Stream defaultProtocol
+      setSocketOption listener ReuseAddr 1
+      bind listener (SockAddrInet 0 (tupleToHostAddress (127, 0, 0, 1)))
+      listen listener 2
+      port <- fromIntegral <$> socketPort listener
+      requests <- newEmptyMVar
+      _ <- forkIO $
+        ( do
+            (first, _) <- accept listener
+            _ <- readHttpRequest first
+            close first
+            (retried, _) <- accept listener
+            request <- readHttpRequest retried
+            putMVar requests request
+            sendAll retried response
+            close retried
         )
           `catch` \(_ :: SomeException) -> pure ()
       pure (port, requests, listener)

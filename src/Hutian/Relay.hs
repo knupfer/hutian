@@ -13,7 +13,9 @@
 -- * the only headers it sends are the fixed ones in 'relayRequest', including
 --   the Bearer key when one is configured;
 -- * it never follows a redirect, and it returns only a status code plus the
---   upstream body.
+--   upstream body;
+-- * a connection failure before any response headers may retry the same fixed
+--   request once on a fresh upstream connection.
 --
 -- A sandboxed client can therefore spend tokens, but it cannot choose the
 -- host, path, headers, or credentials of the upstream request.
@@ -334,6 +336,10 @@ relayRequest runtime body =
     , requestHeaders =
         [ ("Content-Type", "application/json")
         , ("Accept", "text/event-stream")
+        -- Do not reuse an upstream keep-alive connection. Model servers often
+        -- close idle connections without a final response, and reusing one
+        -- surfaces as an IncompleteHeaders failure before any reply arrives.
+        , ("Connection", "close")
         ]
           ++ authHeaders (runtimeAuth runtime)
     , requestBody = RequestBodyLBS (BL.fromStrict body)
@@ -345,33 +351,17 @@ relayRequest runtime body =
     authHeaders RelayAuthNone = []
     authHeaders (RelayAuthBearer key) = [("Authorization", "Bearer " <> key)]
 
+-- | One upstream attempt's failure. HTTP failures can be retried when no
+-- response headers reached the sandbox; socket failures cannot be classified
+-- as safely, so they are reported as-is.
+data ForwardFailure
+  = ForwardHttp HttpException
+  | ForwardIo IOException
+
 forward :: RelayRuntime -> Socket -> BS.ByteString -> IO ()
 forward runtime connection body = do
   sent <- newIORef False
-  result <-
-    ( Right
-        <$> withResponse
-          (relayRequest runtime body)
-          (runtimeManager runtime)
-          ( \response -> do
-              writeIORef sent True
-              connected <-
-                sendToClient
-                  connection
-                  (encodeStatus (statusCode (responseStatus response)))
-              when connected (streamBody connection (brRead (responseBody response)))
-          )
-    )
-      `catches`
-        [ Handler
-            ( \(exception :: HttpException) ->
-                pure (Left (displayException exception))
-            )
-        , Handler
-            ( \(exception :: IOException) ->
-                pure (Left (displayException exception))
-            )
-        ]
+  result <- attempt upstreamAttempts sent
   case result of
     Left message -> do
       alreadySent <- readIORef sent
@@ -379,6 +369,54 @@ forward runtime connection body = do
         sendError connection 502 "upstream request failed"
       logRelay runtime ("upstream request failed: " ++ message)
     Right () -> pure ()
+  where
+    attempt attemptsLeft sent = do
+      outcome <- tryForward sent
+      case outcome of
+        Right () -> pure (Right ())
+        Left failure -> do
+          alreadySent <- readIORef sent
+          if attemptsLeft > 1 && not alreadySent && retryableFailure failure
+            then attempt (attemptsLeft - 1) sent
+            else pure (Left (failureText failure))
+
+    tryForward sent =
+      ( Right
+          <$> withResponse
+            (relayRequest runtime body)
+            (runtimeManager runtime)
+            ( \response -> do
+                writeIORef sent True
+                connected <-
+                  sendToClient
+                    connection
+                    (encodeStatus (statusCode (responseStatus response)))
+                when connected (streamBody connection (brRead (responseBody response)))
+            )
+      )
+        `catches`
+          [ Handler (pure . Left . ForwardHttp)
+          , Handler (pure . Left . ForwardIo)
+          ]
+
+-- | A model server may close a fresh connection before its headers arrive, or
+-- the manager may hand back a connection the server has already closed. One
+-- retry covers both without risking a duplicate request after a response began.
+upstreamAttempts :: Int
+upstreamAttempts = 2
+
+retryableFailure :: ForwardFailure -> Bool
+retryableFailure (ForwardHttp (HttpExceptionRequest _ content)) =
+  case content of
+    IncompleteHeaders -> True
+    ConnectionClosed -> True
+    NoResponseDataReceived -> True
+    _ -> False
+retryableFailure _ = False
+
+failureText :: ForwardFailure -> String
+failureText (ForwardHttp exception) = displayException exception
+failureText (ForwardIo exception) = displayException exception
 
 streamBody :: Socket -> IO BS.ByteString -> IO ()
 streamBody connection readChunk = do
