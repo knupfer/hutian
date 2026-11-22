@@ -15,6 +15,12 @@ All notable changes to Hutian are documented here. The format follows
   `agent` now has the same shape as a subagent, except for the `description`
   that only selectable subagents need. The old `model` group is rejected as an
   unknown option.
+- Hutian's executables are now linked statically against their Haskell
+  libraries, so the sandbox `/nix/store` only carries their runtime
+  dependencies. The Haskell library, GHC package database, propagated build
+  inputs, and dependency documentation are no longer mounted; an empty
+  `sandbox.packages` gives a closure of under 30 store paths instead of roughly
+  300.
 
 ### Removed
 

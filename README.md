@@ -195,7 +195,9 @@ dedicated flake can return its outputs directly and run with `nix run .#hutian`.
 Each selected package's runtime closure is mounted under `/nix/store`, and its
 `bin` directory is added to `PATH`. Closures of any size work, because Hutian
 bind-mounts the closure into the root filesystem instead of passing one sandbox
-volume per store path.
+volume per store path. Hutian's own executables are linked statically against
+their Haskell libraries, so the GHC library and documentation closure is not
+part of the sandbox store.
 
 The `sandbox`, `endpoint`, `output`, and `agent` groups are required. `sandbox`
 configures the package closure, whether the host working directory is writable,
