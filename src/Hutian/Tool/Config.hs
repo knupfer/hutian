@@ -8,7 +8,6 @@
 -- malformed configuration is rejected before the shell accepts input.
 module Hutian.Tool.Config
   ( ToolConfig (..)
-  , WebsearchConfig (..)
   , SubagentConfig (..)
   , SubagentConfigs (..)
   , McpServerConfig (..)
@@ -55,13 +54,6 @@ newtype SubagentConfigs = SubagentConfigs
   }
   deriving stock (Eq, Show)
 
--- | A search endpoint plus the policy for the model's search tool.
-data WebsearchConfig = WebsearchConfig
-  { websearchUrl :: String
-  , websearchPolicy :: ToolPolicy
-  }
-  deriving stock (Eq, Show)
-
 -- | One configured MCP server. The JSON configuration is keyed by name; the
 -- discovered tools and session live in "Hutian.Tool.Catalog".
 data McpServerConfig = McpServerConfig
@@ -81,7 +73,6 @@ newtype McpServers = McpServers
 data ToolConfig = ToolConfig
   { toolShell :: ToolPolicy
   , toolWebfetch :: ToolPolicy
-  , toolWebsearch :: Maybe WebsearchConfig
   , toolSubagent :: [SubagentConfig]
   , toolMcp :: [McpServerConfig]
   }
@@ -94,7 +85,6 @@ defaultToolConfig =
   ToolConfig
     { toolShell = ToolDeny
     , toolWebfetch = ToolDeny
-    , toolWebsearch = Nothing
     , toolSubagent = []
     , toolMcp = []
     }
@@ -104,7 +94,6 @@ instance ToJSON ToolConfig where
     object
       [ "shell" .= toolShell config
       , "webfetch" .= toolWebfetch config
-      , "websearch" .= toolWebsearch config
       , "subagent" .= SubagentConfigs (toolSubagent config)
       , "mcp" .= McpServers (toolMcp config)
       ]
@@ -113,30 +102,15 @@ instance FromJSON ToolConfig where
   parseJSON = withObject "tools" $ \values -> do
     shell <- policyField values "shell" ToolDeny
     webfetch <- policyField values "webfetch" ToolDeny
-    websearch <- values .:? "websearch" >>= traverse parseWebsearch
     subagent <- values .:? "subagent" .!= SubagentConfigs []
     mcp <- values .:? "mcp" .!= McpServers []
     pure
       ToolConfig
         { toolShell = shell
         , toolWebfetch = webfetch
-        , toolWebsearch = websearch
         , toolSubagent = unSubagentConfigs subagent
         , toolMcp = unMcpServers mcp
         }
-
-instance ToJSON WebsearchConfig where
-  toJSON config =
-    object
-      [ "url" .= websearchUrl config
-      , "policy" .= websearchPolicy config
-      ]
-
-instance FromJSON WebsearchConfig where
-  parseJSON = withObject "websearch" $ \values -> do
-    url <- values .: "url" >>= requireNonEmpty "websearch URL"
-    policy <- values .:? "policy" .!= ToolAsk
-    pure (WebsearchConfig (Text.unpack url) policy)
 
 instance ToJSON SubagentConfig where
   toJSON agent =
@@ -219,12 +193,6 @@ parseSubagent nameKey = withObject "subagent" $ \values -> do
       , subagentSystemPrompt = Text.unpack systemPrompt
       , subagentTools = tools
       }
-
-parseWebsearch :: Value -> Parser WebsearchConfig
-parseWebsearch (String url) = do
-  checked <- requireNonEmpty "websearch URL" url
-  pure (WebsearchConfig (Text.unpack checked) ToolAsk)
-parseWebsearch value = parseJSON value
 
 requireNonEmpty :: String -> Text.Text -> Parser Text.Text
 requireNonEmpty label text

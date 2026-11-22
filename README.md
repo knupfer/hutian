@@ -28,9 +28,6 @@ advertises it but needs approval, and `"allow"` runs it automatically.
   `"ask"` mode; only starting a command does.
 - `tools.webfetch` covers the `webfetch` tool, which fetches an http or https URL
   from inside the sandbox.
-- `tools.websearch` is `null` to disable search, a search URL, or an attribute
-  set with `url` and `policy`. The `websearch` tool fetches that endpoint with
-  the URL-encoded query substituted for `{query}` or `%s`, or appended as `q=`.
 - `tools.subagent` maps selector names to subagents. Each has an upstream
   `model`, a `description`, a `systemPrompt`, and its own `tools`. The main
   model sees the names and descriptions and calls one by selector through the
@@ -137,10 +134,10 @@ instead of `shell`. It receives a job id immediately and uses `jobs`,
 command is shown under a bold teal `tool shell_background:` line, and the start
 result follows under `tool output:` in gray.
 
-The model can also fetch pages with `webfetch`, search with `websearch`, and
-delegate a self-contained task to a configured subagent. Web tools run in the
-sandbox and need direct networking (`sandbox.network = true`) unless the URL is
-reachable another way. A subagent gets its own system prompt and tools and runs
+The model can also fetch pages with `webfetch` and delegate a self-contained
+task to a configured subagent. Web tools run in the sandbox and need direct
+networking (`sandbox.network = true`) unless the URL is reachable another way. A
+subagent gets its own system prompt and tools and runs
 synchronously inside the tool call; only its final answer becomes the tool
 result in the main conversation. In every mode its work appears under a blue
 `subagent <name>:` line followed by the task prompt. Low abbreviates internal
@@ -215,7 +212,7 @@ system message, model name, llama.cpp endpoint, and model permissions:
 | `model.url` | relay | OpenAI-compatible chat or native `/completion` URL. `http://` and `https://` are supported. |
 | `model.systemPrompt` | model | System message for every LLM request. |
 | `model.verbosity` | model | `"low"`, `"normal"`, or `"high"` model/tool output detail. |
-| `model.tools` | model | Tool policies and configuration: `shell`, `webfetch`, `websearch`, `subagent`, and `mcp`. |
+| `model.tools` | model | Tool policies and configuration: `shell`, `webfetch`, `subagent`, and `mcp`. |
 | `model.apiKeyCommand` | host relay | Command that prints the upstream key, or `null` for unauthenticated forwarding. |
 
 Every option above is mandatory and has no default. Omitting one fails with an
@@ -261,7 +258,6 @@ A complete configuration:
         tools = {
           shell = "allow";
           webfetch = "deny";
-          websearch = null;
           subagent = { };
           mcp = { };
         };
@@ -287,12 +283,6 @@ request and also refuses to execute any tool call that arrives anyway. Use
 stays free), or `"allow"` to run model-requested commands automatically.
 `model.tools.webfetch` uses the same three values for the `webfetch` tool.
 
-`model.tools.websearch` is `null` to disable search, a URL string, or an
-attribute set such as `{ url = "https://search.example/?q="; policy = "ask"; }`.
-The endpoint is fetched in the sandbox, so `sandbox.network = true` is required
-for normal internet access. The query replaces `{query}` or `%s`, or is
-appended as `q=` when the URL has neither placeholder.
-
 `model.tools.subagent` maps selector names to subagents. Each selector has an
 upstream `model` name, a `description`, a `systemPrompt`, and its own `tools`
 with the same shape. The description and selector list appear in the
@@ -301,13 +291,12 @@ The model calls a selector with a self-contained prompt; the subagent cannot
 see the main conversation. A subagent runs serially with the same API and tool
 loop, never in parallel or in the background, and the caller receives only the
 final answer. For example, a cheap summarization model can be given only
-`webfetch` and `websearch` while the main model keeps the shell.
+`webfetch` while the main model keeps the shell.
 
 ```nix
 tools = {
   shell = "ask";
   webfetch = "deny";
-  websearch = null;
   subagent = {
     summarize = {
       model = "cheap-summary-model";
@@ -316,10 +305,6 @@ tools = {
       tools = {
         shell = "deny";
         webfetch = "allow";
-        websearch = {
-          url = "https://search.example/?q=";
-          policy = "allow";
-        };
         subagent = { };
         mcp = { };
       };
@@ -370,7 +355,6 @@ hutian.lib.mkPackage pkgs {
     tools = {
       shell = "allow";
       webfetch = "deny";
-      websearch = null;
       subagent = { };
       mcp = { };
     };
@@ -573,7 +557,7 @@ restricts only the model, and `model.apiKeyCommand` only affects the host relay.
   `sandbox.network = false`.
 - `model.tools.shell = "deny"` restricts only the model. Term mode can always run
   commands in the sandbox, including background jobs. The same applies to
-  `webfetch`, `websearch`, and subagents; subagents can use only the tools in
+  `webfetch`, and subagents; subagents can use only the tools in
   their own `tools` attribute.
 - Every process in the sandbox can connect to the relay socket. Shell commands
   can therefore use the configured model endpoint, but cannot choose a
@@ -597,7 +581,7 @@ restricts only the model, and `model.apiKeyCommand` only affects the host relay.
 - With `model.tools.shell = "deny"`, the model cannot run commands: the shell
   tool is omitted from LLM requests and tool calls are refused. `"ask"` requires
   approval before each command, while `"allow"` runs model commands
-  automatically. `webfetch` and `websearch` have their own policies, and a
+  automatically. `webfetch` has its own policy, and a
   subagent can use only its configured tools. Term mode still lets you run
   commands yourself.
 - A static `dumb-init` runs as PID 1 so background jobs that outlive their shell
@@ -620,14 +604,14 @@ The code keeps pure logic separate from IO:
   or multi-line.
 - `Hutian.Policy` defines the shared three-way tool policy (`deny`, `ask`, or
   `allow`) used by the LLM protocol and the tool loop. `Hutian.Tool.Config`
-  holds the pure tool policies, websearch endpoint, subagent configuration, and
+  holds the pure tool policies, subagent configuration, and
   MCP server list; `Hutian.Tool.Catalog` pairs that configuration with the MCP
   tools and sessions discovered at runtime.
 - `Hutian.Tool` turns a model tool call and the tool configuration into a pure
   `ToolPlan`. `Hutian.Tool.Exec` performs only the terminal, shell, web, MCP, or
   subagent IO that the plan requests, so refusals, approvals, commands, and job
-  actions can be tested without a terminal. `Hutian.Web` builds search URLs and
-  performs bounded HTTP fetches.
+  actions can be tested without a terminal. `Hutian.Web` performs bounded HTTP
+  fetches.
 - `Hutian.Mcp.Protocol` builds pure MCP JSON-RPC messages and decodes tools and
   results. `Hutian.Mcp` performs the Streamable HTTP handshake, discovery, and
   tool calls.
@@ -726,10 +710,10 @@ src/Hutian/Shell.hs             Captured shell command execution
 src/Hutian/Terminal.hs          Prompt driver over Prompt and Console
 src/Hutian/Tool.hs              Pure tool schemas, decoding, and planning
 src/Hutian/Tool/Catalog.hs      Runtime tool catalog and MCP state
-src/Hutian/Tool/Config.hs       Tool policies, websearch, subagent, and MCP config
+src/Hutian/Tool/Config.hs       Tool policies, subagent, and MCP config
 src/Hutian/Tool/Exec.hs         Terminal execution of tool-call plans
 src/Hutian/Verbosity.hs         Pure output-visibility decisions
-src/Hutian/Web.hs               Bounded HTTP fetches and search URLs
+src/Hutian/Web.hs               Bounded HTTP fetches
 app/Main.hs                     Shell executable entry point
 app/RelayMain.hs                Relay executable entry point
 test/                           Unit and property tests
@@ -751,7 +735,7 @@ state machine, the pure prompt reducer, prompt layout and rendering, command
 parsing, completion selection, history codecs, conversation history, LLM
 requests, streaming tool calls, Markdown rendering, code highlighting, path and
 shell helpers, strict option parsing, tool-call plans, tool, subagent, and MCP
-configuration, web search URLs, MCP protocol messages, stream presentation, the
+configuration, web fetches, MCP protocol messages, stream presentation, the
 background-job model, socket framing, and interrupt handling. It also includes
 integration tests for:
 

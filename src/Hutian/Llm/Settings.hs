@@ -29,7 +29,6 @@ import Hutian.Tool.Catalog (ToolCatalog, toolCatalog)
 import Hutian.Tool.Config
   ( SubagentConfigs (..)
   , ToolConfig (..)
-  , WebsearchConfig (..)
   , defaultToolConfig
   )
 import Hutian.Verbosity (Verbosity (..), verbosityFromArgument)
@@ -128,13 +127,11 @@ parseLlmSettingsWithFiles loaded arguments = do
         Nothing -> do
           shell <- policyOption "--model-shell" ToolDeny options
           webfetch <- policyOption "--model-webfetch" ToolDeny options
-          websearch <- websearchOption options
           subagent <- subagentsOption fileContents options
           pure
             defaultToolConfig
               { toolShell = shell
               , toolWebfetch = webfetch
-              , toolWebsearch = websearch
               , toolSubagent = subagent
               }
 
@@ -153,13 +150,6 @@ parseLlmSettingsWithFiles loaded arguments = do
                     ++ " (expected deny, ask, or allow)\n"
                     ++ llmUsage
                 )
-
-    websearchOption options =
-      case optionValueFor "--websearch-url" options of
-        Nothing -> Right Nothing
-        Just url -> do
-          policy <- policyOption "--model-websearch" ToolAsk options
-          pure (Just (WebsearchConfig url policy))
 
     subagentsOption fileContents options =
       case optionValueFor "--subagent-file" options of
@@ -218,32 +208,22 @@ llmOptionSpec =
   , ("--verbosity", OptionValue)
   , ("--model-shell", OptionValue)
   , ("--model-webfetch", OptionValue)
-  , ("--websearch-url", OptionValue)
-  , ("--model-websearch", OptionValue)
   , ("--tools-file", OptionValue)
   , ("--subagent-file", OptionValue)
   ]
 
--- | Reject malformed URLs, empty model names, empty socket paths, and an empty
--- search endpoint; an empty system prompt is allowed.
+-- | Reject malformed URLs, empty model names, and empty socket paths; an empty
+-- system prompt is allowed.
 settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Maybe FilePath -> Verbosity -> ToolConfig -> Either String LlmSettings
 settingsFrom url model systemPrompt socket verbosity tools = do
   validateLlmUrl url
   validateNonEmpty "--model" (unModelName model)
   maybe (Right ()) (validateNonEmpty "--llama-socket") socket
-  validateWebsearch tools
   pure (LlmSettings url model systemPrompt socket verbosity (toolCatalog tools))
   where
     validateNonEmpty name value
       | null value = Left ("empty value for " ++ name ++ "\n" ++ llmUsage)
       | otherwise = Right ()
-
-    validateWebsearch config =
-      case toolWebsearch config of
-        Just websearch
-          | null (websearchUrl websearch) ->
-              Left ("empty value for the websearch URL\n" ++ llmUsage)
-        _ -> Right ()
 
 -- | A URL must use http or https, name a host, and, if it has a path, start
 -- that path with a slash. Validation happens before any request is attempted.
@@ -293,4 +273,4 @@ missingMessage missing =
 
 llmUsage :: String
 llmUsage =
-  "usage: hutian-shell --llama-url URL --verbosity low|normal|high (--model MODEL | --model-file PATH) (--system-prompt PROMPT | --system-prompt-file PATH) [--llama-socket PATH] [--tools-file PATH] [--model-shell deny|ask|allow] [--model-webfetch deny|ask|allow] [--websearch-url URL] [--model-websearch deny|ask|allow] [--subagent-file PATH]"
+  "usage: hutian-shell --llama-url URL --verbosity low|normal|high (--model MODEL | --model-file PATH) (--system-prompt PROMPT | --system-prompt-file PATH) [--llama-socket PATH] [--tools-file PATH] [--model-shell deny|ask|allow] [--model-webfetch deny|ask|allow] [--subagent-file PATH]"

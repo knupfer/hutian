@@ -128,7 +128,6 @@
       toolOptionNames = [
         "shell"
         "webfetch"
-        "websearch"
         "subagent"
         "mcp"
       ];
@@ -171,42 +170,9 @@
           {
             shell = toolPolicy "${path}.shell" present.shell;
             webfetch = toolPolicy "${path}.webfetch" present.webfetch;
-            websearch = checkedWebsearch "${path}.websearch" present.websearch;
             subagent = checkedSubagents "${path}.subagent" present.subagent;
             mcp = checkedMcp "${path}.mcp" present.mcp;
           };
-
-      checkedWebsearch =
-        path: value:
-        if value == null then
-          null
-        else if builtins.isString value then
-          if value == "" then
-            throw "hutian: option `${path}` must be a non-empty search URL"
-          else
-            {
-              url = value;
-              policy = "ask";
-            }
-        else if builtins.isAttrs value then
-          let
-            names = [
-              "url"
-              "policy"
-            ];
-            present = allowedKeys path names (requiredKeys path [ "url" ] value);
-            policy = if present ? policy then toolPolicy "${path}.policy" present.policy else "ask";
-          in
-          {
-            url =
-              if builtins.isString present.url && present.url != "" then
-                present.url
-              else
-                throw "hutian: option `${path}.url` must be a non-empty string";
-            inherit policy;
-          }
-        else
-          throw "hutian: option `${path}` must be null, a search URL, or an attribute set with url and policy";
 
       checkedSubagents =
         path: value:
@@ -338,7 +304,6 @@
           tools = {
             shell = "ask";
             webfetch = "deny";
-            websearch = null;
             subagent = { };
             mcp = { };
           };
@@ -470,14 +435,6 @@
           allowedWebfetchLauncher = withModel {
             tools = {
               webfetch = "allow";
-            };
-          };
-          websearchLauncher = withModel {
-            tools = {
-              websearch = {
-                url = "https://search.invalid/?q=";
-                policy = "ask";
-              };
             };
           };
           subagentLauncher = withModel {
@@ -658,10 +615,7 @@
           web-tools-option = check "web-tools-option" [
             (contains "\"webfetch\":\"allow\"" allowedWebfetchLauncher)
             (contains "\"webfetch\":\"deny\"" probeLauncher)
-            (contains "\"websearch\":{" websearchLauncher)
-            (contains "\"policy\":\"ask\"" websearchLauncher)
-            (contains "\"url\":\"https://search.invalid/?q=\"" websearchLauncher)
-            (contains "\"websearch\":null" probeLauncher)
+            (omits "websearch must no longer be accepted" "websearch" allowedWebfetchLauncher)
           ];
 
           subagent-option = check "subagent-option" [

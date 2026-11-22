@@ -47,7 +47,6 @@ import Hutian.Tool.Config
   ( McpServerConfig (..)
   , SubagentConfig (..)
   , ToolConfig (..)
-  , WebsearchConfig (..)
   , defaultToolConfig
   )
 
@@ -66,7 +65,6 @@ data ToolRequest
   | RequestJobOutput JobId LineCount
   | RequestJobKill JobId
   | RequestWebfetch String
-  | RequestWebsearch String
   | RequestSubagent String String
   deriving stock (Eq, Show)
 
@@ -88,10 +86,6 @@ data ToolPlan
     PlanRunWebfetch String
   | -- | Show a URL and ask the user before fetching it.
     PlanApproveWebfetch String
-  | -- | Search the configured endpoint without asking.
-    PlanRunWebsearch WebsearchConfig String
-  | -- | Show a search query and ask the user before running it.
-    PlanApproveWebsearch WebsearchConfig String
   | -- | Run one configured subagent serially and return its answer.
     PlanSubagent SubagentConfig String
   | -- | Call an MCP tool without asking.
@@ -114,7 +108,6 @@ toolDefinitionsFor :: ToolCatalog -> [Value]
 toolDefinitionsFor catalog =
   shellTools
     ++ webfetchTools
-    ++ websearchTools
     ++ subagentTools
     ++ mcpTools
   where
@@ -131,11 +124,6 @@ toolDefinitionsFor catalog =
     webfetchTools
       | toolPolicyAdvertised (toolWebfetch config) = [webfetchTool]
       | otherwise = []
-    websearchTools =
-      case toolWebsearch config of
-        Just websearch
-          | toolPolicyAdvertised (websearchPolicy websearch) -> [websearchTool]
-        _ -> []
     subagentTools
       | null (toolSubagent config) = []
       | otherwise = [subagentTool (toolSubagent config)]
@@ -226,22 +214,6 @@ webfetchTool =
             object
               ["url" .= stringProperty "The http or https URL to fetch."]
         , "required" .= ["url" :: String]
-        ]
-    )
-
-websearchTool :: Value
-websearchTool =
-  functionTool
-    "websearch"
-    ( "Search the web using the configured search endpoint and return the "
-        ++ "result page. Use webfetch to read a promising result in full."
-    )
-    ( object
-        [ "type" .= ("object" :: String)
-        , "properties" .=
-            object
-              ["query" .= stringProperty "The search query."]
-        , "required" .= ["query" :: String]
         ]
     )
 
@@ -341,7 +313,6 @@ toolRequest call =
       RequestJobOutput <$> jobIdFrom arguments <*> linesFrom arguments
     "job_kill" -> RequestJobKill <$> (argumentsObject call >>= jobIdFrom)
     "webfetch" -> RequestWebfetch <$> stringArgument "url" call
-    "websearch" -> RequestWebsearch <$> stringArgument "query" call
     "subagent" -> do
       arguments <- argumentsObject call
       name <- stringFrom "name" arguments
@@ -366,7 +337,6 @@ planToolWith catalog call
         "job_output" -> shellInspectionPlan (toolShell config)
         "job_kill" -> shellInspectionPlan (toolShell config)
         "webfetch" -> webfetchPlan (toolWebfetch config)
-        "websearch" -> websearchPlan (toolWebsearch config)
         "subagent" -> subagentPlan (toolSubagent config)
         name -> PlanRefuse ("tool error: unknown tool: " ++ name)
   where
@@ -443,25 +413,6 @@ planToolWith catalog call
                   | otherwise -> PlanRunWebfetch validUrl
             Right _ -> PlanRefuse "tool error: the webfetch request is missing"
 
-    websearchPlan configured =
-      case configured of
-        Nothing -> PlanRefuse "tool error: the model websearch tool is disabled"
-        Just websearch
-          | websearchPolicy websearch == ToolDeny ->
-              PlanRefuse "tool error: the model websearch tool is disabled"
-          | all isSpace (websearchUrl websearch) ->
-              PlanRefuse "tool error: the websearch endpoint is empty"
-          | otherwise ->
-              case toolRequest call of
-                Left message -> PlanRefuse ("tool error: " ++ message)
-                Right (RequestWebsearch query)
-                  | all isSpace query ->
-                      PlanRefuse "tool error: the search query is empty"
-                  | websearchPolicy websearch == ToolAsk ->
-                      PlanApproveWebsearch websearch query
-                  | otherwise -> PlanRunWebsearch websearch query
-                Right _ -> PlanRefuse "tool error: the websearch request is missing"
-
     subagentPlan agents
       | null agents = PlanRefuse "tool error: the model subagent tool is disabled"
       | otherwise =
@@ -497,7 +448,6 @@ planTool policy call =
         RequestShell command -> shell command
         RequestShellBackground command -> background command
         RequestWebfetch _ -> PlanRefuse "tool error: the model webfetch tool is disabled"
-        RequestWebsearch _ -> PlanRefuse "tool error: the model websearch tool is disabled"
         RequestSubagent _ _ -> PlanRefuse "tool error: the model subagent tool is disabled"
 
     run mode command

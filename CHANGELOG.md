@@ -5,6 +5,11 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Removed
+
+- The `websearch` tool and its `model.tools.websearch` configuration. Use an
+  MCP search server instead; `webfetch` remains for direct page fetches.
+
 ## [0.9.0.0] - 2026-11-22
 
 ### Added
@@ -19,13 +24,9 @@ All notable changes to Hutian are documented here. The format follows
   Markdown before the first main `ask:` and before every subagent block, using
   `system:`/`tools:` or `system <name>:`/`tools <name>:` with dim text.
 - `model.tools` now configures every model tool. It has `shell`, `webfetch`,
-  `websearch`, `subagent`, and `mcp` keys, each validated recursively for
-  subagents.
+  `subagent`, and `mcp` keys, each validated recursively for subagents.
 - A `webfetch` tool with `deny`, `ask`, and `allow` policies. It runs in the
   sandbox, returns a bounded response body, and reports non-success statuses.
-- A configurable `websearch` tool. Set the key to `null` to disable it, or give
-  a URL with an optional policy. `{query}` and `%s` are replaced by the encoded
-  query; otherwise the query is appended with `q=`.
 - A serial `subagent` tool. `model.tools.subagent` maps selector names to
   subagents. Each selector has an upstream `model`, a `description`, a
   `systemPrompt`, and its own tools; the selector list and descriptions appear
@@ -39,8 +40,7 @@ All notable changes to Hutian are documented here. The format follows
   HTTP handshake at startup, discovers each server's tools, advertises them as
   `mcp__<server>__<tool>`, and calls them with the server's session id.
 - `--tools-file` carries the complete tool JSON to the shell, alongside
-  `--model-webfetch`, `--websearch-url`, `--model-websearch`, and
-  `--subagent-file` for direct use.
+  `--model-webfetch` and `--subagent-file` for direct use.
 
 ### Fixed
 

@@ -7,7 +7,6 @@ module Hutian.Web
   ( FetchResult (..)
   , fetchResultText
   , fetchUrl
-  , websearchRequestUrl
   ) where
 
 import Control.Exception
@@ -19,7 +18,6 @@ import Control.Exception
   )
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
-import Data.List (isInfixOf, isSuffixOf)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import qualified Data.Text.Encoding.Error as TextEncodingError
@@ -37,7 +35,6 @@ import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Header (hContentType)
 import Network.HTTP.Types.Status (statusCode)
-import Network.HTTP.Types.URI (urlEncode)
 
 -- | The useful parts of a fetched response.
 data FetchResult = FetchResult
@@ -113,46 +110,3 @@ decodeBody =
 
 decodeHeader :: BS.ByteString -> String
 decodeHeader = BS8.unpack
-
--- | Expand the configured search endpoint. @{query}@ and @%s@ are replaced by
--- the URL-encoded query. Without a placeholder the query is appended using
--- @q=@, which works for the common search-engine result pages.
-websearchRequestUrl :: String -> String -> String
-websearchRequestUrl template query
-  | null template = template
-  | "{query}" `isInfixOf` template =
-      replaceAll "{query}" encoded template
-  | "%s" `isInfixOf` template = replaceAll "%s" encoded template
-  | "=" `isSuffixOf` template = template ++ encoded
-  | "?" `isSuffixOf` template || "&" `isSuffixOf` template =
-      template ++ "q=" ++ encoded
-  | '?' `elem` template = template ++ "&q=" ++ encoded
-  | otherwise = template ++ "?q=" ++ encoded
-  where
-    encoded = BS8.unpack (urlEncode True (BS8.pack query))
-
-replaceAll :: String -> String -> String -> String
-replaceAll needle replacement = go
-  where
-    go [] = []
-    go text
-      | needle `isInfixOf` text =
-          case breakOn needle text of
-            (before, after) -> before ++ replacement ++ go after
-      | otherwise = text
-
-breakOn :: String -> String -> (String, String)
-breakOn needle = search
-  where
-    search [] = ([], [])
-    search text@(character : rest)
-      | needle `isPrefixOf` text = ([], drop (length needle) text)
-      | otherwise =
-          let (before, after) = search rest
-           in (character : before, after)
-
-isPrefixOf :: String -> String -> Bool
-isPrefixOf [] _ = True
-isPrefixOf _ [] = False
-isPrefixOf (left : lefts) (right : rights) =
-  left == right && isPrefixOf lefts rights

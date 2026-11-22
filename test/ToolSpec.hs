@@ -35,7 +35,6 @@ import Hutian.Tool.Config
   ( McpServerConfig (..)
   , SubagentConfig (..)
   , ToolConfig (..)
-  , WebsearchConfig (..)
   , defaultToolConfig
   )
 import Hutian.Tool.Exec (ToolRuntime (..), runToolCalls, runToolCallsWith)
@@ -142,7 +141,6 @@ tests =
               , "job_output"
               , "job_kill"
               , "webfetch"
-              , "websearch"
               , "subagent"
               ]
     , testCase "tool summaries put the full description below a # name line" $ do
@@ -198,27 +196,6 @@ tests =
           (toolCatalog (defaultToolConfig {toolWebfetch = ToolAllow}))
           (ToolCall "call-1" "webfetch" "{\"url\":\"file:///etc/passwd\"}")
           @?= PlanRefuse "tool error: only http and https URLs are supported"
-    , testCase "websearch requires configuration and a query" $ do
-        planToolWith (toolCatalog defaultToolConfig) websearchCall
-          @?= PlanRefuse "tool error: the model websearch tool is disabled"
-        planToolWith
-          configuredTools
-          websearchCall
-          @?= PlanRunWebsearch configuredWebsearch "hutian tools"
-        planToolWith
-          ( toolCatalog
-              ( defaultToolConfig
-                  { toolWebsearch =
-                      Just (configuredWebsearch {websearchPolicy = ToolAsk})
-                  }
-              )
-          )
-          websearchCall
-          @?= PlanApproveWebsearch (configuredWebsearch {websearchPolicy = ToolAsk}) "hutian tools"
-        planToolWith
-          configuredTools
-          (ToolCall "call-1" "websearch" "{\"query\":\"  \"}")
-          @?= PlanRefuse "tool error: the search query is empty"
     , testCase "subagent plans select a configured selector" $ do
         planToolWith configuredTools subagentCall
           @?= PlanSubagent cheapAgent "summarize this"
@@ -331,9 +308,6 @@ shellCall = ToolCall "call-1" "shell" "{\"command\":\"ls -la\"}"
 webfetchCall :: ToolCall
 webfetchCall = ToolCall "call-1" "webfetch" "{\"url\":\"https://example.test/page\"}"
 
-websearchCall :: ToolCall
-websearchCall = ToolCall "call-1" "websearch" "{\"query\":\"hutian tools\"}"
-
 subagentCall :: ToolCall
 subagentCall = ToolCall "call-1" "subagent" "{\"name\":\"cheap\",\"prompt\":\"summarize this\"}"
 
@@ -345,13 +319,6 @@ cheapAgent =
     , subagentDescription = "Summarize pages when current information is needed."
     , subagentSystemPrompt = "Summarize pages."
     , subagentTools = defaultToolConfig
-    }
-
-configuredWebsearch :: WebsearchConfig
-configuredWebsearch =
-  WebsearchConfig
-    { websearchUrl = "https://search.test/?q="
-    , websearchPolicy = ToolAllow
     }
 
 demoServerConfig :: McpServerConfig
@@ -408,7 +375,6 @@ configuredTools =
     ( defaultToolConfig
         { toolShell = ToolAllow
         , toolWebfetch = ToolAllow
-        , toolWebsearch = Just configuredWebsearch
         , toolSubagent = [cheapAgent]
         }
     )

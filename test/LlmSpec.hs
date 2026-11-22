@@ -153,7 +153,7 @@ unitTests =
     , testCase "parseLlmSettingsWithFiles reads a standalone subagent object" $
         parseLlmSettingsWithFiles
           [ ( "/run/subagents"
-            , "{\"cheap\":{\"model\":\"cheap-upstream\",\"description\":\"Summarize pages.\",\"systemPrompt\":\"Summarize.\",\"tools\":{\"shell\":\"deny\",\"webfetch\":\"allow\",\"websearch\":null,\"subagent\":{}}}}"
+            , "{\"cheap\":{\"model\":\"cheap-upstream\",\"description\":\"Summarize pages.\",\"systemPrompt\":\"Summarize.\",\"tools\":{\"shell\":\"deny\",\"webfetch\":\"allow\",\"subagent\":{}}}}"
             )
           ]
           [ "--llama-url"

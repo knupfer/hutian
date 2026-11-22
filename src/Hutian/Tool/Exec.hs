@@ -76,9 +76,8 @@ import Hutian.Tool.Catalog (McpServer (..), McpTool (..), ToolCatalog)
 import Hutian.Tool.Config
   ( McpServerConfig (..)
   , SubagentConfig (..)
-  , WebsearchConfig (..)
   )
-import Hutian.Web (fetchResultText, fetchUrl, websearchRequestUrl)
+import Hutian.Web (fetchResultText, fetchUrl)
 import Hutian.Verbosity
   ( RenderMode (..)
   , Verbosity (..)
@@ -166,15 +165,6 @@ runToolCall planner runtime conversation call =
         ToolApproved -> runWebfetchTool url
         ToolDenied -> refuse "tool error: the user did not approve the webfetch"
         ToolAborted -> aborted
-    PlanRunWebsearch configured query -> do
-      consoleWriteToolCommandIn context "websearch" query
-      runWebsearchTool configured query
-    PlanApproveWebsearch configured query -> do
-      approval <- confirmToolCommandIn context "websearch" query
-      case approval of
-        ToolApproved -> runWebsearchTool configured query
-        ToolDenied -> refuse "tool error: the user did not approve the websearch"
-        ToolAborted -> aborted
     PlanSubagent agent prompt -> runSubagentTool agent prompt
     PlanRunMcp server tool arguments -> do
       showMcpCall server tool arguments
@@ -255,10 +245,6 @@ runToolCall planner runtime conversation call =
           let text = fetchResultText fetched
           when showOutputBody (displayToolText text)
           pure (False, appendToolResult (toolCallId call) text conversation)
-
-    runWebsearchTool configured query = do
-      let url = websearchRequestUrl (websearchUrl configured) query
-      runWebfetchTool url
 
     runSubagentTool agent prompt = do
       result <- withSubagentCursor (toolRuntimeSubagent runtime agent prompt)

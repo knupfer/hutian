@@ -40,9 +40,6 @@
     # - `shell` controls the `shell`, `shell_background`, `jobs`, `job_output`,
     #   and `job_kill` tools.
     # - `webfetch` controls direct http/https fetches.
-    # - `websearch` is null to disable search, a search URL, or an attribute
-    #   set with `url` and `policy`. `{query}` or `%s` in the URL is replaced
-    #   by the URL-encoded query; without one, `q=` is appended.
     # - `subagent` maps selector names to subagents. The main model sees each
     #   name and description in the tool schema. Each subagent runs serially
     #   with its own upstream model, system prompt, and tools, and returns only
@@ -58,7 +55,6 @@
     tools = {
       shell = "ask";
       webfetch = "deny";
-      websearch = null;
       subagent = { };
       mcp = { };
 
@@ -70,11 +66,7 @@
       #   };
       # };
 
-      # Example web search and summarization subagent:
-      # websearch = {
-      #   url = "https://search.example/?q=";
-      #   policy = "ask";
-      # };
+      # Example web fetch and summarization subagent:
       # subagent = {
       #   summarize = {
       #     model = "cheap-summary-model";
@@ -83,10 +75,6 @@
       #     tools = {
       #       shell = "deny";
       #       webfetch = "allow";
-      #       websearch = {
-      #         url = "https://search.example/?q=";
-      #         policy = "allow";
-      #       };
       #       subagent = { };
       #       mcp = { };
       #     };
