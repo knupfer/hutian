@@ -22,11 +22,8 @@
     network = false;
   };
 
-  model = {
-    name = "your-model";
+  endpoint = {
     url = "http://127.0.0.1:8080/v1/chat/completions";
-    systemPrompt = "You are a helpful coding assistant.";
-    verbosity = "high";
 
     # Set apiKeyCommand to a command that prints the key, or null to forward
     # without authentication. For a key file on the host, use
@@ -34,13 +31,22 @@
     # /source or the Nix store, which the sandbox can read.
     # apiKeyCommand = "pass show llama/api-key";
     apiKeyCommand = null;
+  };
 
-    # Tool policies for the model. Term mode is always available.
+  output = {
+    verbosity = "high";
+  };
+
+  agent = {
+    model = "your-model";
+    systemPrompt = "You are a helpful coding assistant.";
+
+    # Tool policies for the agent. Term mode is always available.
     #
     # - `shell` controls the `shell`, `shell_background`, `jobs`, `job_output`,
     #   and `job_kill` tools.
     # - `webfetch` controls direct http/https fetches.
-    # - `subagent` maps selector names to subagents. The main model sees each
+    # - `subagent` maps selector names to subagents. The main agent sees each
     #   name and description in the tool schema. Each subagent runs serially
     #   with its own upstream model, system prompt, and tools, and returns only
     #   its final answer.

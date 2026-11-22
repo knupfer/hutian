@@ -20,7 +20,9 @@
       # the group order to make error messages match the documented order.
       groupNames = [
         "sandbox"
-        "model"
+        "endpoint"
+        "output"
+        "agent"
       ];
       optionGroups = {
         sandbox = [
@@ -29,13 +31,17 @@
           "nixDaemon"
           "network"
         ];
-        model = [
-          "name"
+        endpoint = [
           "url"
-          "systemPrompt"
-          "verbosity"
-          "tools"
           "apiKeyCommand"
+        ];
+        output = [
+          "verbosity"
+        ];
+        agent = [
+          "model"
+          "systemPrompt"
+          "tools"
         ];
       };
 
@@ -80,20 +86,25 @@
 
       unknownPaths =
         args:
-        let
-          isKnownGroup = name: optionGroups ? ${name};
-          unknownInGroup =
-            group:
-            let
-              isKnownKey = key: builtins.elem key optionGroups.${group};
-            in
-            map (key: [
-              group
-              key
-            ]) (builtins.filter (key: !isKnownKey key) (builtins.attrNames args.${group}));
-        in
-        map (name: [ name ]) (builtins.filter (name: !isKnownGroup name) (builtins.attrNames args))
-        ++ lib.concatMap unknownInGroup groupNames;
+        if !(builtins.isAttrs args) then
+          [ ]
+        else
+          let
+            isKnownGroup = name: optionGroups ? ${name};
+            unknownInGroup =
+              group:
+              let
+                isKnownKey = key: builtins.elem key optionGroups.${group};
+                groupValue = args.${group} or { };
+                keys = if builtins.isAttrs groupValue then builtins.attrNames groupValue else [ ];
+              in
+              map (key: [
+                group
+                key
+              ]) (builtins.filter (key: !isKnownKey key) keys);
+          in
+          map (name: [ name ]) (builtins.filter (name: !isKnownGroup name) (builtins.attrNames args))
+          ++ lib.concatMap unknownInGroup groupNames;
 
       rejectUnknown =
         helper: args:
@@ -260,31 +271,32 @@
       checkedOptions =
         helper: args:
         let
-          valid = rejectUnknown helper (requireOptions helper args);
-          inherit (valid) sandbox model;
+          valid = requireOptions helper (rejectUnknown helper args);
+          inherit (valid) sandbox endpoint;
+          inherit (valid) output agent;
         in
         {
           packages = checked "sandbox.packages" "a function of pkgs" builtins.isFunction sandbox.packages;
           writable = checked "sandbox.writable" "a boolean" builtins.isBool sandbox.writable;
           nixDaemon = checked "sandbox.nixDaemon" "a boolean" builtins.isBool sandbox.nixDaemon;
           network = checked "sandbox.network" "a boolean" builtins.isBool sandbox.network;
-          modelName = checked "model.name" "a non-empty string" isNonEmptyString model.name;
-          llamaUrl = checked "model.url" "a non-empty string" isNonEmptyString model.url;
-          systemPrompt = checked "model.systemPrompt" "a string" builtins.isString model.systemPrompt;
-          verbosity = checked "model.verbosity" ''"low", "normal", or "high"'' (
+          llamaUrl = checked "endpoint.url" "a non-empty string" isNonEmptyString endpoint.url;
+          apiKeyCommand =
+            if endpoint.apiKeyCommand == null then
+              null
+            else
+              checked "endpoint.apiKeyCommand" "a non-empty string" isNonEmptyString endpoint.apiKeyCommand;
+          verbosity = checked "output.verbosity" ''"low", "normal", or "high"'' (
             value:
             builtins.elem value [
               "low"
               "normal"
               "high"
             ]
-          ) model.verbosity;
-          tools = checkedTools "model.tools" model.tools;
-          apiKeyCommand =
-            if model.apiKeyCommand == null then
-              null
-            else
-              checked "model.apiKeyCommand" "a non-empty string" isNonEmptyString model.apiKeyCommand;
+          ) output.verbosity;
+          modelName = checked "agent.model" "a non-empty string" isNonEmptyString agent.model;
+          systemPrompt = checked "agent.systemPrompt" "a string" builtins.isString agent.systemPrompt;
+          tools = checkedTools "agent.tools" agent.tools;
         };
 
       # Used only by this flake's own package and its option checks. Consumers
@@ -296,18 +308,22 @@
           nixDaemon = false;
           network = false;
         };
-        model = {
-          name = "default";
+        endpoint = {
           url = "http://127.0.0.1:8080/v1/chat/completions";
-          systemPrompt = "You are a coding agent.";
+          apiKeyCommand = null;
+        };
+        output = {
           verbosity = "high";
+        };
+        agent = {
+          model = "default";
+          systemPrompt = "You are a coding agent.";
           tools = {
             shell = "ask";
             webfetch = "deny";
             subagent = { };
             mcp = { };
           };
-          apiKeyCommand = null;
         };
       };
 
@@ -359,7 +375,9 @@
       #   outputs = { nixpkgs, hutian, ... }:
       #     hutian.lib.mkFlake nixpkgs {
       #       sandbox = { ... };
-      #       model = { ... };
+      #       endpoint = { ... };
+      #       output = { ... };
+      #       agent = { ... };
       #     };
       #
       # That exposes `apps.<system>.hutian` and `packages.<system>.hutian`.
@@ -370,7 +388,9 @@
       #   apps.<system>.hutian =
       #     hutian.lib.mkApp pkgs {
       #       sandbox = { ... };
-      #       model = { ... };
+      #       endpoint = { ... };
+      #       output = { ... };
+      #       agent = { ... };
       #     };
       #
       # For a single package, use `hutian.lib.mkPackage` with the same
@@ -397,59 +417,64 @@
           # Probe values differ from the flake defaults so the checks can tell
           # configured values from hard-coded ones.
           probeOptions = lib.recursiveUpdate defaults {
-            model = {
-              name = "probe-model";
+            endpoint = {
               url = "http://probe.invalid/v1/chat/completions";
-              systemPrompt = "probe system prompt";
+            };
+            output = {
               verbosity = "low";
+            };
+            agent = {
+              model = "probe-model";
+              systemPrompt = "probe system prompt";
             };
           };
 
           launcherFor = extra: "${mkPackage pkgs (lib.recursiveUpdate probeOptions extra)}/bin/hutian";
           withSandbox = extra: launcherFor { sandbox = extra; };
-          withModel = extra: launcherFor { model = extra; };
+          withEndpoint = extra: launcherFor { endpoint = extra; };
+          withAgent = extra: launcherFor { agent = extra; };
 
           probeLauncher = launcherFor { };
-          queryLauncher = withModel {
+          queryLauncher = withEndpoint {
             url = "http://probe.invalid/v1/chat/completions?token=secret#frag";
           };
           writableLauncher = withSandbox { writable = true; };
           networkLauncher = withSandbox { network = true; };
           noNetworkLauncher = withSandbox { network = false; };
           nixDaemonLauncher = withSandbox { nixDaemon = true; };
-          allowedToolPolicyLauncher = withModel {
+          allowedToolPolicyLauncher = withAgent {
             tools = {
               shell = "allow";
             };
           };
-          deniedToolPolicyLauncher = withModel {
+          deniedToolPolicyLauncher = withAgent {
             tools = {
               shell = "deny";
             };
           };
-          askToolPolicyLauncher = withModel {
+          askToolPolicyLauncher = withAgent {
             tools = {
               shell = "ask";
             };
           };
-          allowedWebfetchLauncher = withModel {
+          allowedWebfetchLauncher = withAgent {
             tools = {
               webfetch = "allow";
             };
           };
-          subagentLauncher = withModel {
+          subagentLauncher = withAgent {
             tools = {
               subagent = {
                 probe = {
                   model = "probe-subagent";
                   description = "probe subagent description";
                   systemPrompt = "probe subagent prompt";
-                  tools = defaults.model.tools;
+                  tools = defaults.agent.tools;
                 };
               };
             };
           };
-          mcpLauncher = withModel {
+          mcpLauncher = withAgent {
             tools = {
               mcp = {
                 demo = {
@@ -459,7 +484,7 @@
               };
             };
           };
-          keyCommandLauncher = withModel { apiKeyCommand = "pass show k"; };
+          keyCommandLauncher = withEndpoint { apiKeyCommand = "pass show k"; };
 
           # Assertions for the generated launchers and scripts.
           grep = pattern: file: "${gnugrep}/bin/grep -F -- ${lib.escapeShellArg pattern} ${file}";
@@ -604,7 +629,7 @@
             (contains "--model-shell allow" allowedToolPolicyLauncher)
             (contains "--model-shell ask" askToolPolicyLauncher)
             (contains "--model-shell deny" deniedToolPolicyLauncher)
-            (omits "model.tools.shell = \"deny\" must not grant the model's shell tool" "--model-shell allow"
+            (omits "agent.tools.shell = \"deny\" must not grant the model's shell tool" "--model-shell allow"
               deniedToolPolicyLauncher
             )
             (contains "\"shell\":\"allow\"" allowedToolPolicyLauncher)
@@ -674,27 +699,32 @@
           api-key-rejected =
             checkRejected "api-key-rejected" "hutian: a removed, empty, or missing key command must be rejected"
               [
-                (withModel { apiKeyFile = "/run/secrets/k"; })
-                (withModel { apiKeyCommand = ""; })
+                (withEndpoint { apiKeyFile = "/run/secrets/k"; })
+                (withEndpoint { apiKeyCommand = ""; })
                 "${
                   mkPackage pkgs (
                     probeOptions
                     // {
-                      model = builtins.removeAttrs probeOptions.model [ "apiKeyCommand" ];
+                      endpoint = builtins.removeAttrs probeOptions.endpoint [ "apiKeyCommand" ];
                     }
                   )
                 }/bin/hutian"
               ];
 
           unknown-option-rejected =
-            checkRejected "unknown-option"
-              "hutian: unknown top-level, sandbox, or model options must be rejected"
+            checkRejected "unknown-option" "hutian: unknown top-level group or option must be rejected"
               [
                 (launcherFor { unknownOption = true; })
                 (withSandbox { unknownOption = true; })
-                (withModel { unknownOption = true; })
-                (withModel {
-                  tools = defaults.model.tools // {
+                (withEndpoint { unknownOption = true; })
+                (launcherFor {
+                  output = defaults.output // {
+                    unknownOption = true;
+                  };
+                })
+                (withAgent { unknownOption = true; })
+                (withAgent {
+                  tools = defaults.agent.tools // {
                     unknownTool = "ask";
                   };
                 })

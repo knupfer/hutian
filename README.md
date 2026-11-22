@@ -19,7 +19,7 @@ input is preceded by a bold pink `ask:` line and sent to the model. `Ctrl+X`
 switches to term mode, where a bold pink `shell:` line precedes input that runs
 through BusyBox `ash`, so shell builtins and redirection work as expected.
 
-The model's tools are controlled by the mandatory `model.tools` option. Each
+The model's tools are controlled by the mandatory `agent.tools` option. Each
 tool has a three-way policy: `"deny"` hides it and refuses any call, `"ask"`
 advertises it but needs approval, and `"allow"` runs it automatically.
 
@@ -37,7 +37,7 @@ advertises it but needs approval, and `"allow"` runs it automatically.
   server, lists its tools, and advertises them as
   `mcp__<server>__<tool>`. The server policy applies to every tool it exposes.
 
-The mandatory `model.verbosity` option controls model and tool output:
+The mandatory `output.verbosity` option controls model and tool output:
 
 - `"low"` prints tool calls with their arguments and main-turn answers. Other
   blocks, including a subagent's answer, show only their prompt, such as
@@ -90,7 +90,7 @@ root is read-only.
 ## Input modes
 
 The prompt starts in LLM mode. `Ctrl+X` switches between LLM and term mode
-regardless of `model.tools.shell`. Each mode keeps its own input buffer:
+regardless of `agent.tools.shell`. Each mode keeps its own input buffer:
 switching saves the current text and restores the text of the mode being
 entered. Submitted text goes to llama.cpp in LLM mode and to `/bin/sh -c` in
 term mode.
@@ -119,7 +119,7 @@ Every LLM request includes the session's prior conversation: earlier prompts,
 assistant replies, commands submitted in term mode, and tool calls with their
 results.
 
-The model can call the `shell` tool according to `model.tools.shell`. Each
+The model can call the `shell` tool according to `agent.tools.shell`. Each
 command runs with `/bin/sh -c` in the sandbox working directory, its output is
 streamed to the terminal in gray under a dimmed teal `tool output:` line, and
 the output is sent back to the model. Every call runs in a fresh shell, so `cd`,
@@ -197,10 +197,12 @@ Each selected package's runtime closure is mounted under `/nix/store`, and its
 bind-mounts the closure into the root filesystem instead of passing one sandbox
 volume per store path.
 
-The `sandbox` and `model` groups are required. `sandbox` configures the package
-closure, whether the host working directory is writable, whether Nix is
-available, and whether the sandbox may use the network; `model` configures the
-system message, model name, llama.cpp endpoint, and model permissions:
+The `sandbox`, `endpoint`, `output`, and `agent` groups are required. `sandbox`
+configures the package closure, whether the host working directory is writable,
+whether Nix is available, and whether the sandbox may use the network;
+`endpoint` selects the llama.cpp URL and the optional key command; `output`
+controls model and tool output detail; `agent` configures the model name, system
+message, and tool permissions:
 
 | Option | Applies to | Description |
 | --- | --- | --- |
@@ -208,16 +210,16 @@ system message, model name, llama.cpp endpoint, and model permissions:
 | `sandbox.writable` | sandbox | Allows writes to `/source`; `false` mounts it read-only. It protects integrity, not confidentiality. |
 | `sandbox.nixDaemon` | sandbox | Exposes the host `/nix/store` and Nix daemon socket. |
 | `sandbox.network` | sandbox | Controls direct gVisor networking. `true` uses `host` mode; `false` forces `none`. |
-| `model.name` | model | Model name sent to the endpoint. |
-| `model.url` | relay | OpenAI-compatible chat or native `/completion` URL. `http://` and `https://` are supported. |
-| `model.systemPrompt` | model | System message for every LLM request. |
-| `model.verbosity` | model | `"low"`, `"normal"`, or `"high"` model/tool output detail. |
-| `model.tools` | model | Tool policies and configuration: `shell`, `webfetch`, `subagent`, and `mcp`. |
-| `model.apiKeyCommand` | host relay | Command that prints the upstream key, or `null` for unauthenticated forwarding. |
+| `endpoint.url` | relay | OpenAI-compatible chat or native `/completion` URL. `http://` and `https://` are supported. |
+| `endpoint.apiKeyCommand` | host relay | Command that prints the upstream key, or `null` for unauthenticated forwarding. |
+| `output.verbosity` | output | `"low"`, `"normal"`, or `"high"` model/tool output detail. |
+| `agent.model` | agent | Model name sent to the endpoint. |
+| `agent.systemPrompt` | agent | System message for every LLM request. |
+| `agent.tools` | agent | Tool policies and configuration: `shell`, `webfetch`, `subagent`, and `mcp`. |
 
 Every option above is mandatory and has no default. Omitting one fails with an
 error that lists the missing option paths, and unknown options are rejected, so
-a misspelled key such as `model.foo` cannot be ignored silently.
+a misspelled key such as `agent.foo` cannot be ignored silently.
 
 Hutian expects an OpenAI-compatible llama.cpp chat endpoint; a native
 `/completion` URL is also supported. HTTPS endpoints are verified against the CA
@@ -248,20 +250,24 @@ A complete configuration:
         nixDaemon = false;
         network = true;
       };
-      model = {
-        name = "your-model";
+      endpoint = {
         url = "http://127.0.0.1:8080/v1/chat/completions";
+        apiKeyCommand = null;
+      };
+      output = {
+        verbosity = "high";
+      };
+      agent = {
+        model = "your-model";
         systemPrompt = ''
           You are a careful coding assistant working in a sandboxed shell.
         '';
-        verbosity = "high";
         tools = {
           shell = "allow";
           webfetch = "deny";
           subagent = { };
           mcp = { };
         };
-        apiKeyCommand = null;
       };
     };
 }
@@ -276,14 +282,14 @@ Set `sandbox.network = false` to give the sandbox gVisor's `none` network mode.
 This is a hard gate: `GVISOR_NETWORK` cannot re-enable networking. The host
 relay still provides model traffic over its Unix socket.
 
-Set `model.tools.shell = "deny"` to disable the model's shell tools. Term mode
+Set `agent.tools.shell = "deny"` to disable the model's shell tools. Term mode
 remains available for your own commands. Hutian omits the tools from every LLM
 request and also refuses to execute any tool call that arrives anyway. Use
 `"ask"` to keep the tools available with per-command approval (job inspection
 stays free), or `"allow"` to run model-requested commands automatically.
-`model.tools.webfetch` uses the same three values for the `webfetch` tool.
+`agent.tools.webfetch` uses the same three values for the `webfetch` tool.
 
-`model.tools.subagent` maps selector names to subagents. Each selector has an
+`agent.tools.subagent` maps selector names to subagents. Each selector has an
 upstream `model` name, a `description`, a `systemPrompt`, and its own `tools`
 with the same shape. The description and selector list appear in the
 `subagent` tool schema, so the main model knows when each subagent is useful.
@@ -313,7 +319,7 @@ tools = {
 };
 ```
 
-`model.tools.mcp` maps names to remote MCP servers. Hutian performs the
+`agent.tools.mcp` maps names to remote MCP servers. Hutian performs the
 Streamable HTTP handshake at startup, listens to `tools/list`, and advertises
 each tool to the model as `mcp__<server>__<tool>`. Tool calls use the session
 id returned by the server. The policy applies to every tool on that server.
@@ -347,18 +353,22 @@ hutian.lib.mkPackage pkgs {
     nixDaemon = false;
     network = true;
   };
-  model = {
-    name = "your-model";
+  endpoint = {
     url = "http://127.0.0.1:8080/v1/chat/completions";
-    systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
+    apiKeyCommand = null;
+  };
+  output = {
     verbosity = "high";
+  };
+  agent = {
+    model = "your-model";
+    systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
     tools = {
       shell = "allow";
       webfetch = "deny";
       subagent = { };
       mcp = { };
     };
-    apiKeyCommand = null;
   };
 }
 ```
@@ -383,7 +393,9 @@ outputs = { nixpkgs, hutian, ... }:
         nixDaemon = false;
         network = false;
       };
-      model = { ... };
+      endpoint = { ... };
+      output = { ... };
+      agent = { ... };
     };
   in
   {
@@ -405,9 +417,9 @@ flake and [`examples/existing-project.nix`](./examples/existing-project.nix)
 for adding Hutian to an existing project flake. Both import the shared
 configuration in [`examples/hutian.nix`](./examples/hutian.nix).
 
-The launcher passes `model.url` to the shell as `--llama-url`, keeping only the
-path so the query and fragment stay on the host. It writes `model.name` and
-`model.systemPrompt` to short-lived files passed as `--model-file` and
+The launcher passes `endpoint.url` to the shell as `--llama-url`, keeping only
+the path so the query and fragment stay on the host. It writes `agent.model` and
+`agent.systemPrompt` to short-lived files passed as `--model-file` and
 `--system-prompt-file`; the shell removes those files before it accepts input,
 so they do not appear in the process listing. The shell reads no Hutian-specific
 environment variables. The sandbox receives the CA bundle path as
@@ -481,27 +493,27 @@ Hutian always routes model traffic through a host-side relay. The shell is
 launched with `--llama-socket /run/hutian/llm.sock` and the logical URL
 `http://hutian-relay/...`, which preserves the chat or completion API shape
 without exposing the real upstream host, credentials, query, or fragment
-embedded in `model.url`.
+embedded in `endpoint.url`.
 
-`model.apiKeyCommand` is mandatory: set it to `null` when no key is used, or to
-a command that prints the key when the upstream requires one:
+`endpoint.apiKeyCommand` is mandatory: set it to `null` when no key is used, or
+to a command that prints the key when the upstream requires one:
 
 ```nix
 hutian.lib.mkFlake nixpkgs {
   # ...
-  model.apiKeyCommand = "pass show llama/api-key";
+  endpoint.apiKeyCommand = "pass show llama/api-key";
 }
 ```
 
 To read a key from a file, use `cat`:
 
 ```nix
-model.apiKeyCommand = "cat /run/secrets/hutian-key";
+endpoint.apiKeyCommand = "cat /run/secrets/hutian-key";
 ```
 
 The launcher starts `hutian-llm-relay` on the host. With a command configured,
 the relay reads the key from standard input; the launcher runs the command and
-pipes its output into the relay. `model.apiKeyCommand` runs in the foreground
+pipes its output into the relay. `endpoint.apiKeyCommand` runs in the foreground
 before the sandbox starts, so commands that prompt for a password (for example
 `passage`) work normally and can be cancelled with `Ctrl+C`. Without a key the
 relay starts with `--no-auth` and forwards requests without an `Authorization`
@@ -515,7 +527,7 @@ but cannot unlink or replace the socket; the directory holds no key material.
 
 The relay uses a private framing protocol over the socket instead of HTTP. The
 sandbox sends only the request body and closes its write half. The relay sends
-that body to the fixed path and query of `model.url` with `Content-Type:
+that body to the fixed path and query of `endpoint.url` with `Content-Type:
 application/json`, `Accept: text/event-stream`, `Connection: close`, and, when
 a key is configured, `Authorization: Bearer <key>`. A fresh upstream connection
 is used for every request, so an idle keep-alive close cannot surface as a
@@ -526,17 +538,18 @@ or headers, cannot redirect the key, and cannot use the relay as a general
 authenticated proxy. The relay does not follow upstream redirects, and the key
 never appears in argv, environment variables, files, or the Nix store.
 
-Keep `model.apiKeyCommand` as a command that fetches the key, for example from
-`pass` or `sops`, rather than embedding the key in the command string, because
-option values live in the Nix store. The command runs on the host, but do not
-read the key from `/source` or the Nix store: the sandbox can read both. Use
-`model.apiKeyCommand = null` when the upstream does not need a key.
+Keep `endpoint.apiKeyCommand` as a command that fetches the key, for example
+from `pass` or `sops`, rather than embedding the key in the command string,
+because option values live in the Nix store. The command runs on the host, but
+do not read the key from `/source` or the Nix store: the sandbox can read both.
+Use `endpoint.apiKeyCommand = null` when the upstream does not need a key.
 
 ## Permission model
 
 Hutian separates sandbox capabilities from model-tool permissions. The
-`sandbox.*` options apply to everything running in the sandbox; `model.tools`
-restricts only the model, and `model.apiKeyCommand` only affects the host relay.
+`sandbox.*` options apply to everything running in the sandbox; `agent.tools`
+restricts only the model, and `endpoint.apiKeyCommand` only affects the host
+relay.
 
 - `sandbox.network = false` removes direct sandbox networking only. The relay
   socket can still reach the fixed model upstream, and `sandbox.nixDaemon = true`
@@ -548,15 +561,15 @@ restricts only the model, and `model.apiKeyCommand` only affects the host relay.
   created or changed on the host appear in the next sandbox command; a command
   that keeps its own working directory there sees the view from when it started.
 - `sandbox.writable = false` does not prevent the model from reading `/source`
-  and sending what it reads upstream. Set `model.tools.shell = "deny"`,
-  `model.tools.webfetch = "deny"`, and disable subagents or use a local model
+  and sending what it reads upstream. Set `agent.tools.shell = "deny"`,
+  `agent.tools.webfetch = "deny"`, and disable subagents or use a local model
   endpoint if confidentiality matters.
 - `sandbox.network = true` defaults to gVisor's `host` mode, so the sandbox
   shares the host network namespace: loopback, LAN, and the Internet.
   `GVISOR_NETWORK` can narrow it to `none` but cannot widen
   `sandbox.network = false`.
-- `model.tools.shell = "deny"` restricts only the model. Term mode can always run
-  commands in the sandbox, including background jobs. The same applies to
+- `agent.tools.shell = "deny"` restricts only the model. Term mode can always
+  run commands in the sandbox, including background jobs. The same applies to
   `webfetch`, and subagents; subagents can use only the tools in
   their own `tools` attribute.
 - Every process in the sandbox can connect to the relay socket. Shell commands
@@ -575,10 +588,10 @@ restricts only the model, and `model.apiKeyCommand` only affects the host relay.
   host relay socket instead.
 - Model traffic always uses the relay socket at `/run/hutian/llm.sock`, which
   accepts only a request body and forwards it to one fixed target, so it cannot
-  be used as a general proxy. With `model.apiKeyCommand`, the key stays on the
-  host and is never visible to the sandbox. Without a key
-  (`model.apiKeyCommand = null`), the relay forwards unauthenticated.
-- With `model.tools.shell = "deny"`, the model cannot run commands: the shell
+  be used as a general proxy. With `endpoint.apiKeyCommand`, the key stays on
+  the host and is never visible to the sandbox. Without a key
+  (`endpoint.apiKeyCommand = null`), the relay forwards unauthenticated.
+- With `agent.tools.shell = "deny"`, the model cannot run commands: the shell
   tool is omitted from LLM requests and tool calls are refused. `"ask"` requires
   approval before each command, while `"allow"` runs model commands
   automatically. `webfetch` has its own policy, and a

@@ -5,6 +5,17 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The flake configuration is split into `sandbox`, `endpoint`, `output`, and
+  `agent` groups. `model.name` is now `agent.model`, matching subagents, which
+  already use `<name>.model`. The shared host-side settings moved out of the
+  agent: `model.url` is now `endpoint.url`, `model.apiKeyCommand` is
+  `endpoint.apiKeyCommand`, and `model.verbosity` is `output.verbosity`.
+  `agent` now has the same shape as a subagent, except for the `description`
+  that only selectable subagents need. The old `model` group is rejected as an
+  unknown option.
+
 ### Removed
 
 - The `websearch` tool and its `model.tools.websearch` configuration. Use an
