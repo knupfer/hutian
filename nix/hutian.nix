@@ -50,6 +50,18 @@ let
   # command, so it never appears in the process listing.
   toolsJson = builtins.toJSON tools;
 
+  # Keep user-provided text out of the generated shell script. Embedding it
+  # directly makes shellcheck treat backticks and dollar signs in prompts or
+  # tool descriptions as unexpanded expressions. These files live in the store
+  # and are copied into a private directory at startup.
+  configModel = pkgs.writeText "hutian-model" modelName;
+  configSystemPrompt = pkgs.writeText "hutian-system-prompt" systemPrompt;
+  configTools = pkgs.writeText "hutian-tools" toolsJson;
+  logicalUrlFile = pkgs.writeText "hutian-logical-url" relayLogicalUrl;
+  upstreamUrlFile = pkgs.writeText "hutian-upstream-url" llamaUrl;
+  apiKeyCommandFile =
+    if apiKeyCommand != null then pkgs.writeText "hutian-api-key-command" apiKeyCommand else null;
+
   # The relay is always present. Without a configured key it forwards without
   # an Authorization header and never reads standard input.
   relayLaunch =
@@ -60,10 +72,10 @@ let
         # and piped to the relay, so it stays out of argv and the environment.
         # The relay creates its socket only after the key is available, so the
         # launcher waits here rather than timing out.
-        key=$(eval ${escapeShellArg apiKeyCommand})
+        key=$(eval "$(cat ${apiKeyCommandFile})")
         printf '%s' "$key" | ${relayBin} \
           --listen "$relay_socket" \
-          --upstream ${escapeShellArg llamaUrl} &
+          --upstream "$(cat ${upstreamUrlFile})" &
         unset key
       ''
     else
@@ -71,7 +83,7 @@ let
         # No key is configured, so the relay forwards without Authorization.
         ${relayBin} \
           --listen "$relay_socket" \
-          --upstream ${escapeShellArg llamaUrl} \
+          --upstream "$(cat ${upstreamUrlFile})" \
           --no-auth &
       '';
 
@@ -298,14 +310,13 @@ let
         # The shell reads these files once and removes them before it can run
         # any command.
         config_dir=$(private_dir hutian-config)
-        printf '%s' ${escapeShellArg modelName} > "$config_dir/model"
-        printf '%s' ${escapeShellArg systemPrompt} > "$config_dir/system-prompt"
-        printf '%s' ${escapeShellArg toolsJson} > "$config_dir/tools"
-        chmod 600 "$config_dir/model" "$config_dir/system-prompt" "$config_dir/tools"
+        install -m 600 ${configModel} "$config_dir/model"
+        install -m 600 ${configSystemPrompt} "$config_dir/system-prompt"
+        install -m 600 ${configTools} "$config_dir/tools"
         config_volumes=(-volume "$config_dir:/run/hutian-config")
 
         set -- ${hutianShell}/bin/hutian-shell \
-          --llama-url ${escapeShellArg relayLogicalUrl} \
+          --llama-url "$(cat ${logicalUrlFile})" \
           --model-file /run/hutian-config/model \
           --system-prompt-file /run/hutian-config/system-prompt \
           "''${llm_args[@]}"

@@ -30,6 +30,13 @@ All notable changes to Hutian are documented here. The format follows
   memory for the lifetime of the shell, so `/tmp/hutian-shell-history` and
   `/tmp/hutian-llm-history` are no longer written.
 
+### Fixed
+
+- Launchers no longer fail shellcheck when the model name, system prompt, tool
+  configuration, endpoint URL, or API key command contains backticks or `$`.
+  These values are now installed from store files instead of being embedded in
+  the generated launcher script.
+
 ## [0.9.0.0] - 2026-11-22
 
 ### Added

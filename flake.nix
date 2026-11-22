@@ -486,6 +486,25 @@
           };
           keyCommandLauncher = withEndpoint { apiKeyCommand = "pass show k"; };
 
+          # User text must not affect shellcheck: prompts, descriptions, and
+          # key commands can legitimately contain backticks and dollar signs.
+          shellTextLauncher = withAgent {
+            systemPrompt = "Use `backticks` and $HOME in prompts.";
+            tools = {
+              subagent = {
+                probe = {
+                  model = "probe-subagent";
+                  description = "Call `search` for $HOME.";
+                  systemPrompt = "Run `search` without expanding $HOME.";
+                  tools = defaults.agent.tools;
+                };
+              };
+            };
+          };
+          shellTextKeyLauncher = withEndpoint {
+            apiKeyCommand = "$(pass show key)";
+          };
+
           # Assertions for the generated launchers and scripts.
           grep = pattern: file: "${gnugrep}/bin/grep -F -- ${lib.escapeShellArg pattern} ${file}";
 
@@ -497,6 +516,17 @@
               exit 1
             fi
           '';
+
+          # Launchers keep user-provided text in store files instead of the
+          # generated script. Follow one such reference so assertions can read
+          # the actual configuration.
+          configFile =
+            launcher: name:
+            pkgs.runCommand "hutian-${name}-config" { } ''
+              path=$(${gnugrep}/bin/grep -o -m 1 "/nix/store/[a-z0-9]*-${name}" ${launcher})
+              test -n "$path"
+              ${coreutils}/bin/cat "$path" > $out
+            '';
 
           check =
             name: assertions:
@@ -536,14 +566,10 @@
               "--llama-url"
               "--model-file"
               "--system-prompt-file"
-              "probe system prompt"
-              "probe-model"
-              "http://probe.invalid/v1/chat/completions"
               "SYSTEM_CERTIFICATE_PATH"
               "ca-bundle.crt"
               "hutian-llm-relay"
               "--no-auth"
-              "hutian-relay/v1/chat/completions"
               "--llama-socket"
               "/run/hutian/llm.sock"
               "/run/hutian-config/model"
@@ -551,12 +577,26 @@
               "/run/hutian-config/tools"
               "--tools-file"
               "--verbosity low"
-              "\"shell\":\"ask\""
-              "\"webfetch\":\"deny\""
               "/bin/dumb-init"
               "--single-child"
               "--host-uds=open"
               "--model-shell ask"
+            ]
+            ++ map (pattern: contains pattern (configFile probeLauncher "hutian-model")) [
+              "probe-model"
+            ]
+            ++ map (pattern: contains pattern (configFile probeLauncher "hutian-system-prompt")) [
+              "probe system prompt"
+            ]
+            ++ map (pattern: contains pattern (configFile probeLauncher "hutian-upstream-url")) [
+              "http://probe.invalid/v1/chat/completions"
+            ]
+            ++ map (pattern: contains pattern (configFile probeLauncher "hutian-logical-url")) [
+              "hutian-relay/v1/chat/completions"
+            ]
+            ++ map (pattern: contains pattern (configFile probeLauncher "hutian-tools")) [
+              "\"shell\":\"ask\""
+              "\"webfetch\":\"deny\""
             ]
             ++ [
               (omits "the launcher must not set HUTIAN_ environment variables" "HUTIAN_" probeLauncher)
@@ -564,15 +604,18 @@
           );
 
           logical-url = check "logical-url" [
-            (contains "hutian-relay/v1/chat/completions" queryLauncher)
+            (contains "hutian-relay/v1/chat/completions" (configFile queryLauncher "hutian-logical-url"))
             (omits "the sandbox URL must not include the upstream query"
               "hutian-relay/v1/chat/completions?token=secret"
-              queryLauncher
+              (configFile queryLauncher "hutian-logical-url")
             )
             (omits "the sandbox URL must not include the upstream fragment"
               "hutian-relay/v1/chat/completions#frag"
-              queryLauncher
+              (configFile queryLauncher "hutian-logical-url")
             )
+            (contains "http://probe.invalid/v1/chat/completions?token=secret#frag" (
+              configFile queryLauncher "hutian-upstream-url"
+            ))
           ];
 
           relay-read-only = check "relay-read-only" [
@@ -632,30 +675,40 @@
             (omits "agent.tools.shell = \"deny\" must not grant the model's shell tool" "--model-shell allow"
               deniedToolPolicyLauncher
             )
-            (contains "\"shell\":\"allow\"" allowedToolPolicyLauncher)
-            (contains "\"shell\":\"deny\"" deniedToolPolicyLauncher)
+            (contains "\"shell\":\"allow\"" (configFile allowedToolPolicyLauncher "hutian-tools"))
+            (contains "\"shell\":\"deny\"" (configFile deniedToolPolicyLauncher "hutian-tools"))
             (contains "hutian-llm-relay" deniedToolPolicyLauncher)
           ];
 
           web-tools-option = check "web-tools-option" [
-            (contains "\"webfetch\":\"allow\"" allowedWebfetchLauncher)
-            (contains "\"webfetch\":\"deny\"" probeLauncher)
-            (omits "websearch must no longer be accepted" "websearch" allowedWebfetchLauncher)
+            (contains "\"webfetch\":\"allow\"" (configFile allowedWebfetchLauncher "hutian-tools"))
+            (contains "\"webfetch\":\"deny\"" (configFile probeLauncher "hutian-tools"))
+            (omits "websearch must no longer be accepted" "websearch" (
+              configFile allowedWebfetchLauncher "hutian-tools"
+            ))
+          ];
+
+          shellcheck-user-text = check "shellcheck-user-text" [
+            (contains "Use `backticks` and $HOME" (configFile shellTextLauncher "hutian-system-prompt"))
+            (contains "Call `search` for $HOME." (configFile shellTextLauncher "hutian-tools"))
+            (contains "$(pass show key)" (configFile shellTextKeyLauncher "hutian-api-key-command"))
           ];
 
           subagent-option = check "subagent-option" [
-            (contains "\"subagent\":{}" probeLauncher)
-            (contains "\"subagent\":{\"probe\":{" subagentLauncher)
-            (contains "\"model\":\"probe-subagent\"" subagentLauncher)
-            (contains "\"description\":\"probe subagent description\"" subagentLauncher)
-            (contains "\"systemPrompt\":\"probe subagent prompt\"" subagentLauncher)
+            (contains "\"subagent\":{}" (configFile probeLauncher "hutian-tools"))
+            (contains "\"subagent\":{\"probe\":{" (configFile subagentLauncher "hutian-tools"))
+            (contains "\"model\":\"probe-subagent\"" (configFile subagentLauncher "hutian-tools"))
+            (contains "\"description\":\"probe subagent description\"" (
+              configFile subagentLauncher "hutian-tools"
+            ))
+            (contains "\"systemPrompt\":\"probe subagent prompt\"" (configFile subagentLauncher "hutian-tools"))
           ];
 
           mcp-option = check "mcp-option" [
-            (contains "\"mcp\":{}" probeLauncher)
-            (contains "\"mcp\":{\"demo\":{" mcpLauncher)
-            (contains "\"url\":\"https://mcp.example.test/mcp\"" mcpLauncher)
-            (contains "\"policy\":\"ask\"" mcpLauncher)
+            (contains "\"mcp\":{}" (configFile probeLauncher "hutian-tools"))
+            (contains "\"mcp\":{\"demo\":{" (configFile mcpLauncher "hutian-tools"))
+            (contains "\"url\":\"https://mcp.example.test/mcp\"" (configFile mcpLauncher "hutian-tools"))
+            (contains "\"policy\":\"ask\"" (configFile mcpLauncher "hutian-tools"))
           ];
 
           launcher-volumes = check "launcher-volumes" [
@@ -683,7 +736,12 @@
               "--llama-socket"
               "/run/hutian/llm.sock"
               "--host-uds=open"
-              "http://hutian-relay/v1/chat/completions"
+            ]
+            ++ [
+              (contains "http://hutian-relay/v1/chat/completions" (
+                configFile keyCommandLauncher "hutian-logical-url"
+              ))
+              (contains "pass show k" (configFile keyCommandLauncher "hutian-api-key-command"))
             ]
             ++ [
               (omits "the launcher must wait for the key command without a fixed timeout"
