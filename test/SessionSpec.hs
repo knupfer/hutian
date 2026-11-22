@@ -24,13 +24,7 @@ import Hutian.History
   , HistoryTarget (..)
   , recordHistory
   )
-import Hutian.History.Store
-  ( HistoryFile (..)
-  , loadHistoryFile
-  )
 import Hutian.Session
-import System.Directory (getTemporaryDirectory, removeFile)
-import System.IO (hClose, openTempFile)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -124,20 +118,11 @@ tests =
           )
           initialSession
         readIORef prompts >>= (@?= 3)
-    , testCase "rememberInput appends non-blank entries to the matching file" $ do
-        termPath <- emptyTempFile "hutian-session-term"
-        llmPath <- emptyTempFile "hutian-session-llm"
-        let fileFor TermHistory = HistoryFile termPath
-            fileFor LlmHistory = HistoryFile llmPath
-        history <- rememberInput fileFor TermInput "ls" (History [] [])
+    , testCase "rememberInput records non-blank entries in the matching history" $ do
+        let history = rememberInput TermInput "ls" (History [] [])
         history @?= History ["ls"] []
-        ignored <- rememberInput fileFor TermInput "   " history
-        ignored @?= history
-        _ <- rememberInput fileFor LlmInput "hello" history
-        loadHistoryFile (HistoryFile termPath) >>= (@?= ["ls"])
-        loadHistoryFile (HistoryFile llmPath) >>= (@?= ["hello"])
-        removeFile termPath
-        removeFile llmPath
+        rememberInput TermInput "   " history @?= history
+        rememberInput LlmInput "hello" history @?= History ["ls"] ["hello"]
     ]
 
 initialSession :: Session
@@ -161,11 +146,3 @@ noEffects =
 targetFor :: InputMode -> HistoryTarget
 targetFor LlmInput = LlmHistory
 targetFor TermInput = TermHistory
-
-emptyTempFile :: String -> IO FilePath
-emptyTempFile template = do
-  directory <- getTemporaryDirectory
-  (path, handle) <- openTempFile directory template
-  hClose handle
-  removeFile path
-  pure path

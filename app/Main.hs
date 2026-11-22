@@ -35,11 +35,6 @@ import Hutian.Editor
 import Hutian.Highlight (sanitizeOutputBytes)
 import Hutian.History
   ( History (..)
-  , HistoryTarget (..)
-  )
-import Hutian.History.Store
-  ( HistoryFile (..)
-  , loadHistoryFile
   )
 import Hutian.Interrupt
   ( InterruptFlag
@@ -87,13 +82,13 @@ import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
 import System.IO (stderr, stdout)
 
--- | The interactive loop's effects, bound to the real terminal, history files,
--- job runtime, and model client.
+-- | The interactive loop's effects, bound to the real terminal, in-memory
+-- history, job runtime, and model client.
 sessionEffects :: FilePath -> [String] -> JobRuntime -> LlmSettings -> InterruptFlag -> SessionEffects
 sessionEffects workingDirectory commands jobs settings interruptFlag =
   SessionEffects
     { sessionPrompt = promptForInput workingDirectory commands
-    , sessionRememberInput = rememberInput historyFileFor
+    , sessionRememberInput = \mode text history -> pure (rememberInput mode text history)
     , sessionClearInterrupt = clearInterrupt interruptFlag
     , sessionRunInput =
         runInput workingDirectory jobs settings interruptFlag
@@ -116,8 +111,6 @@ main = do
       workingDirectory <- getCurrentDirectory
       setCurrentDirectory "/"
       commands <- executableCommands
-      termHistory <- loadHistoryFile termHistoryFile
-      llmHistory <- loadHistoryFile llmHistoryFile
       interruptFlag <- newInterruptFlag
       installInterruptHandler interruptFlag
       withJobRuntime jobDirectory workingDirectory $ \jobs -> do
@@ -125,7 +118,7 @@ main = do
               Session
                 { sessionMode = LlmInput
                 , sessionBuffers = initialPromptBuffers
-                , sessionHistory = History termHistory llmHistory
+                , sessionHistory = History [] []
                 , sessionConversation = emptyConversation
                 }
         when (settingVerbosity settings == VerbosityHigh) $ do
@@ -153,10 +146,6 @@ discoverMcpSettings settings = do
       { settingTools =
           (settingTools settings) {catalogMcp = servers}
       }
-
-historyFileFor :: HistoryTarget -> HistoryFile
-historyFileFor TermHistory = termHistoryFile
-historyFileFor LlmHistory = llmHistoryFile
 
 runInput :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> InputMode -> String -> Conversation -> IO Conversation
 runInput workingDirectory jobs settings interruptFlag mode text conversation =
@@ -328,7 +317,3 @@ runStreamingCommand workingDirectory command = do
 
 jobDirectory :: FilePath
 jobDirectory = "/tmp/hutian-jobs"
-
-termHistoryFile, llmHistoryFile :: HistoryFile
-termHistoryFile = HistoryFile "/tmp/hutian-shell-history"
-llmHistoryFile = HistoryFile "/tmp/hutian-llm-history"

@@ -9,6 +9,9 @@ All notable changes to Hutian are documented here. The format follows
 
 - The `websearch` tool and its `model.tools.websearch` configuration. Use an
   MCP search server instead; `webfetch` remains for direct page fetches.
+- File-backed term and LLM prompt history. Both histories are now kept only in
+  memory for the lifetime of the shell, so `/tmp/hutian-shell-history` and
+  `/tmp/hutian-llm-history` are no longer written.
 
 ## [0.9.0.0] - 2026-11-22
 

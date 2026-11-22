@@ -1,4 +1,4 @@
--- | The interactive session loop. Prompting, history persistence, interrupt
+-- | The interactive session loop. Prompting, history recording, interrupt
 -- clearing, and input execution are injected effects, so the sequencing can be
 -- tested without a terminal, a model, or a job runtime.
 module Hutian.Session
@@ -12,13 +12,8 @@ import Hutian.Conversation (Conversation)
 import Hutian.Editor (InputMode, PromptBuffers)
 import Hutian.History
   ( History
-  , HistoryTarget
   , inputDestination
   , recordHistory
-  )
-import Hutian.History.Store
-  ( HistoryFile
-  , appendHistoryFile
   )
 
 -- | Everything the loop carries between inputs. Settings and runtime handles
@@ -34,7 +29,7 @@ data Session = Session
 data SessionEffects = SessionEffects
   { -- | Read one input, returning the mode and buffers for the next prompt.
     sessionPrompt :: InputMode -> History -> PromptBuffers -> IO (InputMode, Maybe String, PromptBuffers)
-  , -- | Persist and record a submitted input.
+  , -- | Record a submitted input in memory.
     sessionRememberInput :: InputMode -> String -> History -> IO History
   , -- | Clear a previous interrupt before running the input.
     sessionClearInterrupt :: IO ()
@@ -70,17 +65,9 @@ runSession effects session = do
           , sessionConversation = conversation
           }
 
--- | Append a non-blank input to the file for its mode and record it in memory.
--- Storage failures are ignored by "Hutian.History.Store".
-rememberInput
-  :: (HistoryTarget -> HistoryFile)
-  -> InputMode
-  -> String
-  -> History
-  -> IO History
-rememberInput historyFile mode text history =
+-- | Record a non-blank input in the history for its mode.
+rememberInput :: InputMode -> String -> History -> History
+rememberInput mode text history =
   case inputDestination mode text of
-    Nothing -> pure history
-    Just target -> do
-      appendHistoryFile (historyFile target) text
-      pure (recordHistory target text history)
+    Nothing -> history
+    Just target -> recordHistory target text history

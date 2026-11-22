@@ -1,4 +1,4 @@
--- | Pure command-history navigation, input routing, and history-file encoding.
+-- | Pure in-memory command-history navigation and input routing.
 module Hutian.History
   ( History (..)
   , historyForMode
@@ -9,10 +9,6 @@ module Hutian.History
   , HistoryTarget (..)
   , inputDestination
   , recordHistory
-  , encodeHistory
-  , decodeHistory
-  , escapeHistory
-  , unescapeHistory
   ) where
 
 import Data.Char (isSpace)
@@ -69,14 +65,6 @@ recordHistory TermHistory entry history =
 recordHistory LlmHistory entry history =
   history { llmHistory = llmHistory history ++ [entry] }
 
--- | Encode history entries into the on-disk line format.
-encodeHistory :: [String] -> String
-encodeHistory = concatMap (\entry -> escapeHistory entry ++ "\n")
-
--- | Decode the on-disk line format into history entries.
-decodeHistory :: String -> [String]
-decodeHistory = map unescapeHistory . lines
-
 historyUp :: [String] -> HistoryState -> Prompt -> Maybe (HistoryState, Prompt)
 historyUp entries state prompt
   | null entries = Nothing
@@ -113,16 +101,3 @@ historyDown entries state prompt =
 entryAt :: [String] -> Int -> String
 entryAt entries offset =
   fromMaybe "" (atMay entries (length entries - 1 - offset))
-
-escapeHistory :: String -> String
-escapeHistory = concatMap escapeChar
-  where
-    escapeChar '\\' = "\\\\"
-    escapeChar '\n' = "\\n"
-    escapeChar char = [char]
-
-unescapeHistory :: String -> String
-unescapeHistory [] = []
-unescapeHistory ('\\' : '\\' : rest) = '\\' : unescapeHistory rest
-unescapeHistory ('\\' : 'n' : rest) = '\n' : unescapeHistory rest
-unescapeHistory (char : rest) = char : unescapeHistory rest

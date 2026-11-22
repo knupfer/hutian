@@ -13,13 +13,10 @@ import Hutian.Editor
   )
 import Data.Maybe (fromMaybe)
 import Hutian.History
-import Hutian.History.Store (HistoryFile (..), appendHistoryFile, loadHistoryFile)
-import System.FilePath ((</>))
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck (testProperty)
-import TestSupport (withTemporaryDirectory)
 
 tests :: TestTree
 tests =
@@ -71,38 +68,19 @@ unitTests =
           @?= History ["old", "ls"] ["llm"]
         recordHistory LlmHistory "hello" (History ["term"] [])
           @?= History ["term"] ["hello"]
-    , testCase "history encoding round-trips entries" $ do
-        encodeHistory [] @?= ""
-        encodeHistory ["a"] @?= "a\n"
-        decodeHistory (encodeHistory ["a\nb", "c\\d"]) @?= ["a\nb", "c\\d"]
     , testCase "multiline history entries are restored" $ do
         let start = initialPrompt
             (_, prompt) = recallUp ["line one\nline two"] initialHistoryState start
         promptText prompt @?= "line one\nline two\n"
         unRow (promptRow prompt) @?= 1
         unColumn (promptColumn prompt) @?= 8
-    , testCase "history encoding preserves backslashes and newlines" $ do
-        escapeHistory "plain" @?= "plain"
-        escapeHistory "a\\b" @?= "a\\\\b"
-        escapeHistory "a\nb" @?= "a\\nb"
-        unescapeHistory (escapeHistory "a\\n\nb") @?= "a\\n\nb"
-    , testCase "history files round-trip through disk" $
-        withTemporaryDirectory "hutian-history" $ \directory -> do
-          let path = HistoryFile (directory </> "history")
-          appendHistoryFile path "first command"
-          appendHistoryFile path "multi\nline"
-          loaded <- loadHistoryFile path
-          loaded @?= ["first command", "multi\nline"]
     ]
 
 propertyTests :: TestTree
 propertyTests =
   testGroup
     "properties"
-    [ testProperty "history encoding round-trips" prop_escapeRoundTrip
-    , testProperty "history codec round-trips lists" prop_historyCodec
-    , testProperty "encoded history has no newlines" prop_escapeNoNewlines
-    , testProperty "recalling every entry and returning restores the draft" prop_historyRoundTrip
+    [ testProperty "recalling every entry and returning restores the draft" prop_historyRoundTrip
     , testProperty "recording history grows it by exactly one entry" prop_recordHistoryGrows
     ]
 
@@ -114,10 +92,6 @@ recallDown :: [String] -> HistoryState -> Prompt -> (HistoryState, Prompt)
 recallDown history state prompt =
   fromMaybe (state, prompt) (historyDown history state prompt)
 
-prop_escapeRoundTrip :: String -> Property
-prop_escapeRoundTrip text =
-  unescapeHistory (escapeHistory text) === text
-
 prop_recordHistoryGrows :: Bool -> String -> [String] -> [String] -> Property
 prop_recordHistoryGrows useLlm entry term llm =
   counterexample (show updated) $
@@ -128,14 +102,6 @@ prop_recordHistoryGrows useLlm entry term llm =
 
 historySize :: History -> Int
 historySize (History term llm) = length term + length llm
-
-prop_historyCodec :: [String] -> Property
-prop_historyCodec entries =
-  decodeHistory (encodeHistory entries) === entries
-
-prop_escapeNoNewlines :: String -> Property
-prop_escapeNoNewlines text =
-  property ('\n' `notElem` escapeHistory text)
 
 prop_historyRoundTrip :: [String] -> String -> Property
 prop_historyRoundTrip history draft =

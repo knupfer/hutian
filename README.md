@@ -162,8 +162,8 @@ state do not carry over. Use absolute paths or combine steps in one command, for
 example `cd sub && make`.
 
 `Ctrl+C` cancels the current input or command without terminating the shell.
-Term command history is stored in `/tmp/hutian-shell-history`, and LLM prompt
-history in `/tmp/hutian-llm-history`.
+Term command history and LLM prompt history are kept in memory for the lifetime
+of the shell and are not written to disk.
 
 ## Background jobs
 
@@ -632,7 +632,7 @@ The code keeps pure logic separate from IO:
 - `Hutian.Verbosity` decides which reasoning, tool, and subagent blocks are
   visible for low, normal, and high output. `Hutian.Context` keeps the main or
   subagent palette choice independent of the rendering layer.
-- `Hutian.History` owns the pure on-disk history codec.
+- `Hutian.History` owns pure in-memory history navigation and input routing.
 - `Hutian.Conversation` is a pure model of chat messages, tool calls, and tool
   results, including the abort results recorded when an interrupt stops a
   turn; `Hutian.Paths` holds the pure path-completion helpers.
@@ -657,8 +657,7 @@ The code keeps pure logic separate from IO:
   `Hutian.Console`.
 - `Hutian.Shell` returns captured command output as `CommandResult` data instead
   of printing it.
-- `Hutian.History.Store` and `Hutian.Interrupt` are the file and signal
-  boundaries.
+- `Hutian.Interrupt` is the signal boundary.
 - `Main` wires the boundaries together and drives the tool-call loop.
 
 The package uses `GHC2021` and compiles with strict warnings and `-Werror`.
@@ -681,8 +680,7 @@ src/Hutian/Context.hs           Shared main/subagent turn context
 src/Hutian/Conversation.hs      Conversation entries, tool results, and aborts
 src/Hutian/Editor.hs            Prompt text, cursor, and layout state
 src/Hutian/Highlight.hs         Skylighting for fenced code and shell input
-src/Hutian/History.hs           Pure history codec and navigation
-src/Hutian/History/Store.hs     History file IO
+src/Hutian/History.hs           Pure in-memory history navigation
 src/Hutian/Http/Body.hs         Bounded HTTP response body reads
 src/Hutian/Http/Wire.hs         Shared socket framing helpers
 src/Hutian/Interrupt.hs         Interrupt flag and signal handling
@@ -746,7 +744,7 @@ integration tests for:
   and response streaming
 - MCP discovery and tool calls against a local Streamable HTTP server, including
   session ids, SSE messages, and JSON-RPC errors
-- history file persistence
+- in-memory history recording and recall
 - shell command execution and command discovery
 - background jobs: output capture, status, bounded log tails, and stopping a
   process group
