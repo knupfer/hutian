@@ -5,6 +5,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0.0] - 2026-11-22
+
 ### Added
 
 - A mandatory `model.verbosity` option (`"low"`, `"normal"`, or `"high"`).

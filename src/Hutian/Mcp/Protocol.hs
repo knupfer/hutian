@@ -67,7 +67,7 @@ mcpInitializeRequest identifier =
           , "clientInfo"
               .= object
                 [ "name" .= ("hutian" :: String)
-                , "version" .= ("0.8" :: String)
+                , "version" .= ("0.9" :: String)
                 ]
           ]
     ]
