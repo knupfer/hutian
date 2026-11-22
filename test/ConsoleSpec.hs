@@ -4,6 +4,7 @@ import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
 import Hutian.Console
   ( consoleWriteGrayLine
   , consoleWriteLine
+  , consoleWriteSubagentPrompt
   , consoleWriteToolDefinitions
   , withGrayOutput
   )
@@ -89,6 +90,14 @@ tests =
           assertBool
             "headings use the dim Markdown palette"
             ("38;2;82;108;150" `isInfixOf` output)
+    , testCase "a subagent prompt shows its name above the task" $
+        withPseudoTerminalOutput $ \readOutput -> do
+          consoleWriteSubagentPrompt "cheap" "summarize this"
+          output <- readOutput
+          let plain = filter (/= '\r') (stripAnsi output)
+          assertBool
+            "the label sits above the task"
+            ("subagent cheap:\nsummarize this" `isInfixOf` plain)
     , testCase "an empty tool catalog prints no tools block" $
         withPseudoTerminalOutput $ \readOutput -> do
           consoleWriteToolDefinitions MainContext "" []

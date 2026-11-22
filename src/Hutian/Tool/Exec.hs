@@ -19,7 +19,6 @@ import Hutian.Console
   , consoleWriteErrorLine
   , consoleWriteGrayLine
   , consoleWriteLine
-  , consoleWriteSubagentPrompt
   , consoleWriteToolCommandIn
   , consoleWriteToolLabelIn
   , consoleWriteToolTextIn
@@ -262,7 +261,6 @@ runToolCall planner runtime conversation call =
       runWebfetchTool url
 
     runSubagentTool agent prompt = do
-      consoleWriteSubagentPrompt (subagentName agent) prompt
       result <- withSubagentCursor (toolRuntimeSubagent runtime agent prompt)
       case result of
         Left message -> do

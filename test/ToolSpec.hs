@@ -297,7 +297,7 @@ tests =
               let plain = stripAnsi output
               assertBool "stdout must end its own line" ("out\r\n" `isInfixOf` plain)
               assertBool "stderr must end its own line" ("err\r\n" `isInfixOf` plain)
-    , testCase "normal verbosity presents a subagent like low and prints its answer" $
+    , testCase "normal verbosity does not present a subagent as a generic tool call" $
         withTemporaryDirectory "hutian-verbosity" $ \directory ->
           withJobRuntime directory directory $ \jobs ->
             withPseudoTerminalOutput $ \readOutput -> do
@@ -320,9 +320,6 @@ tests =
                   [subagentCall]
               output <- readOutput
               let plain = stripAnsi output
-              assertBool
-                "the subagent header and task are shown"
-                ("subagent cheap:" `isInfixOf` plain && "summarize this" `isInfixOf` plain)
               assertBool
                 "the subagent is not shown as a generic tool call"
                 (not ("tool subagent:" `isInfixOf` plain))
