@@ -6,7 +6,7 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy.Char8 as LBS8
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, isSuffixOf)
 import qualified Data.Text as Text
 import Hutian.Conversation
   ( ConversationEntry (..)
@@ -39,6 +39,7 @@ import Hutian.Tool.Config
   , defaultToolConfig
   )
 import Hutian.Tool.Exec (ToolRuntime (..), runToolCalls, runToolCallsWith)
+import Hutian.Tool.Summary (toolSummaryLines)
 import Hutian.Verbosity (Verbosity (..))
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -144,6 +145,43 @@ tests =
               , "websearch"
               , "subagent"
               ]
+    , testCase "tool summaries put the full description below a # name line" $ do
+        let summaries = toolSummaryLines (toolDefinitionsFor configuredTools)
+            shellDescription =
+              "Run a shell command with /bin/sh -c in the sandbox. "
+                ++ "Use it to inspect files, run builds and tests, and modify the workspace. "
+                ++ "Each command starts in the sandbox working directory in a fresh shell, "
+                ++ "so cd and exported variables do not persist between calls; use absolute "
+                ++ "paths or combine steps such as cd dir && cmd in one command."
+        assertBool "name line" ("# shell(command: str)" `elem` summaries)
+        assertBool
+          "the description follows on the next line"
+          (["# shell(command: str)", shellDescription] `isInfixOf` summaries)
+        assertBool "a tool without parameters" ("# jobs()" `elem` summaries)
+        assertBool
+          "required parameters precede optional ones"
+          ("# job_output(job_id: int, lines?: int)" `elem` summaries)
+        assertBool
+          "enum values are inlined"
+          ("# subagent(name: cheap, prompt: str)" `elem` summaries)
+    , testCase "tool summaries keep long descriptions complete" $ do
+        let summaries = toolSummaryLines (toolDefinitionsFor configuredTools)
+        assertBool
+          "the end of a long description is present"
+          (any (isSuffixOf "block the turn.") summaries)
+        assertBool
+          "no summary line is truncated"
+          (not (any ("…" `isSuffixOf`) summaries))
+    , testCase "tool summaries keep description line breaks" $ do
+        let summaries = toolSummaryLines (toolDefinitionsFor mcpToolsConfig)
+        assertBool
+          "the server line stays on its own line"
+          ( [ "# mcp__demo__search(query?: str)"
+            , "Search the web."
+            , "MCP server: demo."
+            ]
+              `isInfixOf` summaries
+          )
     , testCase "webfetch plans follow the configured policy" $ do
         planToolWith
           (toolCatalog (defaultToolConfig {toolWebfetch = ToolAllow}))

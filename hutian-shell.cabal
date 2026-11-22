@@ -96,6 +96,7 @@ library
       Hutian.Tool.Catalog
       Hutian.Tool.Config
       Hutian.Tool.Exec
+      Hutian.Tool.Summary
       Hutian.Verbosity
       Hutian.Web
   build-depends:

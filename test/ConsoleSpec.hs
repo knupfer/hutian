@@ -4,10 +4,12 @@ import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
 import Hutian.Console
   ( consoleWriteGrayLine
   , consoleWriteLine
+  , consoleWriteToolDefinitions
   , withGrayOutput
   )
 import Hutian.Render
   ( ToolApproval (..)
+  , TurnContext (..)
   , approvalDecisionText
   , approvalForKey
   , approvePromptText
@@ -66,6 +68,32 @@ tests =
           consoleWriteGrayLine "job\ESC[2J started"
           output <- readOutput
           stripAnsi output @?= "job [2J started\r\n"
+    , testCase "tool summaries print under a tools label, one per line" $
+        withPseudoTerminalOutput $ \readOutput -> do
+          consoleWriteToolDefinitions
+            MainContext
+            ""
+            [ "# shell(command: str)"
+            , "Run a shell command."
+            , "# jobs()"
+            , "List background jobs."
+            ]
+          output <- readOutput
+          let plain = filter (/= '\r') (stripAnsi output)
+          assertBool "tools label" ("tools:\n" `isInfixOf` plain)
+          assertBool
+            "one summary per line"
+            ( "# shell(command: str)\nRun a shell command.\n# jobs()\nList background jobs."
+                `isInfixOf` plain
+            )
+          assertBool
+            "headings use the dim Markdown palette"
+            ("38;2;82;108;150" `isInfixOf` output)
+    , testCase "an empty tool catalog prints no tools block" $
+        withPseudoTerminalOutput $ \readOutput -> do
+          consoleWriteToolDefinitions MainContext "" []
+          output <- readOutput
+          output @?= ""
     ]
 
 countOccurrences :: String -> String -> Int

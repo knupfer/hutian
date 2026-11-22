@@ -2,7 +2,7 @@
 module Main (main) where
 
 import Control.Exception (finally)
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Hutian.Command
   ( TerminalInput (..)
   , classifyTerminalInput
@@ -13,6 +13,9 @@ import Hutian.Console
   , consoleIsInteractive
   , consoleWrite
   , consoleWriteErrorLine
+  , consoleWriteSubagentPrompt
+  , consoleWriteSystemPrompt
+  , consoleWriteToolDefinitions
   , printOutputLabel
   , resetTerminal
   , withGrayOutput
@@ -73,9 +76,11 @@ import Hutian.Shell
   , runShellCommandStreaming
   )
 import Hutian.Terminal (promptForInput)
+import Hutian.Tool (toolDefinitionsFor)
 import Hutian.Tool.Catalog (ToolCatalog (..), toolCatalog)
 import Hutian.Tool.Config (SubagentConfig (..), ToolConfig (..))
 import Hutian.Tool.Exec (ToolRuntime (..), runToolCallsWith)
+import Hutian.Tool.Summary (toolSummaryLines)
 import Hutian.Verbosity (Verbosity (..))
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.Environment (getArgs)
@@ -123,6 +128,15 @@ main = do
                 , sessionHistory = History termHistory llmHistory
                 , sessionConversation = emptyConversation
                 }
+        when (settingVerbosity settings == VerbosityHigh) $ do
+          consoleWriteSystemPrompt
+            MainContext
+            ""
+            (unSystemPrompt (settingSystemPrompt settings))
+          consoleWriteToolDefinitions
+            MainContext
+            ""
+            (toolSummaryLines (toolDefinitionsFor (settingTools settings)))
         runSession
           (sessionEffects workingDirectory commands jobs settings interruptFlag)
           session
@@ -147,7 +161,8 @@ historyFileFor LlmHistory = llmHistoryFile
 runInput :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> InputMode -> String -> Conversation -> IO Conversation
 runInput workingDirectory jobs settings interruptFlag mode text conversation =
   case mode of
-    LlmInput -> runLlmInput workingDirectory jobs settings interruptFlag conversation text
+    LlmInput ->
+      runLlmInput workingDirectory jobs settings interruptFlag conversation text
     TermInput -> runTerminalInput workingDirectory conversation text
 
 -- | Run a prompt through the model, executing any tools it requests and
@@ -214,7 +229,8 @@ toolRuntime context verbosity workingDirectory jobs settings interruptFlag =
     , toolRuntimeWorkingDirectory = workingDirectory
     , toolRuntimeContext = context
     , toolRuntimeVerbosity = verbosity
-    , toolRuntimeSubagent = runSubagent workingDirectory jobs settings interruptFlag
+    , toolRuntimeSubagent =
+        runSubagent workingDirectory jobs settings interruptFlag
     }
 
 runSubagent
@@ -230,7 +246,8 @@ runSubagent workingDirectory jobs settings interruptFlag agent prompt = do
     discoverMcpServers
       consoleWriteErrorLine
       (toolMcp (subagentTools agent))
-  let subagentSettings =
+  let name = subagentName agent
+      subagentSettings =
         settings
           { settingModel = ModelName (subagentModel agent)
           , settingSystemPrompt = SystemPrompt (subagentSystemPrompt agent)
@@ -245,6 +262,16 @@ runSubagent workingDirectory jobs settings interruptFlag agent prompt = do
           jobs
           subagentSettings
           interruptFlag
+  when (settingVerbosity settings == VerbosityHigh) $ do
+    consoleWriteSystemPrompt
+      SubagentContext
+      name
+      (subagentSystemPrompt agent)
+    consoleWriteToolDefinitions
+      SubagentContext
+      name
+      (toolSummaryLines (toolDefinitionsFor (settingTools subagentSettings)))
+  consoleWriteSubagentPrompt name prompt
   (_, finalResult) <-
     runModelTurn
       interruptFlag

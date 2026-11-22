@@ -49,7 +49,11 @@ The mandatory `model.verbosity` option controls model and tool output:
   like low, but its final answer streams in dim colors, using the same styling
   as a thinking block.
 - `"high"` prints everything, including full reasoning and every subagent block.
-  Subagent answers still use the dim styling.
+  Subagent answers still use the dim styling. It also prints the exact system
+  message and, per tool, a `# name(...)` heading followed by its complete
+  description, rendered as dim Markdown, with dim labels and text: `system:`
+  then `tools:` before the first main `ask:`, and `system <name>:` then
+  `tools <name>:` before every subagent block.
 
 Term mode is always available. Model commands run through the same `/bin/sh -c`
 path as term mode and are shown with a bold teal `tool shell:` line. In `"ask"`

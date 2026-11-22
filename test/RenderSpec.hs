@@ -202,6 +202,40 @@ tests =
         reasoningLabelText SubagentContext @?= dimBlueForeground ++ "think:" ++ reset
         answerLabelText MainContext @?= boldTeal ++ "answer:" ++ reset
         answerLabelText SubagentContext @?= dimBlueForeground ++ "answer:" ++ reset
+    , testCase "system prompts use the turn palette and keep the text" $ do
+        let mainOutput = systemPromptText MainContext "" "system rules\n"
+            subagentOutput =
+              systemPromptText SubagentContext "cheap" "subagent rules\n"
+        assertBool
+          "dim teal main label"
+          ((dimTealForeground ++ "system:" ++ reset) `isInfixOf` mainOutput)
+        assertBool
+          "dim blue subagent label"
+          ((dimBlueForeground ++ "system cheap:" ++ reset) `isInfixOf` subagentOutput)
+        assertBool
+          "dim main text"
+          ((grayForeground ++ "system rules\n" ++ reset) `isInfixOf` mainOutput)
+        assertBool
+          "dim subagent text"
+          ((grayForeground ++ "subagent rules\n" ++ reset) `isInfixOf` subagentOutput)
+        systemPromptText MainContext "" "" @?= ""
+    , testCase "tool definitions use the turn palette and keep the JSON" $ do
+        let mainOutput = toolsPromptText MainContext "" "[\n  {\"name\": \"shell\"}\n]\n"
+            subagentOutput =
+              toolsPromptText SubagentContext "cheap" "[]\n"
+        assertBool
+          "dim teal main label"
+          ((dimTealForeground ++ "tools:" ++ reset) `isInfixOf` mainOutput)
+        assertBool
+          "dim blue subagent label"
+          ((dimBlueForeground ++ "tools cheap:" ++ reset) `isInfixOf` subagentOutput)
+        assertBool
+          "dim main JSON"
+          ((grayForeground ++ "[\n  {\"name\": \"shell\"}\n]\n" ++ reset) `isInfixOf` mainOutput)
+        assertBool
+          "dim subagent JSON"
+          ((grayForeground ++ "[]\n" ++ reset) `isInfixOf` subagentOutput)
+        toolsPromptText MainContext "" "" @?= ""
     , testCase "grayOutputText wraps terminal output and resets" $
         grayOutputText True "hello"
           @?= grayForeground ++ "hello" ++ reset

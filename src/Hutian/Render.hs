@@ -16,6 +16,8 @@ module Hutian.Render
   , prefixFor
   , reasoningLabelText
   , answerLabelText
+  , systemPromptText
+  , toolsPromptText
   , outputForeground
   , outputForegroundIn
   , outputLabelText
@@ -219,6 +221,42 @@ reasoningLabelText context =
 answerLabelText :: TurnContext -> String
 answerLabelText context =
   answerForeground context ++ "answer:" ++ reset
+
+-- | A full system message shown in high verbosity. The label matches the turn
+-- palette and the body is dimmed, while the text itself is unchanged.
+systemPromptText :: TurnContext -> String -> String -> String
+systemPromptText = requestBlockText "system"
+
+-- | The tool definitions sent with the request, shown in high verbosity right
+-- after the system block. The body is the exact JSON, dimmed.
+toolsPromptText :: TurnContext -> String -> String -> String
+toolsPromptText = requestBlockText "tools"
+
+requestBlockText :: String -> TurnContext -> String -> String -> String
+requestBlockText _ _ _ "" = ""
+requestBlockText kind context name text =
+  requestLabel kind context name
+    ++ "\n"
+    ++ grayForeground
+    ++ text
+    ++ reset
+    ++ newline
+  where
+    newline
+      | "\n" `isSuffixOf` text = ""
+      | otherwise = "\n"
+
+requestLabel :: String -> TurnContext -> String -> String
+requestLabel kind context name =
+  requestPromptForeground context
+    ++ kind
+    ++ (if null name then "" else " " ++ name)
+    ++ ":"
+    ++ reset
+
+requestPromptForeground :: TurnContext -> String
+requestPromptForeground MainContext = dimTealForeground
+requestPromptForeground SubagentContext = dimBlueForeground
 
 reasoningForeground :: TurnContext -> String
 reasoningForeground MainContext = dimTealForeground

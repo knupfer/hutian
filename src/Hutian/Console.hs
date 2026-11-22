@@ -18,6 +18,8 @@ module Hutian.Console
   , consoleWriteGrayLine
   , consoleWriteLine
   , consoleWriteSubagentPrompt
+  , consoleWriteSystemPrompt
+  , consoleWriteToolDefinitions
   , consoleWriteToolCommand
   , consoleWriteToolCommandIn
   , consoleWriteToolLabel
@@ -39,9 +41,16 @@ import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, withMVar)
 import Control.Exception (IOException, catch, finally, mask)
 import Control.Monad (when)
 import Data.Foldable (for_)
+import Data.List (intercalate)
+import qualified Data.Text as Text
 import Foreign.Marshal.Alloc (allocaBytes)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Hutian.Highlight (sanitize, sanitizeOutput)
+import Hutian.Markdown
+  ( finishMarkdownWith
+  , initialMarkdownState
+  , renderMarkdownWith
+  )
 import Hutian.Render
   ( CursorStyle (..)
   , OutputKind
@@ -62,9 +71,12 @@ import Hutian.Render
   , showCursorText
   , startPromptText
   , subagentPromptText
+  , systemPromptText
   , toolLabelTextIn
   , toolPromptTextIn
   , toolTextPromptTextIn
+  , toolsPromptText
+  , trailingNewline
   )
 import System.Console.Terminal.Size (Window (Window), size)
 import System.IO
@@ -212,6 +224,58 @@ consoleWriteSubagentPrompt modelName prompt = do
     taskNewline
       | null prompt = ""
       | otherwise = "\n"
+
+-- | Show the exact system message sent to the model in high verbosity. The
+-- label is dim teal for the main agent and dim blue for a subagent.
+consoleWriteSystemPrompt :: TurnContext -> String -> String -> IO ()
+consoleWriteSystemPrompt _ _ "" = pure ()
+consoleWriteSystemPrompt context name prompt = do
+  interactive <- consoleIsInteractive
+  let safeName = sanitize name
+      body = sanitizeOutput prompt
+  if interactive
+    then consoleWrite (systemPromptText context safeName body)
+    else
+      consoleWrite
+        ( "system"
+            ++ (if null safeName then "" else " " ++ safeName)
+            ++ ":\n"
+            ++ trailingNewline body
+        )
+  consoleFlush
+
+-- | Show the tool definitions sent with the request in high verbosity as one
+-- concise line per tool. The label follows the turn palette.
+consoleWriteToolDefinitions :: TurnContext -> String -> [String] -> IO ()
+consoleWriteToolDefinitions _ _ [] = pure ()
+consoleWriteToolDefinitions context name summaries = do
+  interactive <- consoleIsInteractive
+  let safeName = sanitize name
+      source = sanitizeOutput (intercalate "\n" summaries)
+      body
+        | interactive = renderedMarkdown source
+        | otherwise = source
+  if interactive
+    then consoleWrite (toolsPromptText context safeName body)
+    else
+      consoleWrite
+        ( "tools"
+            ++ (if null safeName then "" else " " ++ safeName)
+            ++ ":\n"
+            ++ trailingNewline body
+        )
+  consoleFlush
+
+-- | Render Markdown with the same dim palette as thinking blocks.
+renderedMarkdown :: String -> String
+renderedMarkdown source =
+  let (state, output) =
+        renderMarkdownWith
+          grayForeground
+          initialMarkdownState
+          (Text.pack source)
+      trailing = finishMarkdownWith grayForeground state
+   in output ++ trailing
 
 -- | Show one line of command or job output in gray. Streamed and multi-line
 -- output goes through 'withGrayOutput'; a single line is written atomically so

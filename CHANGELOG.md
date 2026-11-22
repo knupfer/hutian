@@ -14,7 +14,10 @@ All notable changes to Hutian are documented here. The format follows
   other blocks, including subagent answers. Normal also shows main-agent
   thinking, presents subagents like low, and streams each subagent's final answer
   in dim colors. High keeps the previous full output, with subagent answers
-  using the same dim styling.
+  using the same dim styling. It prints the exact system message and, per tool,
+  a `# name(...)` heading followed by its complete description rendered as dim
+  Markdown before the first main `ask:` and before every subagent block, using
+  `system:`/`tools:` or `system <name>:`/`tools <name>:` with dim text.
 - `model.tools` now configures every model tool. It has `shell`, `webfetch`,
   `websearch`, `subagent`, and `mcp` keys, each validated recursively for
   subagents.
