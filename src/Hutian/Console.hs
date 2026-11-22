@@ -5,7 +5,6 @@
 module Hutian.Console
   ( configureConsole
   , confirmToolApproval
-  , confirmToolCommand
   , confirmToolCommandIn
   , consoleFlush
   , consoleInputReady
@@ -20,9 +19,7 @@ module Hutian.Console
   , consoleWriteSubagentPrompt
   , consoleWriteSystemPrompt
   , consoleWriteToolDefinitions
-  , consoleWriteToolCommand
   , consoleWriteToolCommandIn
-  , consoleWriteToolLabel
   , consoleWriteToolLabelIn
   , consoleWriteToolTextIn
   , printOutputLabel
@@ -166,12 +163,8 @@ consoleWidth = do
       Just (Window _ width) | width > 0 -> width
       _ -> 80
 
--- | Show a command requested by the model with the tool-call prefix.
-consoleWriteToolCommand :: String -> String -> IO ()
-consoleWriteToolCommand = consoleWriteToolCommandIn MainContext
-
--- | Like 'consoleWriteToolCommand', but a subagent's tools use the subagent
--- blue instead of the main tool teal.
+-- | Show a command requested by the model with the tool-call prefix. A
+-- subagent's tools use the subagent blue instead of the main tool teal.
 consoleWriteToolCommandIn :: TurnContext -> String -> String -> IO ()
 consoleWriteToolCommandIn context toolName command = do
   interactive <- consoleIsInteractive
@@ -194,9 +187,6 @@ consoleWriteToolTextIn context toolName text = do
   consoleFlush
 
 -- | Show a tool call that has no command of its own.
-consoleWriteToolLabel :: String -> IO ()
-consoleWriteToolLabel = consoleWriteToolLabelIn MainContext
-
 consoleWriteToolLabelIn :: TurnContext -> String -> IO ()
 consoleWriteToolLabelIn context toolName = do
   interactive <- consoleIsInteractive
@@ -296,9 +286,6 @@ approvalResult ToolAborted = "Aborted"
 -- 'ToolDenied' without prompting when output is not a terminal. Input typed
 -- while the model was streaming is discarded after switching to raw mode,
 -- because canonical-mode buffering hides it from 'hReady'.
-confirmToolCommand :: String -> String -> IO ToolApproval
-confirmToolCommand = confirmToolCommandIn MainContext
-
 confirmToolCommandIn :: TurnContext -> String -> String -> IO ToolApproval
 confirmToolCommandIn context toolName command = do
   consoleWriteToolCommandIn context toolName command

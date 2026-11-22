@@ -6,7 +6,7 @@ module Hutian.Tool.Catalog
   , McpServer (..)
   , McpSessionId (..)
   , McpTool (..)
-  , HasToolCatalog (..)
+  , HasToolCatalog (toolCatalogFor)
   ) where
 
 import Data.Aeson (Value)

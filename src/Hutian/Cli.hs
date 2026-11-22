@@ -4,7 +4,7 @@
 -- duplicated options, and bare positional arguments are rejected. Callers add
 -- their own usage text to the returned error.
 module Hutian.Cli
-  ( OptionKind (..)
+  ( OptionKind (OptionValue, OptionFlag)
   , Option
   , optionName
   , optionValue

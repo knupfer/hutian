@@ -1,6 +1,6 @@
--- | The interactive session loop. Prompting, history recording, interrupt
--- clearing, and input execution are injected effects, so the sequencing can be
--- tested without a terminal, a model, or a job runtime.
+-- | The interactive session loop. Prompting, interrupt clearing, and input
+-- execution are injected effects, so the sequencing can be tested without a
+-- terminal, a model, or a job runtime.
 module Hutian.Session
   ( Session (..)
   , SessionEffects (..)
@@ -29,8 +29,6 @@ data Session = Session
 data SessionEffects = SessionEffects
   { -- | Read one input, returning the mode and buffers for the next prompt.
     sessionPrompt :: InputMode -> History -> PromptBuffers -> IO (InputMode, Maybe String, PromptBuffers)
-  , -- | Record a submitted input in memory.
-    sessionRememberInput :: InputMode -> String -> History -> IO History
   , -- | Clear a previous interrupt before running the input.
     sessionClearInterrupt :: IO ()
   , -- | Run a submitted input and return the updated conversation.
@@ -54,7 +52,7 @@ runSession effects session = do
   case input of
     Nothing -> pure ()
     Just text -> do
-      history' <- sessionRememberInput effects nextMode text (sessionHistory session)
+      let history' = rememberInput nextMode text (sessionHistory session)
       sessionClearInterrupt effects
       conversation <-
         sessionRunInput effects nextMode text (sessionConversation session)

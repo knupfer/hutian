@@ -6,11 +6,9 @@
 -- decisions stay testable without a terminal or a shell.
 module Hutian.Tool
   ( CommandMode (..)
-  , ToolRequest (..)
   , ToolPlan (..)
   , toolDefinitions
   , toolDefinitionsFor
-  , toolRequest
   , planTool
   , planToolWith
   ) where

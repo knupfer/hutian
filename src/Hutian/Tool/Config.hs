@@ -11,7 +11,6 @@ module Hutian.Tool.Config
   , SubagentConfig (..)
   , SubagentConfigs (..)
   , McpServerConfig (..)
-  , McpServers (..)
   , defaultToolConfig
   ) where
 

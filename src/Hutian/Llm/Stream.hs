@@ -7,8 +7,8 @@
 module Hutian.Llm.Stream
   ( LlmResult (..)
   , emptyLlmResult
-  , StreamEvent (..)
-  , ToolCallDelta (..)
+  , StreamEvent (StreamEvent, eventReasoning, eventContent, eventError, eventToolCalls)
+  , ToolCallDelta (ToolCallDelta)
   , parseStreamLine
   , splitLines
   , extractContent

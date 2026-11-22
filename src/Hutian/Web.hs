@@ -1,10 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | HTTP helpers for the model's web tools. Fetching is IO; request URL
--- construction and result formatting are pure so they can be tested without a
--- network.
+-- | HTTP helpers for the model's webfetch tool. Fetching is IO; result
+-- formatting is pure so it can be tested without a network.
 module Hutian.Web
-  ( FetchResult (..)
+  ( FetchResult (FetchResult)
   , fetchResultText
   , fetchUrl
   ) where
@@ -93,8 +92,8 @@ fetchUrl url = do
         Just _ -> Nothing
         Nothing -> Just (displayException exception)
 
--- | Search endpoints should answer quickly; a stuck fetch must not hold an LLM
--- turn open indefinitely.
+-- | Fetches should answer quickly; a stuck fetch must not hold an LLM turn
+-- open indefinitely.
 webTimeoutMicros :: Int
 webTimeoutMicros = 30 * 1000 * 1000
 

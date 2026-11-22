@@ -6,8 +6,6 @@ module Hutian.Conversation
   , ChatMessage (..)
   , emptyConversation
   , appendExchange
-  , appendAssistant
-  , appendUser
   , appendTerminal
   , appendAssistantToolCalls
   , appendToolResult

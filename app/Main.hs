@@ -62,7 +62,6 @@ import Hutian.Render (OutputKind (..), TurnContext (..))
 import Hutian.Session
   ( Session (..)
   , SessionEffects (..)
-  , rememberInput
   , runSession
   )
 import Hutian.Shell
@@ -82,13 +81,12 @@ import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
 import System.IO (stderr, stdout)
 
--- | The interactive loop's effects, bound to the real terminal, in-memory
--- history, job runtime, and model client.
+-- | The interactive loop's effects, bound to the real terminal, job runtime,
+-- and model client.
 sessionEffects :: FilePath -> [String] -> JobRuntime -> LlmSettings -> InterruptFlag -> SessionEffects
 sessionEffects workingDirectory commands jobs settings interruptFlag =
   SessionEffects
     { sessionPrompt = promptForInput workingDirectory commands
-    , sessionRememberInput = \mode text history -> pure (rememberInput mode text history)
     , sessionClearInterrupt = clearInterrupt interruptFlag
     , sessionRunInput =
         runInput workingDirectory jobs settings interruptFlag

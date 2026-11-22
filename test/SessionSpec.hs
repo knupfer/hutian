@@ -19,11 +19,7 @@ import Hutian.Editor
   , setPromptText
   , storePrompt
   )
-import Hutian.History
-  ( History (..)
-  , HistoryTarget (..)
-  , recordHistory
-  )
+import Hutian.History (History (..))
 import Hutian.Session
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -48,18 +44,16 @@ tests =
         prompts <- newIORef (0 :: Int)
         runSession
           ( noEffects
-              { sessionPrompt = \mode _ _ -> do
+              { sessionPrompt = \mode history _ -> do
                   count <- readIORef prompts
                   modifyIORef' prompts (+ 1)
                   modifyIORef' trace (++ ["prompt"])
+                  when (count == 1) $ history @?= History [] ["ls"]
                   pure
                     ( mode
                     , if count == 0 then Just "ls" else Nothing
                     , initialPromptBuffers
                     )
-              , sessionRememberInput = \mode text history -> do
-                  modifyIORef' trace (++ ["remember:" ++ text])
-                  pure (recordHistory (targetFor mode) text history)
               , sessionClearInterrupt = modifyIORef' trace (++ ["clear"])
               , sessionRunInput = \_ text conversation -> do
                   modifyIORef' trace (++ ["run:" ++ text])
@@ -68,7 +62,7 @@ tests =
           )
           initialSession
         actual <- readIORef trace
-        actual @?= ["prompt", "remember:ls", "clear", "run:ls", "prompt"]
+        actual @?= ["prompt", "clear", "run:ls", "prompt"]
     , testCase "the next prompt sees the updated mode, buffers, history, and conversation" $ do
         let nextBuffers =
               storePrompt TermInput (setPromptText "draft" initialPrompt) initialPromptBuffers
@@ -83,10 +77,8 @@ tests =
                     else do
                       mode @?= TermInput
                       promptText (activePrompt TermInput buffers) @?= "draft\n"
-                      history @?= History [] ["pwd"]
+                      history @?= History ["pwd"] []
                       pure (mode, Nothing, buffers)
-              , sessionRememberInput = \_ text history ->
-                  pure (recordHistory LlmHistory text history)
               , sessionClearInterrupt = pure ()
               , sessionRunInput = \_ _ conversation ->
                   pure (TerminalEntry "pwd" : conversation)
@@ -108,7 +100,6 @@ tests =
                         _ -> Nothing
                     , initialPromptBuffers
                     )
-              , sessionRememberInput = \_ _ history -> pure history
               , sessionClearInterrupt = pure ()
               , sessionRunInput = \_ text conversation -> do
                   when (text == "two") $
@@ -138,11 +129,6 @@ noEffects :: SessionEffects
 noEffects =
   SessionEffects
     { sessionPrompt = \_ _ _ -> assertFailure "prompt must not run"
-    , sessionRememberInput = \_ _ _ -> assertFailure "remember must not run"
     , sessionClearInterrupt = assertFailure "interrupt must not be cleared"
     , sessionRunInput = \_ _ _ -> assertFailure "input must not run"
     }
-
-targetFor :: InputMode -> HistoryTarget
-targetFor LlmInput = LlmHistory
-targetFor TermInput = TermHistory

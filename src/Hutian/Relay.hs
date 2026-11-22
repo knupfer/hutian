@@ -22,11 +22,10 @@
 module Hutian.Relay
   ( RelayAuth (..)
   , RelayAuthPolicy (..)
-  , RelaySettings (..)
+  , RelaySettings (RelaySettings, relayAuthPolicy)
   , parseRelaySettings
   , defaultRelayMaxBody
   , maxRelayKeyBytes
-  , RelayLogger
   , stderrLogger
   , RelayRuntime
   , newRelayRuntime

@@ -3,7 +3,7 @@
 -- | Shell command execution and command discovery. Display decisions are left
 -- to the caller; captured output is returned as data.
 module Hutian.Shell
-  ( CommandResult (..)
+  ( CommandResult (CommandResult, commandStdout, commandStderr)
   , commandResultText
   , executableCommands
   , runShellCommand

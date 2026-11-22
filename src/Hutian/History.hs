@@ -1,6 +1,6 @@
 -- | Pure in-memory command-history navigation and input routing.
 module Hutian.History
-  ( History (..)
+  ( History (History)
   , historyForMode
   , HistoryState
   , initialHistoryState

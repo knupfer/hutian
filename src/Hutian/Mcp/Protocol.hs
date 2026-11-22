@@ -13,7 +13,6 @@ module Hutian.Mcp.Protocol
    , mcpToolDefinition
   , McpError (..)
   , mcpErrorText
-  , parseJsonRpcResult
   , selectJsonRpcResponse
   , parseTools
   , mcpToolResultText

@@ -3,7 +3,7 @@
 -- Rendering is expressed as data and strings only. The single IO boundary that
 -- writes these strings lives in "Hutian.Console".
 module Hutian.Render
-  ( PromptKind (..)
+  ( PromptKind (LlmPrompt, ShellPrompt, ToolPrompt, SubagentPrompt)
   , OutputKind (..)
   , TurnContext (..)
   , promptRenderText
@@ -34,7 +34,6 @@ module Hutian.Render
   , boldVibrantPink
   , boldTeal
   , boldBlue
-  , dimPinkForeground
   , dimTealForeground
   , dimBlueForeground
   , CursorStyle (..)
