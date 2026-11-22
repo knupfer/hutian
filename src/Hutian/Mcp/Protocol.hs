@@ -29,7 +29,7 @@ import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
-import Data.Char (isAlphaNum, isAscii)
+import Data.Char (isAlphaNum, isAscii, isSpace)
 import Data.List (intercalate)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
@@ -257,8 +257,10 @@ lookupText key fields =
     Just (String text) -> Just text
     _ -> Nothing
 
--- | Extract every @data:@ payload from a server-sent event body. MCP responses
--- are one JSON document per event; multi-line data fields are joined.
+-- | Extract every non-empty @data:@ payload from a server-sent event body.
+-- MCP responses are one JSON document per event; multi-line data fields are
+-- joined. Servers also send comment or keep-alive events with empty data, which
+-- are not JSON-RPC responses.
 decodeSsePayloads :: BS.ByteString -> [BS.ByteString]
 decodeSsePayloads body = go (BS8.lines body) [] []
   where
@@ -273,4 +275,8 @@ decodeSsePayloads body = go (BS8.lines body) [] []
                   go rest (BS.dropWhile (== 32) payload : current) done
                 Nothing -> go rest current done
     finish [] done = done
-    finish current done = BS.intercalate "\n" (reverse current) : done
+    finish current done =
+      let payload = BS.intercalate "\n" (reverse current)
+       in if BS8.all isSpace payload
+            then done
+            else payload : done

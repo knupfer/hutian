@@ -106,6 +106,12 @@ tests =
               "event: message\ndata: one\n\nevent: message\ndata: two\ndata: three\n\n"
           )
           @?= [BS8.pack "one", BS8.pack "two\nthree"]
+    , testCase "empty SSE keep-alive events are ignored" $
+        decodeSsePayloads
+          ( BS8.pack
+              "data: \nid: 0\nretry: 3000\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"
+          )
+          @?= [BS8.pack "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"]
     , testCase "the tool definition carries the server description" $
         mcpToolDefinition
           "demo"

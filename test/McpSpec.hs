@@ -172,6 +172,7 @@ sseResponse withSession payload =
     , "Content-Type: text/event-stream\r\n"
     , if withSession then "Mcp-Session-Id: test-session\r\n" else ""
     , "Connection: close\r\n\r\n"
+    , "data: \nid: 0\nretry: 3000\n\n"
     , "event: message\n"
     , "data: "
     , payload
