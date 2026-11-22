@@ -19,6 +19,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Hutian.Llm (LlmOutput (..))
 import Hutian.Render (TurnContext (..))
+import Hutian.Verbosity (Verbosity (..))
 import System.Directory
   ( createDirectory
   , getTemporaryDirectory
@@ -83,6 +84,7 @@ stdoutLlmOutput =
     { llmOutputWrite = putStr
     , llmOutputErrorLine = hPutStrLn stderr
     , llmOutputContext = MainContext
+    , llmOutputVerbosity = VerbosityHigh
     }
 
 -- | Captures install a process-wide redirection, so two of them must never be

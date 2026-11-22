@@ -23,6 +23,7 @@ import Hutian.Interrupt (newInterruptFlag)
 import Hutian.Llm (LlmSettings (..), LlmUrl (..), ModelName (..), SystemPrompt (..), runLlm)
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Catalog (toolCatalog)
+import Hutian.Verbosity (Verbosity (..))
 import Hutian.Tool.Config (ToolConfig (..), defaultToolConfig)
 import Hutian.Relay
   ( RelayAuth (..)
@@ -388,6 +389,7 @@ endToEndTests =
                     (ModelName "test-model")
                     (SystemPrompt "system prompt")
                     (Just socketPath)
+                    VerbosityHigh
                     (toolCatalog (defaultToolConfig {toolShell = ToolAllow}))
             runtime <-
               newRelayRuntime

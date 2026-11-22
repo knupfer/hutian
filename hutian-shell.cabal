@@ -61,6 +61,7 @@ library
       Hutian.Command
       Hutian.Completion
       Hutian.Console
+      Hutian.Context
       Hutian.Conversation
       Hutian.Editor
       Hutian.Highlight
@@ -95,6 +96,7 @@ library
       Hutian.Tool.Catalog
       Hutian.Tool.Config
       Hutian.Tool.Exec
+      Hutian.Verbosity
       Hutian.Web
   build-depends:
       network
@@ -155,6 +157,7 @@ test-suite hutian-shell-test
       TestSupport
       ToolConfigSpec
       ToolSpec
+      VerbositySpec
       WebSpec
       WireSpec
   hs-source-dirs:   test

@@ -76,6 +76,7 @@ import Hutian.Terminal (promptForInput)
 import Hutian.Tool.Catalog (ToolCatalog (..), toolCatalog)
 import Hutian.Tool.Config (SubagentConfig (..), ToolConfig (..))
 import Hutian.Tool.Exec (ToolRuntime (..), runToolCallsWith)
+import Hutian.Verbosity (Verbosity (..))
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
@@ -154,7 +155,14 @@ runInput workingDirectory jobs settings interruptFlag mode text conversation =
 runLlmInput :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> Conversation -> String -> IO Conversation
 runLlmInput workingDirectory jobs settings interruptFlag conversation prompt =
   withoutEcho $ withRespondingCursor $ do
-    let runtime = toolRuntime MainContext workingDirectory jobs settings interruptFlag
+    let runtime =
+          toolRuntime
+            MainContext
+            (settingVerbosity settings)
+            workingDirectory
+            jobs
+            settings
+            interruptFlag
     fst <$> runModelTurn interruptFlag settings runtime conversation prompt
 
 -- | Send one prompt, then run the tool/continuation loop until the model
@@ -169,7 +177,10 @@ runModelTurn
   -> String
   -> IO (Conversation, LlmResult)
 runModelTurn interruptFlag settings runtime conversation prompt = do
-  let output = consoleLlmOutputIn (toolRuntimeContext runtime)
+  let output =
+        consoleLlmOutputFor
+          (toolRuntimeVerbosity runtime)
+          (toolRuntimeContext runtime)
   result <- runLlmWithTools output interruptFlag settings conversation prompt
   runToolLoopWithResult
     (llmLoop interruptFlag runtime settings)
@@ -184,7 +195,10 @@ llmLoop interruptFlag runtime settings =
     { loopRunTools = runToolCallsWith runtime (settingTools settings)
     , loopContinue =
         runLlmContinuation
-          (consoleLlmOutputIn (toolRuntimeContext runtime))
+          ( consoleLlmOutputFor
+              (toolRuntimeVerbosity runtime)
+              (toolRuntimeContext runtime)
+          )
           interruptFlag
           settings
     }
@@ -193,12 +207,13 @@ llmLoop interruptFlag runtime settings =
 -- job runtime, and interrupt flag, but substitute their own model, system
 -- prompt, and tools. They run synchronously inside the tool call, so only the
 -- final answer is appended to the caller's conversation.
-toolRuntime :: TurnContext -> FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> ToolRuntime
-toolRuntime context workingDirectory jobs settings interruptFlag =
+toolRuntime :: TurnContext -> Verbosity -> FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> ToolRuntime
+toolRuntime context verbosity workingDirectory jobs settings interruptFlag =
   ToolRuntime
     { toolRuntimeJobs = jobs
     , toolRuntimeWorkingDirectory = workingDirectory
     , toolRuntimeContext = context
+    , toolRuntimeVerbosity = verbosity
     , toolRuntimeSubagent = runSubagent workingDirectory jobs settings interruptFlag
     }
 
@@ -223,7 +238,13 @@ runSubagent workingDirectory jobs settings interruptFlag agent prompt = do
               (toolCatalog (subagentTools agent)) {catalogMcp = servers}
           }
       runtime =
-        toolRuntime SubagentContext workingDirectory jobs subagentSettings interruptFlag
+        toolRuntime
+          SubagentContext
+          (settingVerbosity subagentSettings)
+          workingDirectory
+          jobs
+          subagentSettings
+          interruptFlag
   (_, finalResult) <-
     runModelTurn
       interruptFlag
@@ -238,12 +259,13 @@ runSubagent workingDirectory jobs settings interruptFlag agent prompt = do
 
 -- | Stream LLM output through the terminal boundary, flushing each piece so a
 -- response appears as it arrives.
-consoleLlmOutputIn :: TurnContext -> LlmOutput
-consoleLlmOutputIn context =
+consoleLlmOutputFor :: Verbosity -> TurnContext -> LlmOutput
+consoleLlmOutputFor verbosity context =
   LlmOutput
     { llmOutputWrite = \text -> unless (null text) (consoleWrite text >> consoleFlush)
     , llmOutputErrorLine = consoleWriteErrorLine
     , llmOutputContext = context
+    , llmOutputVerbosity = verbosity
     }
 
 runTerminalInput :: FilePath -> Conversation -> String -> IO Conversation

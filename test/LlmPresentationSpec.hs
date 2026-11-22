@@ -10,13 +10,13 @@ import Hutian.Llm.Presentation
 import Hutian.Llm.Stream (StreamEvent (..))
 import Hutian.Render
   ( TurnContext (..)
-  , boldBlue
   , boldTeal
   , dimBlueForeground
   , dimTealForeground
   , grayForeground
   , reset
   )
+import Hutian.Verbosity (Verbosity (..))
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -51,7 +51,7 @@ tests =
         assertBool "partial answer flushed" ("partial" `isInfixOf` finished)
     , testCase "empty content events emit nothing" $ do
         presentAll [contentEvent ""] @?= ""
-    , testCase "a subagent uses blue reasoning and answer labels" $ do
+    , testCase "a subagent uses dim blue reasoning and answer labels" $ do
         let output =
               presentAllIn
                 SubagentContext
@@ -60,19 +60,89 @@ tests =
           "blue think label"
           ((dimBlueForeground ++ "think:" ++ reset) `isInfixOf` output)
         assertBool
-          "blue answer label"
-          ((boldBlue ++ "answer:" ++ reset) `isInfixOf` output)
+          "dim blue answer label"
+          ((dimBlueForeground ++ "answer:" ++ reset) `isInfixOf` output)
         assertBool
           "no teal labels"
           (not ((dimTealForeground ++ "think:") `isInfixOf` output))
+    , testCase "low shows the reasoning label without its content" $ do
+        let output =
+              presentAllWith VerbosityLow MainContext [reasoningEvent "hidden reasoning\n"]
+        assertBool "think label" ("think:" `isInfixOf` output)
+        assertBool "reasoning hidden" (not ("hidden reasoning" `isInfixOf` output))
+    , testCase "low keeps main answers but hides subagent answers" $ do
+        let mainOutput =
+              presentAllWith
+                VerbosityLow
+                MainContext
+                [contentEvent "visible answer\n"]
+            subagentOutput =
+              presentAllWith
+                VerbosityLow
+                SubagentContext
+                [contentEvent "hidden answer\n"]
+        assertBool "main answer shown" ("visible answer" `isInfixOf` mainOutput)
+        assertBool
+          "subagent answer label"
+          ("answer:" `isInfixOf` subagentOutput)
+        assertBool
+          "subagent answer hidden"
+          (not ("hidden answer" `isInfixOf` subagentOutput))
+    , testCase "normal shows main reasoning and labels subagent reasoning" $ do
+        let mainOutput =
+              presentAllWith
+                VerbosityNormal
+                MainContext
+                [reasoningEvent "visible reasoning\n", contentEvent "answer\n"]
+            subagentOutput =
+              presentAllWith
+                VerbosityNormal
+                SubagentContext
+                [reasoningEvent "hidden reasoning\n"]
+            subagentAnswerOutput =
+              presentAllWith
+                VerbosityNormal
+                SubagentContext
+                [contentEvent "hidden answer\n"]
+        assertBool "main think label" ("think:" `isInfixOf` mainOutput)
+        assertBool "main reasoning shown" ("visible reasoning" `isInfixOf` mainOutput)
+        assertBool "answer shown" ("answer" `isInfixOf` mainOutput)
+        assertBool "subagent think label" ("think:" `isInfixOf` subagentOutput)
+        assertBool
+          "subagent reasoning hidden"
+          (not ("hidden reasoning" `isInfixOf` subagentOutput))
+        assertBool
+          "subagent answer label"
+          ("answer:" `isInfixOf` subagentAnswerOutput)
+        assertBool
+          "subagent answer streams"
+          ("hidden answer" `isInfixOf` subagentAnswerOutput)
+        assertBool
+          "subagent answer is dim"
+          (grayForeground `isInfixOf` subagentAnswerOutput)
+        Text.count (Text.pack "answer:") (Text.pack subagentAnswerOutput) @?= 1
+    , testCase "high subagent answers use the dim style" $ do
+        let output =
+              presentAllWith
+                VerbosityHigh
+                SubagentContext
+                [contentEvent "dim answer\n"]
+        assertBool
+          "dim blue answer label"
+          ((dimBlueForeground ++ "answer:" ++ reset) `isInfixOf` output)
+        assertBool "dim body" (grayForeground `isInfixOf` output)
+        assertBool "answer text" ("dim answer" `isInfixOf` output)
     ]
 
 presentAll :: [StreamEvent] -> String
-presentAll = presentAllIn MainContext
+presentAll = presentAllWith VerbosityHigh MainContext
 
 presentAllIn :: TurnContext -> [StreamEvent] -> String
-presentAllIn context =
-  snd . foldl presentStep (initialStreamPresenterIn context, "")
+presentAllIn = presentAllWith VerbosityHigh
+
+presentAllWith :: Verbosity -> TurnContext -> [StreamEvent] -> String
+presentAllWith verbosity context =
+  snd . foldl presentStep (initialStreamPresenterIn verbosity context, "")
 
 finishAll :: [StreamEvent] -> String
 finishAll events =

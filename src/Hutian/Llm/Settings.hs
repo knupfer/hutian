@@ -32,6 +32,7 @@ import Hutian.Tool.Config
   , WebsearchConfig (..)
   , defaultToolConfig
   )
+import Hutian.Verbosity (Verbosity (..), verbosityFromArgument)
 
 -- | Connection settings supplied by the launcher.
 data LlmSettings = LlmSettings
@@ -39,6 +40,7 @@ data LlmSettings = LlmSettings
   , settingModel :: ModelName
   , settingSystemPrompt :: SystemPrompt
   , settingSocket :: Maybe FilePath
+  , settingVerbosity :: Verbosity
   -- | The model's tool policies, nested subagent configuration, and discovered
   -- MCP tools. Term mode is unaffected.
   , settingTools :: ToolCatalog
@@ -71,7 +73,7 @@ parseLlmSettingsWithFiles loaded arguments = do
   let missingOption inline file =
         [inline | not (hasOption inline options || hasOption file options)]
       missing =
-        missingOptions ["--llama-url"] options
+        missingOptions ["--llama-url", "--verbosity"] options
           ++ missingOption "--model" "--model-file"
           ++ missingOption "--system-prompt" "--system-prompt-file"
   case missing of
@@ -79,12 +81,24 @@ parseLlmSettingsWithFiles loaded arguments = do
       url <- required "--llama-url" options
       model <- valueOrFile "--model" "--model-file" loaded options
       systemPrompt <- valueOrFile "--system-prompt" "--system-prompt-file" loaded options
+      verbosityValue <- required "--verbosity" options
+      verbosity <-
+        case verbosityFromArgument verbosityValue of
+          Just value -> Right value
+          Nothing ->
+            Left
+              ( "invalid value for --verbosity: "
+                  ++ verbosityValue
+                  ++ " (expected low, normal, or high)\n"
+                  ++ llmUsage
+              )
       tools <- toolsOption loaded options
       settingsFrom
         (LlmUrl url)
         (ModelName model)
         (SystemPrompt systemPrompt)
         (optionValueFor "--llama-socket" options)
+        verbosity
         tools
     _ -> Left (missingMessage missing)
   where
@@ -201,6 +215,7 @@ llmOptionSpec =
   , ("--system-prompt", OptionValue)
   , ("--system-prompt-file", OptionValue)
   , ("--llama-socket", OptionValue)
+  , ("--verbosity", OptionValue)
   , ("--model-shell", OptionValue)
   , ("--model-webfetch", OptionValue)
   , ("--websearch-url", OptionValue)
@@ -211,13 +226,13 @@ llmOptionSpec =
 
 -- | Reject malformed URLs, empty model names, empty socket paths, and an empty
 -- search endpoint; an empty system prompt is allowed.
-settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Maybe FilePath -> ToolConfig -> Either String LlmSettings
-settingsFrom url model systemPrompt socket tools = do
+settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Maybe FilePath -> Verbosity -> ToolConfig -> Either String LlmSettings
+settingsFrom url model systemPrompt socket verbosity tools = do
   validateLlmUrl url
   validateNonEmpty "--model" (unModelName model)
   maybe (Right ()) (validateNonEmpty "--llama-socket") socket
   validateWebsearch tools
-  pure (LlmSettings url model systemPrompt socket (toolCatalog tools))
+  pure (LlmSettings url model systemPrompt socket verbosity (toolCatalog tools))
   where
     validateNonEmpty name value
       | null value = Left ("empty value for " ++ name ++ "\n" ++ llmUsage)
@@ -278,4 +293,4 @@ missingMessage missing =
 
 llmUsage :: String
 llmUsage =
-  "usage: hutian-shell --llama-url URL (--model MODEL | --model-file PATH) (--system-prompt PROMPT | --system-prompt-file PATH) [--llama-socket PATH] [--tools-file PATH] [--model-shell deny|ask|allow] [--model-webfetch deny|ask|allow] [--websearch-url URL] [--model-websearch deny|ask|allow] [--subagent-file PATH]"
+  "usage: hutian-shell --llama-url URL --verbosity low|normal|high (--model MODEL | --model-file PATH) (--system-prompt PROMPT | --system-prompt-file PATH) [--llama-socket PATH] [--tools-file PATH] [--model-shell deny|ask|allow] [--model-webfetch deny|ask|allow] [--websearch-url URL] [--model-websearch deny|ask|allow] [--subagent-file PATH]"

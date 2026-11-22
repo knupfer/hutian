@@ -7,6 +7,12 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Added
 
+- A mandatory `model.verbosity` option (`"low"`, `"normal"`, or `"high"`).
+  Low shows tool calls and main-turn answers while printing only prompts for
+  other blocks, including subagent answers. Normal also shows main-agent
+  thinking, presents subagents like low, and streams each subagent's final answer
+  in dim colors. High keeps the previous full output, with subagent answers
+  using the same dim styling.
 - `model.tools` now configures every model tool. It has `shell`, `webfetch`,
   `websearch`, `subagent`, and `mcp` keys, each validated recursively for
   subagents.
@@ -21,8 +27,9 @@ All notable changes to Hutian are documented here. The format follows
   in the tool schema so the main model can decide when to delegate. A subagent
   shares the main API and tool loop and returns only its final answer. Its work
   starts under a blue `subagent <name>:` line, followed by the submitted task.
-  Reasoning, answer, tool prompts, and output labels inside a subagent use the
-  subagent blue, and the cursor blinks blue while it runs.
+  Reasoning, answers, tool prompts, and output labels inside a subagent use the
+  dim subagent blue; tool input text is dim gray, and the cursor blinks blue
+  while it runs.
 - Remote MCP servers through `model.tools.mcp`. Hutian performs the Streamable
   HTTP handshake at startup, discovers each server's tools, advertises them as
   `mcp__<server>__<tool>`, and calls them with the server's session id.

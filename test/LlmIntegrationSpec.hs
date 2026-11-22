@@ -24,6 +24,7 @@ import Hutian.Llm
   )
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Catalog (toolCatalog)
+import Hutian.Verbosity (Verbosity (..))
 import Hutian.Tool.Config (ToolConfig (..), defaultToolConfig)
 import Hutian.Render (dimTealForeground, grayForeground)
 import Network.Socket
@@ -132,6 +133,7 @@ settingsFor port =
     , settingModel = ModelName "test-model"
     , settingSystemPrompt = SystemPrompt "system prompt"
     , settingSocket = Nothing
+    , settingVerbosity = VerbosityHigh
     , settingTools = toolCatalog (defaultToolConfig {toolShell = ToolAllow})
     }
 

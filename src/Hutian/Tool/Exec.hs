@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Terminal-side execution of model tool calls. Planning is pure and lives in
 -- "Hutian.Tool"; this module only carries out the resulting plan.
 module Hutian.Tool.Exec
@@ -31,6 +33,7 @@ import Hutian.Conversation
   , abortedToolMessage
   , appendToolResult
   )
+import Control.Monad (when)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Hutian.Highlight (sanitizeOutput)
@@ -77,6 +80,13 @@ import Hutian.Tool.Config
   , WebsearchConfig (..)
   )
 import Hutian.Web (fetchResultText, fetchUrl, websearchRequestUrl)
+import Hutian.Verbosity
+  ( RenderMode (..)
+  , Verbosity (..)
+  , Visibility
+  , outputBodyVisible
+  , renderMode
+  )
 
 -- | The effects a tool run can reach. 'toolRuntimeContext' selects the main or
 -- subagent palette. 'toolRuntimeSubagent' is a callback so the executor stays
@@ -85,6 +95,7 @@ data ToolRuntime = ToolRuntime
   { toolRuntimeJobs :: JobRuntime
   , toolRuntimeWorkingDirectory :: FilePath
   , toolRuntimeContext :: TurnContext
+  , toolRuntimeVerbosity :: Verbosity
   , toolRuntimeSubagent :: SubagentConfig -> String -> IO (Either String String)
   }
 
@@ -98,6 +109,7 @@ runToolCalls jobs workingDirectory policy =
       { toolRuntimeJobs = jobs
       , toolRuntimeWorkingDirectory = workingDirectory
       , toolRuntimeContext = MainContext
+      , toolRuntimeVerbosity = VerbosityHigh
       , toolRuntimeSubagent = \_ _ ->
           pure (Left "tool error: the model subagent tool is disabled")
       }
@@ -179,6 +191,9 @@ runToolCall planner runtime conversation call =
     jobs = toolRuntimeJobs runtime
     workingDirectory = toolRuntimeWorkingDirectory runtime
     context = toolRuntimeContext runtime
+    toolOutput =
+      modeToolOutput (renderMode (toolRuntimeVerbosity runtime) context)
+    showOutputBody = outputBodyVisible toolOutput
 
     refuse message =
       pure (False, appendToolResult (toolCallId call) message conversation)
@@ -189,17 +204,17 @@ runToolCall planner runtime conversation call =
     runPlanned mode command =
       case mode of
         Foreground -> do
-          conversation' <- executeShellTool context workingDirectory conversation call command
+          conversation' <- executeShellTool context toolOutput workingDirectory conversation call command
           pure (False, conversation')
         Background -> do
-          conversation' <- executeBackgroundTool context jobs conversation call command
+          conversation' <- executeBackgroundTool context toolOutput jobs conversation call command
           pure (False, conversation')
 
     runJobsTool = do
       consoleWriteToolLabelIn context "jobs"
       printOutputLabelIn context ToolOutput
       current <- listJobs jobs
-      printJobRows current
+      when showOutputBody (printJobRows current)
       pure (False, appendToolResult (toolCallId call) (jobListResult current) conversation)
 
     runJobOutputTool target requestedLines = do
@@ -210,11 +225,11 @@ runToolCall planner runtime conversation call =
         Left message -> do
           consoleWriteErrorLine message
           pure (False, appendToolResult (toolCallId call) message conversation)
-        Right (job, output, truncated) -> do
-          displayJobOutput output truncated
+        Right (job, output', truncated) -> do
+          when showOutputBody (displayJobOutput output' truncated)
           pure
             ( False
-            , appendToolResult (toolCallId call) (jobOutputResult job output truncated) conversation
+            , appendToolResult (toolCallId call) (jobOutputResult job output' truncated) conversation
             )
 
     runJobKillTool target = do
@@ -227,7 +242,7 @@ runToolCall planner runtime conversation call =
           pure (False, appendToolResult (toolCallId call) message conversation)
         Right (job, wasRunning) -> do
           let message = jobKillResult wasRunning job
-          consoleWriteGrayLine message
+          when showOutputBody (consoleWriteGrayLine message)
           pure (False, appendToolResult (toolCallId call) message conversation)
 
     runWebfetchTool url = do
@@ -239,7 +254,7 @@ runToolCall planner runtime conversation call =
           pure (False, appendToolResult (toolCallId call) message conversation)
         Right fetched -> do
           let text = fetchResultText fetched
-          displayToolText text
+          when showOutputBody (displayToolText text)
           pure (False, appendToolResult (toolCallId call) text conversation)
 
     runWebsearchTool configured query = do
@@ -272,27 +287,27 @@ runToolCall planner runtime conversation call =
           pure (False, appendToolResult (toolCallId call) message conversation)
         Right text -> do
           let formatted = trailingNewline text
-          displayToolText formatted
+          when showOutputBody (displayToolText formatted)
           pure (False, appendToolResult (toolCallId call) formatted conversation)
 
 -- | Run a command the model is already allowed to execute. The caller is
 -- responsible for showing the command first.
-executeShellTool :: TurnContext -> FilePath -> Conversation -> ToolCall -> String -> IO Conversation
-executeShellTool context workingDirectory conversation call command = do
+executeShellTool :: TurnContext -> Visibility -> FilePath -> Conversation -> ToolCall -> String -> IO Conversation
+executeShellTool context toolOutput workingDirectory conversation call command = do
   printOutputLabelIn context ToolOutput
   result <- runShellCommandOutput workingDirectory command
   case result of
     Left message -> do
       consoleWriteErrorLine message
       pure (appendToolResult (toolCallId call) message conversation)
-    Right output -> do
-      displayCommandResult output
-      pure (appendToolResult (toolCallId call) (commandResultText output) conversation)
+    Right commandOutput -> do
+      when (outputBodyVisible toolOutput) (displayCommandResult commandOutput)
+      pure (appendToolResult (toolCallId call) (commandResultText commandOutput) conversation)
 
 -- | Start a command as a job and return its id to the model. The job's output
 -- goes to its log, so the turn is not held open by a long-running process.
-executeBackgroundTool :: TurnContext -> JobRuntime -> Conversation -> ToolCall -> String -> IO Conversation
-executeBackgroundTool context jobs conversation call command = do
+executeBackgroundTool :: TurnContext -> Visibility -> JobRuntime -> Conversation -> ToolCall -> String -> IO Conversation
+executeBackgroundTool context toolOutput jobs conversation call command = do
   printOutputLabelIn context ToolOutput
   result <- startJob jobs command
   case result of
@@ -300,7 +315,7 @@ executeBackgroundTool context jobs conversation call command = do
       consoleWriteErrorLine message
       pure (appendToolResult (toolCallId call) message conversation)
     Right job -> do
-      consoleWriteGrayLine (jobStartedLine job)
+      when (outputBodyVisible toolOutput) (consoleWriteGrayLine (jobStartedLine job))
       pure (appendToolResult (toolCallId call) (jobStartedLine job) conversation)
 
 -- | Display captured command output the same way it would appear if the command

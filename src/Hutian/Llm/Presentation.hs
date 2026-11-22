@@ -26,11 +26,19 @@ import Hutian.Render
   , reasoningLabelText
   , reset
   )
+import Hutian.Verbosity
+  ( AnswerStyle (..)
+  , RenderMode (..)
+  , Verbosity (..)
+  , Visibility (..)
+  , renderMode
+  )
 
 -- | Rendering state for one streamed response. Reasoning and answer Markdown
 -- are kept separately so the answer can flush the reasoning buffer first.
 data StreamPresenter = StreamPresenter
-  { presenterContext :: TurnContext
+  { presenterVerbosity :: Verbosity
+  , presenterContext :: TurnContext
   , presenterReasoning :: MarkdownState
   , presenterReasoningStarted :: Bool
   , presenterAnswer :: MarkdownState
@@ -38,17 +46,22 @@ data StreamPresenter = StreamPresenter
   }
 
 initialStreamPresenter :: StreamPresenter
-initialStreamPresenter = initialStreamPresenterIn MainContext
+initialStreamPresenter = initialStreamPresenterIn VerbosityHigh MainContext
 
-initialStreamPresenterIn :: TurnContext -> StreamPresenter
-initialStreamPresenterIn context =
+initialStreamPresenterIn :: Verbosity -> TurnContext -> StreamPresenter
+initialStreamPresenterIn verbosity context =
   StreamPresenter
-    { presenterContext = context
+    { presenterVerbosity = verbosity
+    , presenterContext = context
     , presenterReasoning = initialMarkdownState
     , presenterReasoningStarted = False
     , presenterAnswer = initialMarkdownState
     , presenterAnswerStarted = False
     }
+
+presenterMode :: StreamPresenter -> RenderMode
+presenterMode presenter =
+  renderMode (presenterVerbosity presenter) (presenterContext presenter)
 
 -- | Render one event into terminal text. Errors stay on the event so the
 -- caller's diagnostics boundary decides where they go.
@@ -65,8 +78,13 @@ appendReasoning :: Maybe Text.Text -> StreamPresenter -> (StreamPresenter, Strin
 appendReasoning Nothing presenter = (presenter, "")
 appendReasoning (Just text) presenter
   | Text.null text = (presenter, "")
-  | otherwise = (presenter', header ++ output)
+  | otherwise =
+      case modeReasoning mode of
+        LabelOnly ->
+          (presenter {presenterReasoningStarted = True}, header)
+        Full -> (presenter', header ++ output)
   where
+    mode = presenterMode presenter
     header
       | presenterReasoningStarted presenter = ""
       | otherwise = reasoningLabelText (presenterContext presenter) ++ "\n"
@@ -82,13 +100,22 @@ appendContent :: Maybe Text.Text -> StreamPresenter -> (StreamPresenter, String)
 appendContent Nothing presenter = (presenter, "")
 appendContent (Just text) presenter
   | Text.null text = (presenter, "")
-  | otherwise = (presenter', flushed ++ header ++ output)
+  | otherwise =
+      case modeAnswer mode of
+        LabelOnly ->
+          (startingAnswer {presenterAnswerStarted = True}, flushed ++ header)
+        Full -> (presenter', flushed ++ header ++ output)
   where
+    mode = presenterMode presenter
     (startingAnswer, flushed) = flushReasoning presenter
     header
       | presenterAnswerStarted startingAnswer = ""
       | otherwise = answerLabelText (presenterContext startingAnswer) ++ "\n"
-    (markdown', output) = renderMarkdown (presenterAnswer startingAnswer) text
+    (markdown', output) =
+      renderAnswer
+        mode
+        (presenterAnswer startingAnswer)
+        text
     presenter' =
       startingAnswer
         { presenterAnswer = markdown'
@@ -100,24 +127,43 @@ flushReasoning :: StreamPresenter -> (StreamPresenter, String)
 flushReasoning presenter
   | not (presenterReasoningStarted presenter) = (presenter, "")
   | otherwise =
-      ( presenter
-          { presenterReasoning = initialMarkdownState
-          , presenterReasoningStarted = False
-          }
-      , output
-      )
+      case modeReasoning mode of
+        LabelOnly -> (resetReasoning presenter, "")
+        Full -> (resetReasoning presenter, output)
   where
+    mode = presenterMode presenter
     trailing = finishMarkdownWith thinkingGrey (presenterReasoning presenter)
     output = (if null trailing then "" else trailing ++ "\n") ++ reset
 
--- | Flush the final partial answer and any open code fence.
+resetReasoning :: StreamPresenter -> StreamPresenter
+resetReasoning presenter =
+  presenter
+    { presenterReasoning = initialMarkdownState
+    , presenterReasoningStarted = False
+    }
+
+-- | Flush the final partial answer and any open code fence. A subagent's
+-- answer keeps the same dim base style as a thinking block.
 finishPresentation :: StreamPresenter -> (StreamPresenter, String)
 finishPresentation presenter =
   (stateAfterReasoning, reasoningOutput ++ answerOutput)
   where
     (stateAfterReasoning, reasoningOutput) = flushReasoning presenter
-    trailing = finishMarkdown (presenterAnswer stateAfterReasoning)
+    trailing =
+      finishAnswer
+        (presenterMode stateAfterReasoning)
+        (presenterAnswer stateAfterReasoning)
     answerOutput = trailing ++ if null trailing then "" else "\n"
+
+renderAnswer :: RenderMode -> MarkdownState -> Text.Text -> (MarkdownState, String)
+renderAnswer mode
+  | modeAnswerStyle mode == AnswerDim = renderMarkdownWith thinkingGrey
+  | otherwise = renderMarkdown
+
+finishAnswer :: RenderMode -> MarkdownState -> String
+finishAnswer mode
+  | modeAnswerStyle mode == AnswerDim = finishMarkdownWith thinkingGrey
+  | otherwise = finishMarkdown
 
 -- | Thinking text uses the same grey as command output.
 thinkingGrey :: String

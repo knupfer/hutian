@@ -27,6 +27,7 @@ import Hutian.Llm
 import Hutian.Llm.UnixSocket (postUnixStream)
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Catalog (toolCatalog)
+import Hutian.Verbosity (Verbosity (..))
 import Hutian.Tool.Config (ToolConfig (..), defaultToolConfig)
 import Hutian.Relay.Protocol (decodeStatus, encodeStatus)
 import Network.Socket
@@ -173,6 +174,7 @@ settingsForSocket socketPath =
     , settingModel = ModelName "test-model"
     , settingSystemPrompt = SystemPrompt "system prompt"
     , settingSocket = Just socketPath
+    , settingVerbosity = VerbosityHigh
     , settingTools = toolCatalog (defaultToolConfig {toolShell = ToolAllow})
     }
 

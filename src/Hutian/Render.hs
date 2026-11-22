@@ -49,6 +49,7 @@ import Data.Char (toUpper)
 import Data.List (isSuffixOf)
 import Numeric (showHex)
 import qualified Hutian.Ansi as Ansi
+import Hutian.Context (TurnContext (..))
 import Hutian.Editor
   ( Prompt
   , cursorPosition
@@ -78,14 +79,6 @@ data PromptKind
   | ToolPrompt TurnContext String
   | ToolTextPrompt TurnContext String
   | SubagentPrompt String
-  deriving stock (Eq, Show)
-
--- | Which agent turn is producing output. Everything a subagent prints uses
--- the subagent blue instead of the main teal, so the nested turn reads as one
--- block from its reasoning label through its tool output.
-data TurnContext
-  = MainContext
-  | SubagentContext
   deriving stock (Eq, Show)
 
 -- | Which label and palette to use for captured output.
@@ -136,9 +129,19 @@ promptRenderText kind previousRow width prompt =
             | prefixCount > 0 = prefixForegroundFor kind ++ prefixPart ++ reset
             | otherwise = ""
           restRendered
-            | plainTextRows = rest
-            | index < inputRowCount = highlightShellLine rest
+            | plainTextRows = plainRow rest
+            | index < inputRowCount = inputRow rest
             | otherwise = rest
+          plainRow text =
+            case kind of
+              ToolTextPrompt SubagentContext _ ->
+                grayForeground ++ text ++ reset
+              _ -> text
+          inputRow text =
+            case kind of
+              ToolPrompt SubagentContext _ ->
+                grayForeground ++ text ++ reset
+              _ -> highlightShellLine text
           styleReset
             | '\ESC' `elem` restRendered = reset
             | otherwise = ""
@@ -200,7 +203,7 @@ prefixForegroundFor _ = boldVibrantPink
 
 toolPromptForeground :: TurnContext -> String
 toolPromptForeground MainContext = boldTeal
-toolPromptForeground SubagentContext = boldBlue
+toolPromptForeground SubagentContext = dimBlueForeground
 
 toolOutputForeground :: TurnContext -> String
 toolOutputForeground MainContext = dimTealForeground
@@ -223,7 +226,7 @@ reasoningForeground SubagentContext = dimBlueForeground
 
 answerForeground :: TurnContext -> String
 answerForeground MainContext = boldTeal
-answerForeground SubagentContext = boldBlue
+answerForeground SubagentContext = dimBlueForeground
 
 -- | The user's decision about a model-requested command. Only an explicit
 -- @y@ or @n@ decides; @Ctrl+C@ aborts the whole LLM turn.

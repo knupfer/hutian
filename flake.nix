@@ -33,6 +33,7 @@
           "name"
           "url"
           "systemPrompt"
+          "verbosity"
           "tools"
           "apiKeyCommand"
         ];
@@ -304,6 +305,14 @@
           modelName = checked "model.name" "a non-empty string" isNonEmptyString model.name;
           llamaUrl = checked "model.url" "a non-empty string" isNonEmptyString model.url;
           systemPrompt = checked "model.systemPrompt" "a string" builtins.isString model.systemPrompt;
+          verbosity = checked "model.verbosity" ''"low", "normal", or "high"'' (
+            value:
+            builtins.elem value [
+              "low"
+              "normal"
+              "high"
+            ]
+          ) model.verbosity;
           tools = checkedTools "model.tools" model.tools;
           apiKeyCommand =
             if model.apiKeyCommand == null then
@@ -325,6 +334,7 @@
           name = "default";
           url = "http://127.0.0.1:8080/v1/chat/completions";
           systemPrompt = "You are a coding agent.";
+          verbosity = "high";
           tools = {
             shell = "ask";
             webfetch = "deny";
@@ -426,6 +436,7 @@
               name = "probe-model";
               url = "http://probe.invalid/v1/chat/completions";
               systemPrompt = "probe system prompt";
+              verbosity = "low";
             };
           };
 
@@ -557,6 +568,7 @@
               "/run/hutian-config/system-prompt"
               "/run/hutian-config/tools"
               "--tools-file"
+              "--verbosity low"
               "\"shell\":\"ask\""
               "\"webfetch\":\"deny\""
               "/bin/dumb-init"

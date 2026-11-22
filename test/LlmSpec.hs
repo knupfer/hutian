@@ -16,6 +16,7 @@ import Hutian.Llm
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Catalog (ToolCatalog, toolCatalog)
 import Hutian.Tool.Config (SubagentConfig (..), ToolConfig (..), defaultToolConfig)
+import Hutian.Verbosity (Verbosity (..))
 import System.Directory (doesFileExist, getTemporaryDirectory)
 import System.IO (hClose, hPutStr, openTempFile)
 import Test.QuickCheck
@@ -25,6 +26,13 @@ import Test.Tasty.QuickCheck (testProperty)
 
 shellTools :: ToolPolicy -> ToolCatalog
 shellTools policy = toolCatalog (defaultToolConfig {toolShell = policy})
+
+parseSettings :: [String] -> Either String LlmSettings
+parseSettings = parseSettingsWithVerbosity "--verbosity" "high"
+
+parseSettingsWithVerbosity :: String -> String -> [String] -> Either String LlmSettings
+parseSettingsWithVerbosity flag value =
+  parseLlmSettings . ([flag, value] ++)
 
 tests :: TestTree
 tests =
@@ -38,8 +46,8 @@ unitTests :: TestTree
 unitTests =
   testGroup
     "unit"
-    [ testCase "parseLlmSettings accepts the required options in any order" $ do
-        parseLlmSettings
+    [ testCase "parseSettings accepts the required options in any order" $ do
+        parseSettings
           [ "--system-prompt"
           , "system rules"
           , "--model"
@@ -53,9 +61,10 @@ unitTests =
                 (ModelName "test-model")
                 (SystemPrompt "system rules")
                 Nothing
+                VerbosityHigh
                 (shellTools ToolDeny)
             )
-        parseLlmSettings
+        parseSettings
           [ "--llama-url"
           , "http://example.test/completion"
           , "--model"
@@ -64,9 +73,9 @@ unitTests =
           , ""
           ]
           @?= Right
-            (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt "") Nothing (shellTools ToolDeny))
-    , testCase "parseLlmSettings accepts an optional relay socket" $ do
-        parseLlmSettings
+            (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt "") Nothing VerbosityHigh (shellTools ToolDeny))
+    , testCase "parseSettings accepts an optional relay socket" $ do
+        parseSettings
           [ "--llama-url"
           , "http://example.test/v1/chat/completions"
           , "--model"
@@ -82,6 +91,7 @@ unitTests =
                 (ModelName "m")
                 (SystemPrompt "system rules")
                 (Just "/run/hutian/llm.sock")
+                VerbosityHigh
                 (shellTools ToolDeny)
             )
     , testCase "parseLlmSettingsWithFiles reads model and prompt contents" $
@@ -95,6 +105,8 @@ unitTests =
           , "/run/model"
           , "--system-prompt-file"
           , "/run/prompt"
+          , "--verbosity"
+          , "high"
           ]
           @?= Right
             ( LlmSettings
@@ -102,6 +114,7 @@ unitTests =
                 (ModelName "file-model")
                 (SystemPrompt "file rules")
                 Nothing
+                VerbosityHigh
                 (shellTools ToolDeny)
             )
     , testCase "loadLlmSettings removes the model and prompt files" $ do
@@ -120,6 +133,8 @@ unitTests =
             , modelPath
             , "--system-prompt-file"
             , promptPath
+            , "--verbosity"
+            , "high"
             ]
         result
           @?= Right
@@ -128,6 +143,7 @@ unitTests =
                 (ModelName "file-model")
                 (SystemPrompt "file rules")
                 Nothing
+                VerbosityHigh
                 (shellTools ToolDeny)
             )
         modelExists <- doesFileExist modelPath
@@ -146,6 +162,8 @@ unitTests =
           , "m"
           , "--system-prompt"
           , ""
+          , "--verbosity"
+          , "high"
           , "--subagent-file"
           , "/run/subagents"
           ]
@@ -155,6 +173,7 @@ unitTests =
                 (ModelName "m")
                 (SystemPrompt "")
                 Nothing
+                VerbosityHigh
                 ( toolCatalog
                     ( defaultToolConfig
                         { toolShell = ToolDeny
@@ -171,9 +190,34 @@ unitTests =
                     )
                 )
             )
-    , testCase "parseLlmSettings parses each model shell policy" $ do
-        let parsePolicy extra =
+    , testCase "parseLlmSettings parses verbosity" $ do
+        let parseVerbosity extra =
               parseLlmSettings
+                ( [ "--llama-url"
+                  , "http://example.test/v1/chat/completions"
+                  , "--model"
+                  , "m"
+                  , "--system-prompt"
+                  , ""
+                  ]
+                    ++ extra
+                )
+            verbosityOf result =
+              case result of
+                Right settings -> Just (settingVerbosity settings)
+                Left _ -> Nothing
+        case parseVerbosity [] of
+          Left message -> assertBool "missing verbosity named" ("--verbosity" `isInfixOf` message)
+          Right _ -> assertFailure "verbosity is mandatory"
+        verbosityOf (parseVerbosity ["--verbosity", "low"]) @?= Just VerbosityLow
+        verbosityOf (parseVerbosity ["--verbosity", "normal"]) @?= Just VerbosityNormal
+        verbosityOf (parseVerbosity ["--verbosity", "high"]) @?= Just VerbosityHigh
+        case parseVerbosity ["--verbosity", "loud"] of
+          Left message -> assertBool "names the option" ("--verbosity" `isInfixOf` message)
+          Right _ -> assertFailure "invalid verbosity must be rejected"
+    , testCase "parseSettings parses each model shell policy" $ do
+        let parsePolicy extra =
+              parseSettings
                 ( [ "--llama-url"
                   , "http://example.test/v1/chat/completions"
                   , "--model"
@@ -190,15 +234,16 @@ unitTests =
                     (ModelName "m")
                     (SystemPrompt "")
                     Nothing
+                    VerbosityHigh
                     (shellTools policy)
                 )
         parsePolicy [] @?= settings ToolDeny
         parsePolicy ["--model-shell", "deny"] @?= settings ToolDeny
         parsePolicy ["--model-shell", "ask"] @?= settings ToolAsk
         parsePolicy ["--model-shell", "allow"] @?= settings ToolAllow
-    , testCase "parseLlmSettings rejects an empty relay socket" $
+    , testCase "parseSettings rejects an empty relay socket" $
         case
-            parseLlmSettings
+            parseSettings
               [ "--llama-url"
               , "http://example.test/v1/chat/completions"
               , "--model"
@@ -211,22 +256,23 @@ unitTests =
           of
             Left message -> assertBool "empty socket should be named" ("--llama-socket" `isInfixOf` message)
             Right _ -> assertFailure "an empty socket should fail"
-    , testCase "parseLlmSettings rejects empty URLs and model names" $ do
-        case parseLlmSettings ["--llama-url", "", "--model", "m", "--system-prompt", ""] of
+    , testCase "parseSettings rejects empty URLs and model names" $ do
+        case parseSettings ["--llama-url", "", "--model", "m", "--system-prompt", ""] of
           Left message -> assertBool "empty url should be named" ("--llama-url" `isInfixOf` message)
           Right _ -> assertFailure "an empty url should fail"
-        case parseLlmSettings ["--llama-url", "http://example.test", "--model", "", "--system-prompt", ""] of
+        case parseSettings ["--llama-url", "http://example.test", "--model", "", "--system-prompt", ""] of
           Left message -> assertBool "empty model should be named" ("--model" `isInfixOf` message)
           Right _ -> assertFailure "an empty model should fail"
-    , testCase "parseLlmSettings rejects malformed URLs" $ do
+    , testCase "parseSettings rejects malformed URLs" $ do
         assertUrlRejected "not-a-url"
         assertUrlRejected "ftp://example.test/completion"
         assertUrlRejected "http:///v1/chat/completions"
         assertUrlRejected "http://example.test/a path"
-    , testCase "parseLlmSettings reports missing options, missing values, and unknown arguments" $ do
+    , testCase "parseSettings reports missing options, missing values, and unknown arguments" $ do
         case parseLlmSettings [] of
           Left message -> do
             assertBool "missing url should be named" ("--llama-url" `isInfixOf` message)
+            assertBool "missing verbosity should be named" ("--verbosity" `isInfixOf` message)
             assertBool "missing model should be named" ("--model" `isInfixOf` message)
             assertBool "missing prompt should be named" ("--system-prompt" `isInfixOf` message)
           Right _ -> assertFailure "empty arguments should fail"
@@ -240,7 +286,7 @@ unitTests =
           Left message -> assertBool "missing policy value should be named" ("--model-shell" `isInfixOf` message)
           Right _ -> assertFailure "a model shell flag without a value should fail"
         case
-            parseLlmSettings
+            parseSettings
               [ "--llama-url"
               , "http://example.test"
               , "--model"
@@ -253,11 +299,11 @@ unitTests =
           of
             Left message -> assertBool "invalid policy should be named" ("--model-shell" `isInfixOf` message)
             Right _ -> assertFailure "an invalid model shell policy should fail"
-        case parseLlmSettings ["--unknown", "value"] of
+        case parseSettings ["--unknown", "value"] of
           Left message -> assertBool "unknown argument should be named" ("--unknown" `isInfixOf` message)
           Right _ -> assertFailure "unknown arguments should fail"
         case
-            parseLlmSettings
+            parseSettings
               [ "--llama-url"
               , "http://example.test"
               , "--model"
@@ -474,7 +520,7 @@ prop_apiFor url =
 
 prop_parseSettings :: NonEmptyList Char -> String -> Property
 prop_parseSettings model systemPrompt =
-  parseLlmSettings
+  parseSettings
     [ "--llama-url"
     , urlText
     , "--model"
@@ -488,6 +534,7 @@ prop_parseSettings model systemPrompt =
           (ModelName modelText)
           (SystemPrompt systemPrompt)
           Nothing
+          VerbosityHigh
           (shellTools ToolDeny)
       )
   where
@@ -496,7 +543,7 @@ prop_parseSettings model systemPrompt =
 
 prop_parseSettingsWithSocket :: NonEmptyList Char -> String -> NonEmptyList Char -> Property
 prop_parseSettingsWithSocket model systemPrompt socket =
-  parseLlmSettings
+  parseSettings
     [ "--llama-url"
     , urlText
     , "--llama-socket"
@@ -512,6 +559,7 @@ prop_parseSettingsWithSocket model systemPrompt socket =
           (ModelName modelText)
           (SystemPrompt systemPrompt)
           (Just socketText)
+          VerbosityHigh
           (shellTools ToolDeny)
       )
   where
@@ -535,7 +583,7 @@ containsText _ _ = False
 
 assertUrlRejected :: String -> IO ()
 assertUrlRejected url =
-  case parseLlmSettings ["--llama-url", url, "--model", "m", "--system-prompt", ""] of
+  case parseSettings ["--llama-url", url, "--model", "m", "--system-prompt", ""] of
     Left message -> assertBool ("URL should be named in: " ++ message) ("--llama-url" `isInfixOf` message)
     Right _ -> assertFailure ("malformed URL should fail: " ++ url)
 

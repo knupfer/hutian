@@ -22,6 +22,7 @@ import Hutian.Jobs
   , maxJobOutputLines
   )
 import Hutian.Jobs.Runtime (withJobRuntime)
+import Hutian.Context (TurnContext (..))
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool
 import Hutian.Tool.Catalog
@@ -37,7 +38,8 @@ import Hutian.Tool.Config
   , WebsearchConfig (..)
   , defaultToolConfig
   )
-import Hutian.Tool.Exec (runToolCalls)
+import Hutian.Tool.Exec (ToolRuntime (..), runToolCalls, runToolCallsWith)
+import Hutian.Verbosity (Verbosity (..))
 import Test.Tasty
 import Test.Tasty.HUnit
 import TestSupport (stripAnsi, withPseudoTerminalOutput, withTemporaryDirectory)
@@ -257,6 +259,35 @@ tests =
               let plain = stripAnsi output
               assertBool "stdout must end its own line" ("out\r\n" `isInfixOf` plain)
               assertBool "stderr must end its own line" ("err\r\n" `isInfixOf` plain)
+    , testCase "normal verbosity presents a subagent like low and prints its answer" $
+        withTemporaryDirectory "hutian-verbosity" $ \directory ->
+          withJobRuntime directory directory $ \jobs ->
+            withPseudoTerminalOutput $ \readOutput -> do
+              let runtime =
+                    ToolRuntime
+                      { toolRuntimeJobs = jobs
+                      , toolRuntimeWorkingDirectory = directory
+                      , toolRuntimeContext = MainContext
+                      , toolRuntimeVerbosity = VerbosityNormal
+                      , toolRuntimeSubagent = \_ _ -> pure (Right "final answer\n")
+                      }
+                  catalog =
+                    toolCatalog
+                      (defaultToolConfig {toolSubagent = [cheapAgent]})
+              _ <-
+                runToolCallsWith
+                  runtime
+                  catalog
+                  emptyConversation
+                  [subagentCall]
+              output <- readOutput
+              let plain = stripAnsi output
+              assertBool
+                "the subagent header and task are shown"
+                ("subagent cheap:" `isInfixOf` plain && "summarize this" `isInfixOf` plain)
+              assertBool
+                "the subagent is not shown as a generic tool call"
+                (not ("tool subagent:" `isInfixOf` plain))
     ]
 
 shellCall :: ToolCall

@@ -7,6 +7,7 @@
   systemPrompt,
   modelName,
   llamaUrl,
+  verbosity,
   writable,
   nixDaemon,
   network,
@@ -268,7 +269,7 @@ let
       # The sandbox helper mounts the relay directory read-only. The socket is
       # still connectable, but a shell command cannot unlink or replace it.
       relay_runsc_args=(--host-uds=open)
-      llm_args=(--llama-socket /run/hutian/llm.sock --model-shell ${escapeShellArg tools.shell} --tools-file /run/hutian-config/tools)
+      llm_args=(--llama-socket /run/hutian/llm.sock --verbosity ${escapeShellArg verbosity} --model-shell ${escapeShellArg tools.shell} --tools-file /run/hutian-config/tools)
 
       ${optionalString nixDaemon ''
         # The launcher exposes the host store in the rootfs. Mount the Nix

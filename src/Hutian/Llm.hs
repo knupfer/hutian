@@ -56,18 +56,20 @@ import Hutian.Llm.Settings
 import Hutian.Llm.Stream
 import Hutian.Llm.UnixSocket (postUnixStream)
 import Hutian.Render (TurnContext)
+import Hutian.Verbosity (Verbosity)
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (statusCode)
 import System.Directory (removeFile)
 
 -- | Where streamed output and diagnostics go. The caller owns the terminal and
--- can flush or capture each write. The context selects the main or subagent
--- palette for reasoning and answer labels.
+-- can flush or capture each write. The context and verbosity select the palette
+-- and how much reasoning is shown.
 data LlmOutput = LlmOutput
   { llmOutputWrite :: String -> IO ()
   , llmOutputErrorLine :: String -> IO ()
   , llmOutputContext :: TurnContext
+  , llmOutputVerbosity :: Verbosity
   }
 
 -- | Load settings, including file-backed model and system-prompt values. The
@@ -260,7 +262,7 @@ handleStreamResponse output interruptFlag code reader
           reader
           BS.empty
           initialStreamState
-          (initialStreamPresenterIn (llmOutputContext output))
+          (initialStreamPresenterIn (llmOutputVerbosity output) (llmOutputContext output))
       let (_, finalOutput) = finishPresentation endPresenter
       emitText output finalOutput
       interrupted <- isInterrupted interruptFlag

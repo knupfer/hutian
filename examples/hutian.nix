@@ -26,6 +26,7 @@
     name = "your-model";
     url = "http://127.0.0.1:8080/v1/chat/completions";
     systemPrompt = "You are a helpful coding assistant.";
+    verbosity = "high";
 
     # Set apiKeyCommand to a command that prints the key, or null to forward
     # without authentication. For a key file on the host, use

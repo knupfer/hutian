@@ -142,14 +142,27 @@ tests =
         assertBool "blue prefix" ((boldBlue ++ "subagent cheap:") `isInfixOf` rendered)
         assertBool "label sits above the work" ("subagent cheap:\nwork" `isInfixOf` stripAnsi rendered)
         position @?= cursorPosition 80 "subagent cheap:\n" prompt
-    , testCase "subagent tool prompts and output use the subagent blue" $ do
+    , testCase "subagent tool prompts use blue labels with dim inputs" $ do
         let promptOutput = toolPromptTextIn SubagentContext "shell" 80 "ls"
-        assertBool "blue prefix" ((boldBlue ++ "tool shell:") `isInfixOf` promptOutput)
+        assertBool "dim blue prefix" ((dimBlueForeground ++ "tool shell:") `isInfixOf` promptOutput)
+        assertBool "dim input" ((grayForeground ++ "ls" ++ reset) `isInfixOf` promptOutput)
         assertBool "no teal prefix" (not ((boldTeal ++ "tool shell:") `isInfixOf` promptOutput))
-        toolLabelTextIn SubagentContext "jobs" @?= boldBlue ++ "tool jobs:" ++ reset
+        toolLabelTextIn SubagentContext "jobs" @?= dimBlueForeground ++ "tool jobs:" ++ reset
         outputForegroundIn SubagentContext ToolOutput @?= dimBlueForeground
         outputLabelTextIn SubagentContext ToolOutput True
           @?= dimBlueForeground ++ "tool output:" ++ reset
+    , testCase "subagent MCP tool arguments are dim" $ do
+        let output =
+              toolTextPromptTextIn
+                SubagentContext
+                "mcp__demo__search"
+                80
+                "{\"query\":\"haskell\"}"
+        assertBool
+          "dim input"
+          ( (grayForeground ++ "{\"query\":\"haskell\"}" ++ reset)
+              `isInfixOf` output
+          )
         assertBool
           "subagent output does not keep the teal"
           (outputForegroundIn SubagentContext ToolOutput /= dimTealForeground)
@@ -184,11 +197,11 @@ tests =
     , testCase "output labels are plain when not interactive" $ do
         outputLabelText TermOutput False @?= "output:"
         outputLabelText ToolOutput False @?= "tool output:"
-    , testCase "reasoning and answer labels switch to blue for a subagent" $ do
+    , testCase "reasoning, answer, and tool labels are dim blue for a subagent" $ do
         reasoningLabelText MainContext @?= dimTealForeground ++ "think:" ++ reset
         reasoningLabelText SubagentContext @?= dimBlueForeground ++ "think:" ++ reset
         answerLabelText MainContext @?= boldTeal ++ "answer:" ++ reset
-        answerLabelText SubagentContext @?= boldBlue ++ "answer:" ++ reset
+        answerLabelText SubagentContext @?= dimBlueForeground ++ "answer:" ++ reset
     , testCase "grayOutputText wraps terminal output and resets" $
         grayOutputText True "hello"
           @?= grayForeground ++ "hello" ++ reset

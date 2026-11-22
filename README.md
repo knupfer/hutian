@@ -40,6 +40,17 @@ advertises it but needs approval, and `"allow"` runs it automatically.
   server, lists its tools, and advertises them as
   `mcp__<server>__<tool>`. The server policy applies to every tool it exposes.
 
+The mandatory `model.verbosity` option controls model and tool output:
+
+- `"low"` prints tool calls with their arguments and main-turn answers. Other
+  blocks, including a subagent's answer, show only their prompt, such as
+  `think:`, `answer:`, or `tool output:`.
+- `"normal"` shows thinking blocks for the main agent. A subagent is presented
+  like low, but its final answer streams in dim colors, using the same styling
+  as a thinking block.
+- `"high"` prints everything, including full reasoning and every subagent block.
+  Subagent answers still use the dim styling.
+
 Term mode is always available. Model commands run through the same `/bin/sh -c`
 path as term mode and are shown with a bold teal `tool shell:` line. In `"ask"`
 mode Hutian shows an `approve:` prompt in the user's pink prompt colour while
@@ -47,9 +58,11 @@ the cursor is hidden, with `[y] Yes` and `[n] No` on their own lines. The choice
 collapses into a single `Yes` or `No` line; only `y` or `n` decides, other keys
 are ignored, and `Ctrl+C` aborts the current LLM turn. Shell output is preceded
 by a dimmed pink `output:` line and tool output by a dimmed teal `tool output:`
-line. Subagent work starts under a blue `subagent <name>:` line, followed by
-the task it was given. Every tool prompt and tool output label inside that
-subagent also uses the subagent blue instead of teal.
+line. In every mode, subagent work starts under a blue `subagent <name>:` line,
+followed by the task it was given. Low and normal abbreviate the internal
+blocks to their prompts; normal additionally prints the final answer in dim
+colors. Every subagent tool prompt, answer, and output label uses the dim
+subagent blue; the input text under a tool prompt is dim gray.
 
 ## Quick start
 
@@ -125,9 +138,11 @@ delegate a self-contained task to a configured subagent. Web tools run in the
 sandbox and need direct networking (`sandbox.network = true`) unless the URL is
 reachable another way. A subagent gets its own system prompt and tools and runs
 synchronously inside the tool call; only its final answer becomes the tool
-result in the main conversation. Its streamed output appears under a blue
-`subagent <name>:` line, which is followed by the task prompt, and its own
-tool prompts and output labels stay in that same blue.
+result in the main conversation. In every mode its work appears under a blue
+`subagent <name>:` line followed by the task prompt. Low abbreviates internal
+blocks to prompts and hides subagent answer content. Normal streams the final
+answer in dim colors. High streams everything, with subagent answers using the
+same dim styling.
 
 ```console
 Explain what a syscall is.
@@ -195,6 +210,7 @@ system message, model name, llama.cpp endpoint, and model permissions:
 | `model.name` | model | Model name sent to the endpoint. |
 | `model.url` | relay | OpenAI-compatible chat or native `/completion` URL. `http://` and `https://` are supported. |
 | `model.systemPrompt` | model | System message for every LLM request. |
+| `model.verbosity` | model | `"low"`, `"normal"`, or `"high"` model/tool output detail. |
 | `model.tools` | model | Tool policies and configuration: `shell`, `webfetch`, `websearch`, `subagent`, and `mcp`. |
 | `model.apiKeyCommand` | host relay | Command that prints the upstream key, or `null` for unauthenticated forwarding. |
 
@@ -237,6 +253,7 @@ A complete configuration:
         systemPrompt = ''
           You are a careful coding assistant working in a sandboxed shell.
         '';
+        verbosity = "high";
         tools = {
           shell = "allow";
           webfetch = "deny";
@@ -345,6 +362,7 @@ hutian.lib.mkPackage pkgs {
     name = "your-model";
     url = "http://127.0.0.1:8080/v1/chat/completions";
     systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
+    verbosity = "high";
     tools = {
       shell = "allow";
       webfetch = "deny";
@@ -623,6 +641,9 @@ The code keeps pure logic separate from IO:
   with `ansi-terminal`.
 - `Hutian.Render` turns prompts and output labels into ANSI output, and holds
   the pure approval decisions shared with the console.
+- `Hutian.Verbosity` decides which reasoning, tool, and subagent blocks are
+  visible for low, normal, and high output. `Hutian.Context` keeps the main or
+  subagent palette choice independent of the rendering layer.
 - `Hutian.History` owns the pure on-disk history codec.
 - `Hutian.Conversation` is a pure model of chat messages, tool calls, and tool
   results, including the abort results recorded when an interrupt stops a
@@ -668,6 +689,7 @@ src/Hutian/Cli.hs               Strict shared command-line option parser
 src/Hutian/Command.hs           Term-mode input classification
 src/Hutian/Completion.hs        Pure completion selection
 src/Hutian/Console.hs           Single terminal IO boundary
+src/Hutian/Context.hs           Shared main/subagent turn context
 src/Hutian/Conversation.hs      Conversation entries, tool results, and aborts
 src/Hutian/Editor.hs            Prompt text, cursor, and layout state
 src/Hutian/Highlight.hs         Skylighting for fenced code and shell input
@@ -702,6 +724,7 @@ src/Hutian/Tool.hs              Pure tool schemas, decoding, and planning
 src/Hutian/Tool/Catalog.hs      Runtime tool catalog and MCP state
 src/Hutian/Tool/Config.hs       Tool policies, websearch, subagent, and MCP config
 src/Hutian/Tool/Exec.hs         Terminal execution of tool-call plans
+src/Hutian/Verbosity.hs         Pure output-visibility decisions
 src/Hutian/Web.hs               Bounded HTTP fetches and search URLs
 app/Main.hs                     Shell executable entry point
 app/RelayMain.hs                Relay executable entry point
