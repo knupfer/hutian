@@ -43,11 +43,12 @@ import Hutian.Tool.Catalog
   )
 import Hutian.Tool.Config
   ( HandlerConfig (..)
-  , HandlerConfigs (..)
+  , HandlerConfigs
   , McpServerConfig (..)
   , SubagentConfig (..)
   , ToolConfig (..)
   , defaultToolConfig
+  , handlerConfigFor
   )
 
 -- | Whether a shell command should block the current turn or run as a job.
@@ -94,8 +95,6 @@ data ToolPlan
     PlanApproveMcp McpServer McpTool Value
   deriving stock (Eq, Show)
 
--- | The policy-aware planners. 'planTool' covers the shell-only entry point;
--- 'planToolWith' resolves every configured tool.
 -- | The shell tools, advertised when a caller only supplies a shell policy.
 -- Request bodies use 'toolDefinitionsFor' with the full configuration.
 toolDefinitions :: [Value]
@@ -139,8 +138,8 @@ toolDefinitionsFor catalog =
 -- | Append the result handler's description to a tool definition. The suffix
 -- tells the main model that the raw result is processed before it sees it.
 appendHandlerDescription :: String -> String -> HandlerConfigs -> Value -> Value
-appendHandlerDescription serverName toolName (HandlerConfigs handlers) definition =
-  case lookup toolName handlers of
+appendHandlerDescription serverName toolName handlers definition =
+  case handlerConfigFor toolName handlers of
     Nothing -> definition
     Just config -> mapFunctionDescription (\description -> description ++ suffix config) definition
   where
@@ -399,30 +398,19 @@ planToolWith catalog call
         -- Refuse before inspecting the call, so a denied model cannot probe
         -- which tool names or argument shapes exist.
         ToolDeny -> PlanRefuse "tool error: the model shell tools are disabled"
-        ToolAllow -> runShell mode
-        ToolAsk -> approveShell mode
+        ToolAllow -> plannedShell (PlanRun mode)
+        ToolAsk -> plannedShell (PlanApprove mode)
+      where
+        plannedShell makePlan =
+          case toolRequest call of
+            Left message -> PlanRefuse ("tool error: " ++ message)
+            Right (RequestShell command) -> plannedCommand makePlan command
+            Right (RequestShellBackground command) -> plannedCommand makePlan command
+            Right _ -> PlanRefuse "tool error: the shell command is missing"
 
-    runShell mode =
-      case toolRequest call of
-        Left message -> PlanRefuse ("tool error: " ++ message)
-        Right (RequestShell command)
-          | all isSpace command -> PlanRefuse "tool error: the shell command is empty"
-          | otherwise -> PlanRun mode command
-        Right (RequestShellBackground command)
-          | all isSpace command -> PlanRefuse "tool error: the shell command is empty"
-          | otherwise -> PlanRun mode command
-        Right _ -> PlanRefuse "tool error: the shell command is missing"
-
-    approveShell mode =
-      case toolRequest call of
-        Left message -> PlanRefuse ("tool error: " ++ message)
-        Right (RequestShell command)
-          | all isSpace command -> PlanRefuse "tool error: the shell command is empty"
-          | otherwise -> PlanApprove mode command
-        Right (RequestShellBackground command)
-          | all isSpace command -> PlanRefuse "tool error: the shell command is empty"
-          | otherwise -> PlanApprove mode command
-        Right _ -> PlanRefuse "tool error: the shell command is missing"
+        plannedCommand makePlan command
+          | all isSpace command = PlanRefuse "tool error: the shell command is empty"
+          | otherwise = makePlan command
 
     shellInspectionPlan policy =
       case policy of
@@ -469,8 +457,8 @@ planTool :: ToolPolicy -> ToolCall -> ToolPlan
 planTool policy call =
   case policy of
     ToolDeny -> PlanRefuse "tool error: the model shell tools are disabled"
-    ToolAllow -> planned (run Foreground) (run Background)
-    ToolAsk -> planned (approve Foreground) (approve Background)
+    ToolAllow -> planned (PlanRun Foreground) (PlanRun Background)
+    ToolAsk -> planned (PlanApprove Foreground) (PlanApprove Background)
   where
     planned shellCommand background =
       case toolRequest call of
@@ -482,18 +470,14 @@ planTool policy call =
         RequestJobs -> PlanListJobs
         RequestJobOutput target requestedLines -> PlanJobOutput target requestedLines
         RequestJobKill target -> PlanJobKill target
-        RequestShell command -> shell command
-        RequestShellBackground command -> background command
+        RequestShell command -> commandPlan shell command
+        RequestShellBackground command -> commandPlan background command
         RequestWebfetch _ -> PlanRefuse "tool error: the model webfetch tool is disabled"
         RequestSubagent _ _ -> PlanRefuse "tool error: the model subagent tool is disabled"
 
-    run mode command
+    commandPlan makePlan command
       | all isSpace command = PlanRefuse "tool error: the shell command is empty"
-      | otherwise = PlanRun mode command
-
-    approve mode command
-      | all isSpace command = PlanRefuse "tool error: the shell command is empty"
-      | otherwise = PlanApprove mode command
+      | otherwise = makePlan command
 
 findMcpTool :: [McpServer] -> String -> Maybe (McpServer, McpTool)
 findMcpTool servers name =

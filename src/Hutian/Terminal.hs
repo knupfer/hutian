@@ -88,7 +88,7 @@ promptForInput workingDirectory commands mode history buffers = do
 
 readPrompt :: FilePath -> Bool -> PromptContext -> PromptState -> IO (InputMode, Maybe String, PromptBuffers)
 readPrompt workingDirectory interactive context state = do
-  position <- renderPrompt interactive context 0 state
+  position <- renderPrompt interactive 0 state
   loop position state
   where
     loop position currentState = do
@@ -111,7 +111,7 @@ readPrompt workingDirectory interactive context state = do
           completed <- completeInput workingDirectory (contextCommands context) current
           readNext displayedPosition logicalPosition True (acceptCompletion completed next)
         StepFinish outcome prompt next -> do
-          finishPrompt interactive context (promptMode next) (fst displayedPosition) prompt
+          finishPrompt interactive (promptMode next) (fst displayedPosition) prompt
           case outcome of
             PromptSubmitted ->
               pure (promptMode next, Just (promptText prompt), promptBuffers next)
@@ -126,7 +126,7 @@ readPrompt workingDirectory interactive context state = do
         else
           if redraw
             then do
-              nextPosition <- renderPrompt interactive context (fst displayedPosition) currentState
+              nextPosition <- renderPrompt interactive (fst displayedPosition) currentState
               loop nextPosition currentState
             else do
               when (logicalPosition /= displayedPosition) (writeCursorMove displayedPosition logicalPosition)
@@ -206,8 +206,8 @@ readSs3 =
 readChar :: IO (Either IOException Char)
 readChar = try getChar
 
-renderPrompt :: Bool -> PromptContext -> Int -> PromptState -> IO (Int, Int)
-renderPrompt interactive _context previousRow state =
+renderPrompt :: Bool -> Int -> PromptState -> IO (Int, Int)
+renderPrompt interactive previousRow state =
   renderFrame
     interactive
     (promptKindFor (promptMode state))
@@ -224,8 +224,8 @@ renderFrame interactive kind previousRow prompt
       consoleFlush
       pure position
 
-finishPrompt :: Bool -> PromptContext -> InputMode -> Int -> Prompt -> IO ()
-finishPrompt interactive _context mode previousRow prompt
+finishPrompt :: Bool -> InputMode -> Int -> Prompt -> IO ()
+finishPrompt interactive mode previousRow prompt
   | not interactive = pure ()
   | otherwise = do
       let finished = cursorToEnd (clearSuggestions prompt)

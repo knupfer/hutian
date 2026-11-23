@@ -13,6 +13,8 @@ module Hutian.Cli
   , optionValueFor
   , flagPresent
   , missingOptions
+  , appendUsage
+  , missingOptionsMessage
   ) where
 
 import Data.List (find)
@@ -68,3 +70,22 @@ flagPresent = hasOption
 missingOptions :: [String] -> [Option] -> [String]
 missingOptions required options =
   filter (\name -> not (hasOption name options)) required
+
+-- | Append a usage block to a parse error. A successful parse is returned
+-- unchanged.
+appendUsage :: String -> Either String a -> Either String a
+appendUsage usage result =
+  case result of
+    Left message -> Left (message ++ "\n" ++ usage)
+    Right value -> Right value
+
+-- | The message for required options that were not supplied. The usage block
+-- follows the names so callers can show both in one error.
+missingOptionsMessage :: String -> [String] -> String
+missingOptionsMessage usage missing =
+  "missing required argument"
+    ++ (if length missing > 1 then "s" else "")
+    ++ ": "
+    ++ unwords missing
+    ++ "\n"
+    ++ usage

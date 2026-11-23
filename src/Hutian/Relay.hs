@@ -58,8 +58,10 @@ import qualified Data.Text.Encoding.Error as TextEncodingError
 import Data.Text.Read (decimal)
 import Hutian.Cli
   ( OptionKind (..)
+  , appendUsage
   , flagPresent
   , missingOptions
+  , missingOptionsMessage
   , optionValueFor
   , parseOptions
   )
@@ -127,7 +129,7 @@ defaultRelayMaxBody = 64 * 1024 * 1024
 -- @Authorization@ header.
 parseRelaySettings :: [String] -> Either String RelaySettings
 parseRelaySettings arguments = do
-  options <- withUsage (parseOptions relayOptionSpec arguments)
+  options <- appendUsage relayUsage (parseOptions relayOptionSpec arguments)
   case missingOptions requiredRelayOptions options of
     [] -> do
       listenPath <- required "--listen" options
@@ -146,26 +148,13 @@ parseRelaySettings arguments = do
                 then RelayAuthDisabled
                 else RelayAuthRequired
           }
-    missing -> Left (missingMessage missing)
+    missing -> Left (missingOptionsMessage relayUsage missing)
   where
     required name options =
       case optionValueFor name options of
         Just "" -> Left ("empty value for " ++ name ++ "\n" ++ relayUsage)
         Just value -> Right value
         Nothing -> Left ("missing required argument: " ++ name ++ "\n" ++ relayUsage)
-
-    withUsage result =
-      case result of
-        Left message -> Left (message ++ "\n" ++ relayUsage)
-        Right options -> Right options
-
-    missingMessage missing =
-      "missing required argument"
-        ++ (if length missing > 1 then "s" else "")
-        ++ ": "
-        ++ unwords missing
-        ++ "\n"
-        ++ relayUsage
 
 relayOptionSpec :: [(String, OptionKind)]
 relayOptionSpec =

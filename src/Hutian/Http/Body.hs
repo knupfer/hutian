@@ -1,5 +1,5 @@
--- | Bounded reads from a streaming HTTP body. Shared by the web and MCP
--- clients so one tool call cannot add an unbounded response.
+-- | Bounded reads from a streaming HTTP body. Shared by the model, web, and MCP
+-- clients so one request cannot add an unbounded response.
 module Hutian.Http.Body
   ( readBodyAtMost
   ) where

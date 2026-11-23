@@ -56,14 +56,14 @@ data RenderMode = RenderMode
 renderMode :: Verbosity -> TurnContext -> RenderMode
 renderMode verbosity context =
   RenderMode
-    { modeReasoning = reasoningVisibility
+    { modeReasoning = mainOutputVisibility
     , modeAnswer = answerVisibility
     , modeAnswerStyle =
         if isSubagentContext context then AnswerDim else AnswerNormal
-    , modeToolOutput = toolOutputVisibility
+    , modeToolOutput = mainOutputVisibility
     }
   where
-    reasoningVisibility =
+    mainOutputVisibility =
       case verbosity of
         VerbosityHigh -> Full
         VerbosityNormal
@@ -75,13 +75,6 @@ renderMode verbosity context =
         VerbosityLow
           | isSubagentContext context -> LabelOnly
         _ -> Full
-    toolOutputVisibility =
-      case verbosity of
-        VerbosityHigh -> Full
-        VerbosityNormal
-          | context == MainContext -> Full
-          | otherwise -> LabelOnly
-        VerbosityLow -> LabelOnly
 
 -- | Tool output labels are always printed; only the body follows the mode.
 outputBodyVisible :: Visibility -> Bool

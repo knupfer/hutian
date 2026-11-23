@@ -40,11 +40,9 @@ requestBodyFor tools api model systemPrompt conversation prompt =
   case api of
     ChatApi -> chatBody (toolCatalogFor tools) model (requestMessages (unSystemPrompt systemPrompt) conversation prompt)
     CompletionApi ->
-      object
-        [ "model" .= unModelName model
-        , "prompt" .= completionPrompt (unSystemPrompt systemPrompt) conversation prompt
-        , "stream" .= True
-        ]
+      completionBody
+        model
+        (completionPrompt (unSystemPrompt systemPrompt) conversation prompt)
 
 -- | Build a follow-up request after tool results, without a new user message.
 continuationBodyFor :: HasToolCatalog tools => tools -> Api -> ModelName -> SystemPrompt -> Conversation -> Aeson.Value
@@ -52,11 +50,17 @@ continuationBodyFor tools api model systemPrompt conversation =
   case api of
     ChatApi -> chatBody (toolCatalogFor tools) model (continuationMessages (unSystemPrompt systemPrompt) conversation)
     CompletionApi ->
-      object
-        [ "model" .= unModelName model
-        , "prompt" .= completionContinuationPrompt (unSystemPrompt systemPrompt) conversation
-        , "stream" .= True
-        ]
+      completionBody
+        model
+        (completionContinuationPrompt (unSystemPrompt systemPrompt) conversation)
+
+completionBody :: ModelName -> String -> Aeson.Value
+completionBody model prompt =
+  object
+    [ "model" .= unModelName model
+    , "prompt" .= prompt
+    , "stream" .= True
+    ]
 
 chatBody :: ToolCatalog -> ModelName -> [ChatMessage] -> Aeson.Value
 chatBody catalog model messages =

@@ -13,6 +13,7 @@ module Hutian.Tool.Config
   , SubagentConfigs (..)
   , HandlerConfig (..)
   , HandlerConfigs (..)
+  , handlerConfigFor
   , McpServerConfig (..)
   , defaultToolConfig
   ) where
@@ -73,6 +74,10 @@ newtype HandlerConfigs = HandlerConfigs
   { unHandlerConfigs :: [(String, HandlerConfig)]
   }
   deriving stock (Eq, Show)
+
+-- | Look up a result handler by its local MCP tool name.
+handlerConfigFor :: String -> HandlerConfigs -> Maybe HandlerConfig
+handlerConfigFor name (HandlerConfigs handlers) = lookup name handlers
 
 -- | One configured MCP server. The JSON configuration is keyed by name; the
 -- discovered tools and session live in "Hutian.Tool.Catalog".
@@ -208,12 +213,10 @@ instance FromJSON McpServers where
 
 mcpServersObject :: [McpServerConfig] -> Value
 mcpServersObject servers =
-  Object
-    ( KeyMap.fromList
-        [ (AesonKey.fromString (mcpServerName server), toJSON server)
-        | server <- servers
-        ]
-    )
+  keyedObject
+    [ (mcpServerName server, toJSON server)
+    | server <- servers
+    ]
 
 parseMcpServer :: AesonKey.Key -> Value -> Parser McpServerConfig
 parseMcpServer nameKey = withObject "mcp server" $ \values -> do
@@ -231,19 +234,24 @@ parseMcpServer nameKey = withObject "mcp server" $ \values -> do
 
 handlersObject :: [(String, HandlerConfig)] -> Value
 handlersObject handlers =
-  Object
-    ( KeyMap.fromList
-        [ (AesonKey.fromString name, toJSON config)
-        | (name, config) <- handlers
-        ]
-    )
+  keyedObject
+    [ (name, toJSON config)
+    | (name, config) <- handlers
+    ]
 
 subagentObject :: [SubagentConfig] -> Value
 subagentObject agents =
+  keyedObject
+    [ (subagentName agent, toJSON agent)
+    | agent <- agents
+    ]
+
+keyedObject :: [(String, Value)] -> Value
+keyedObject entries =
   Object
     ( KeyMap.fromList
-        [ (AesonKey.fromString (subagentName agent), toJSON agent)
-        | agent <- agents
+        [ (AesonKey.fromString name, value)
+        | (name, value) <- entries
         ]
     )
 

@@ -19,8 +19,10 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import Hutian.Cli
   ( OptionKind (..)
+  , appendUsage
   , hasOption
   , missingOptions
+  , missingOptionsMessage
   , optionValueFor
   , parseOptions
   )
@@ -68,7 +70,7 @@ parseLlmSettings = parseLlmSettingsWithFiles []
 -- function so the contents never appear in the process listing.
 parseLlmSettingsWithFiles :: [(FilePath, String)] -> [String] -> Either String LlmSettings
 parseLlmSettingsWithFiles loaded arguments = do
-  options <- withUsage (parseOptions llmOptionSpec arguments)
+  options <- appendUsage llmUsage (parseOptions llmOptionSpec arguments)
   let missingOption inline file =
         [inline | not (hasOption inline options || hasOption file options)]
       missing =
@@ -99,7 +101,7 @@ parseLlmSettingsWithFiles loaded arguments = do
         (optionValueFor "--llama-socket" options)
         verbosity
         tools
-    _ -> Left (missingMessage missing)
+    _ -> Left (missingOptionsMessage llmUsage missing)
   where
     required name options =
       case optionValueFor name options of
@@ -159,11 +161,6 @@ parseLlmSettingsWithFiles loaded arguments = do
             Just contents ->
               unSubagentConfigs <$> decodeFile "--subagent-file" path contents
             Nothing -> Left ("missing contents for --subagent-file: " ++ path ++ "\n" ++ llmUsage)
-
-    withUsage result =
-      case result of
-        Left message -> Left (message ++ "\n" ++ llmUsage)
-        Right options -> Right options
 
 decodeFile :: Aeson.FromJSON value => String -> FilePath -> String -> Either String value
 decodeFile flag path contents =
@@ -259,17 +256,6 @@ authorityOf = takeWhile (`notElem` ['/', '?', '#'])
 urlPath :: LlmUrl -> String
 urlPath (LlmUrl url) =
   takeWhile (`notElem` ['?', '#']) . dropWhile (`notElem` ['/', '?', '#']) $ url
-
-missingMessage :: [String] -> String
-missingMessage missing =
-  "missing required argument"
-    ++ plural
-    ++ ": "
-    ++ unwords missing
-    ++ "\n"
-    ++ llmUsage
-  where
-    plural = if length missing > 1 then "s" else ""
 
 llmUsage :: String
 llmUsage =

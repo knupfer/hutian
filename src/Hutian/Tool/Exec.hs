@@ -74,10 +74,10 @@ import Hutian.Tool
   )
 import Hutian.Tool.Catalog (McpServer (..), McpTool (..), ToolCatalog)
 import Hutian.Tool.Config
-  ( HandlerConfig (..)
-  , HandlerConfigs (..)
+  ( HandlerConfig
   , McpServerConfig (..)
   , SubagentConfig (..)
+  , handlerConfigFor
   )
 import Hutian.Web (fetchResultText, fetchUrl)
 import Hutian.Verbosity
@@ -123,9 +123,6 @@ runToolCalls jobs workingDirectory policy =
 runToolCallsWith :: ToolRuntime -> ToolCatalog -> Conversation -> [ToolCall] -> IO (Bool, Conversation)
 runToolCallsWith runtime catalog =
   runToolCallsPlanned (planToolWith catalog) runtime
-
-lookupHandlerConfig :: HandlerConfigs -> String -> Maybe HandlerConfig
-lookupHandlerConfig (HandlerConfigs handlers) name = lookup name handlers
 
 runToolCallsPlanned
   :: (ToolCall -> ToolPlan)
@@ -287,7 +284,7 @@ runToolCall planner runtime conversation call =
           serverName = mcpServerName (mcpServerConfig server)
           displayName = mcpToolDisplayName serverName localName
           handlerConfig =
-            lookupHandlerConfig (mcpHandlers (mcpServerConfig server)) localName
+            handlerConfigFor localName (mcpHandlers (mcpServerConfig server))
       result <- callMcpTool server tool arguments
       case result of
         Left failure -> finishError (mcpErrorText failure)

@@ -204,20 +204,26 @@ toolPromptForeground :: TurnContext -> String
 toolPromptForeground MainContext = boldTeal
 toolPromptForeground (SubagentContext _) = dimBlueForeground
 
-toolOutputForeground :: TurnContext -> String
-toolOutputForeground MainContext = dimTealForeground
-toolOutputForeground (SubagentContext _) = dimBlueForeground
+-- | Dim foreground shared by reasoning, request blocks, and tool output: teal
+-- for the main agent and blue for a subagent.
+dimForegroundFor :: TurnContext -> String
+dimForegroundFor MainContext = dimTealForeground
+dimForegroundFor (SubagentContext _) = dimBlueForeground
 
 -- | The label above streamed reasoning. A subagent's reasoning uses its blue
 -- so the nested turn stays visually distinct from the main model.
 reasoningLabelText :: TurnContext -> String
 reasoningLabelText context =
-  reasoningForeground context ++ pathPrefix context ++ "think" ++ reset
+  dimForegroundFor context ++ pathPrefix context ++ "think" ++ reset
 
 -- | The label above a streamed final answer.
 answerLabelText :: TurnContext -> String
 answerLabelText context =
   answerForeground context ++ pathPrefix context ++ "answer" ++ reset
+
+answerForeground :: TurnContext -> String
+answerForeground MainContext = boldTeal
+answerForeground (SubagentContext _) = dimBlueForeground
 
 -- | A full system message shown in high verbosity. The label matches the turn
 -- palette and the body is dimmed, while the text itself is unchanged.
@@ -245,22 +251,10 @@ requestBlockText kind context text =
 
 requestLabel :: String -> TurnContext -> String
 requestLabel kind context =
-  requestPromptForeground context
+  dimForegroundFor context
     ++ pathPrefix context
     ++ kind
     ++ reset
-
-requestPromptForeground :: TurnContext -> String
-requestPromptForeground MainContext = dimTealForeground
-requestPromptForeground (SubagentContext _) = dimBlueForeground
-
-reasoningForeground :: TurnContext -> String
-reasoningForeground MainContext = dimTealForeground
-reasoningForeground (SubagentContext _) = dimBlueForeground
-
-answerForeground :: TurnContext -> String
-answerForeground MainContext = boldTeal
-answerForeground (SubagentContext _) = dimBlueForeground
 
 -- | The user's decision about a model-requested command. Only an explicit
 -- @y@ or @n@ decides; @Ctrl+C@ aborts the whole LLM turn.
@@ -320,7 +314,7 @@ outputForeground = outputForegroundIn MainContext
 -- | Like 'outputForeground', but subagent tool output uses the dimmed blue.
 outputForegroundIn :: TurnContext -> OutputKind -> String
 outputForegroundIn _ TermOutput = dimPinkForeground
-outputForegroundIn context ToolOutput = toolOutputForeground context
+outputForegroundIn context ToolOutput = dimForegroundFor context
 
 -- | The label printed above captured output, coloured when interactive. The
 -- tool path makes the label match the input prompt that caused the output.
