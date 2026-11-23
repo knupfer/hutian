@@ -20,6 +20,7 @@ module Hutian.Render
   , toolsPromptText
   , outputForeground
   , outputForegroundIn
+  , outputBlockLabelTextIn
   , outputLabelText
   , outputLabelTextIn
   , grayOutputText
@@ -327,11 +328,14 @@ outputLabelText :: String -> OutputKind -> Bool -> String
 outputLabelText = outputLabelTextIn MainContext
 
 outputLabelTextIn :: TurnContext -> String -> OutputKind -> Bool -> String
-outputLabelTextIn context toolPath kind interactive
+outputLabelTextIn context toolPath kind =
+  outputBlockLabelTextIn context kind (pathPrefix context ++ toolPath ++ ".output")
+
+-- | An output-style label for arbitrary text, coloured when interactive.
+outputBlockLabelTextIn :: TurnContext -> OutputKind -> String -> Bool -> String
+outputBlockLabelTextIn context kind label interactive
   | interactive = outputForegroundIn context kind ++ label ++ reset
   | otherwise = label
-  where
-    label = pathPrefix context ++ toolPath ++ ".output"
 
 -- | Wrap captured output in gray when it is going to a terminal.
 grayOutputText :: Bool -> String -> String

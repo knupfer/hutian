@@ -34,7 +34,9 @@ All notable changes to Hutian are documented here. The format follows
 - Tool output labels include the path of the tool that produced them, for
   example `shell.output` or `mcp.<server>.<tool>.output`. When an MCP tool has
   a result handler, neither `<tool>.output` nor the raw result is printed:
-  the raw result is the body of the handler's prompt instead.
+  the raw result is the body of the handler's prompt instead. That prompt is
+  rendered like tool output, with a dim label and a gray body, and follows
+  tool-output visibility, so low verbosity hides the body.
 - The flake configuration is split into `sandbox`, `endpoint`, `output`, and
   `agent` groups. `model.name` is now `agent.model`, matching subagents, which
   already use `<name>.model`. The shared host-side settings moved out of the

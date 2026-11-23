@@ -5,6 +5,7 @@ import Hutian.Console
   ( consoleWriteErrorLine
   , consoleWriteGrayLine
   , consoleWriteLine
+  , consoleWriteResultPromptIn
   , consoleWriteSubagentPrompt
   , consoleWriteToolDefinitions
   , withGrayOutput
@@ -17,6 +18,7 @@ import Hutian.Render
   , approvePromptText
   , boldRed
   , boldVibrantPink
+  , dimTealForeground
   , grayForeground
   , reset
   )
@@ -104,6 +106,33 @@ tests =
           assertBool
             "the label sits above the task"
             ("cheap\nsummarize this" `isInfixOf` plain)
+    , testCase "a result prompt uses the tool-output style" $
+        withPseudoTerminalOutput $ \readOutput -> do
+          consoleWriteResultPromptIn
+            MainContext
+            "mcp.demo.results.search"
+            True
+            "Tool: mcp.demo.search\nResult:\nFound results\n"
+          output <- readOutput
+          let plain = filter (/= '\r') (stripAnsi output)
+          assertBool
+            "the label sits above the prompt"
+            ("mcp.demo.results.search\nTool: mcp.demo.search" `isInfixOf` plain)
+          assertBool
+            "the label uses the dim tool-output colour"
+            ((dimTealForeground ++ "mcp.demo.results.search" ++ reset) `isInfixOf` output)
+          assertBool
+            "the prompt body is gray"
+            ((grayForeground ++ "Tool: mcp.demo.search") `isInfixOf` output)
+    , testCase "a result prompt hides its body when output is label-only" $
+        withPseudoTerminalOutput $ \readOutput -> do
+          consoleWriteResultPromptIn
+            MainContext
+            "mcp.demo.results.search"
+            False
+            "Tool: mcp.demo.search\nResult:\nFound results\n"
+          output <- readOutput
+          filter (/= '\r') (stripAnsi output) @?= "mcp.demo.results.search\n"
     , testCase "an empty tool catalog prints no tools block" $
         withPseudoTerminalOutput $ \readOutput -> do
           consoleWriteToolDefinitions MainContext []

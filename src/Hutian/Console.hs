@@ -16,6 +16,7 @@ module Hutian.Console
   , consoleWriteErrorLine
   , consoleWriteGrayLine
   , consoleWriteLine
+  , consoleWriteResultPromptIn
   , consoleWriteSubagentPrompt
   , consoleWriteSystemPrompt
   , consoleWriteToolDefinitions
@@ -51,7 +52,7 @@ import Hutian.Markdown
   )
 import Hutian.Render
   ( CursorStyle (..)
-  , OutputKind
+  , OutputKind (..)
   , ToolApproval (..)
   , TurnContext (..)
   , approvalDecisionText
@@ -62,6 +63,7 @@ import Hutian.Render
   , grayForeground
   , grayOutputText
   , hideCursorText
+  , outputBlockLabelTextIn
   , outputLabelTextIn
   , popCursorStyle
   , pushCursorStyle
@@ -222,6 +224,20 @@ consoleWriteSubagentPrompt label prompt = do
     taskNewline
       | null prompt = ""
       | otherwise = "\n"
+
+-- | Show a result handler's prompt as a tool-output block: a dim label and,
+-- when visible, the body in gray. The caller applies the verbosity policy.
+consoleWriteResultPromptIn :: TurnContext -> String -> Bool -> String -> IO ()
+consoleWriteResultPromptIn context label showBody prompt = do
+  interactive <- consoleIsInteractive
+  consoleWriteLine $
+    outputBlockLabelTextIn context ToolOutput (sanitize label) interactive
+  when (showBody && not (null prompt)) $
+    withGrayOutput
+      ( consoleWrite (trailingNewline (sanitizeOutput prompt))
+          >> consoleFlush
+      )
+  consoleFlush
 
 -- | Show the exact system message sent to the model in high verbosity. The
 -- label is dim teal for the main agent and dim blue for a subagent.

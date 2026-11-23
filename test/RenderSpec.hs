@@ -191,12 +191,18 @@ tests =
           @?= outputForeground TermOutput ++ "shell.output" ++ reset
         outputLabelText "webfetch" ToolOutput True
           @?= outputForeground ToolOutput ++ "webfetch.output" ++ reset
+        outputBlockLabelTextIn MainContext ToolOutput "mcp.demo.results.search" True
+          @?= dimTealForeground ++ "mcp.demo.results.search" ++ reset
+        outputBlockLabelTextIn (SubagentContext ["cheap"]) ToolOutput "mcp.demo.results.search" True
+          @?= dimBlueForeground ++ "mcp.demo.results.search" ++ reset
         assertBool
           "shell and tool labels differ"
           (outputForeground TermOutput /= outputForeground ToolOutput)
     , testCase "output labels are plain when not interactive" $ do
         outputLabelText "shell" TermOutput False @?= "shell.output"
         outputLabelText "webfetch" ToolOutput False @?= "webfetch.output"
+        outputBlockLabelTextIn MainContext ToolOutput "mcp.demo.results.search" False
+          @?= "mcp.demo.results.search"
     , testCase "reasoning, answer, and tool labels are dim blue for a subagent" $ do
         reasoningLabelText MainContext @?= dimTealForeground ++ "think" ++ reset
         reasoningLabelText (SubagentContext ["cheap"])

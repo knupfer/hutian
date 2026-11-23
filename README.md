@@ -400,7 +400,9 @@ The handler is automatic. When the agent calls `mcp__szmcp__zim_get`, shown as
 answer is appended as the tool result. Because the raw result is the handler's
 input, there is no separate `mcp.szmcp.zim_get.output` block: the result is the
 body of the handler's prompt, shown under its label, for example
-`mcp.szmcp.results.zim_get`. The handler's `tools` are real tools: it
+`mcp.szmcp.results.zim_get`. That block looks like tool output: the label is
+dim, the prompt body is gray, and the body follows tool-output visibility, so
+low verbosity hides it. The handler's `tools` are real tools: it
 can search, fetch, run commands, or call its own subagents. Its MCP tool results
 can have their own `results` handlers; it never inherits the caller's handlers.
 The handler's prompts use its dotted path: reasoning is

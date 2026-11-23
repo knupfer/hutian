@@ -13,6 +13,7 @@ import Hutian.Console
   , consoleIsInteractive
   , consoleWrite
   , consoleWriteErrorLine
+  , consoleWriteResultPromptIn
   , consoleWriteSubagentPrompt
   , consoleWriteSystemPrompt
   , consoleWriteToolDefinitions
@@ -78,7 +79,12 @@ import Hutian.Tool.Catalog (ToolCatalog (..), toolCatalog)
 import Hutian.Tool.Config (ResultConfig (..), SubagentConfig (..), ToolConfig (..))
 import Hutian.Tool.Exec (ToolRuntime (..), runToolCallsWith)
 import Hutian.Tool.Summary (toolSummaryLines)
-import Hutian.Verbosity (Verbosity (..))
+import Hutian.Verbosity
+  ( Verbosity (..)
+  , modeToolOutput
+  , outputBodyVisible
+  , renderMode
+  )
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.Environment (getArgs)
 import System.Exit (ExitCode (..), exitWith)
@@ -223,6 +229,12 @@ toolRuntime context verbosity workingDirectory jobs settings interruptFlag =
         runResultAgent context workingDirectory jobs settings interruptFlag
     }
 
+-- | How an agent's prompt is announced. Result handlers use tool-output
+-- styling and visibility because their prompt is the raw tool result.
+data PromptPresentation
+  = SubagentPromptPresentation
+  | ResultPromptPresentation Bool
+
 runSubagent
   :: TurnContext
   -> FilePath
@@ -232,7 +244,7 @@ runSubagent
   -> SubagentConfig
   -> String
   -> IO (Either String String)
-runSubagent = runAgent
+runSubagent = runAgent SubagentPromptPresentation
 
 -- | Run a tool-result handler. The handler gets the raw result as its prompt,
 -- but only its final answer is returned. Its own tool results use its own
@@ -251,6 +263,7 @@ runResultAgent
   -> IO (Either String String)
 runResultAgent context workingDirectory jobs settings interruptFlag serverName localName call config raw =
   runAgent
+    (ResultPromptPresentation displayedOutput)
     context
     workingDirectory
     jobs
@@ -270,9 +283,14 @@ runResultAgent context workingDirectory jobs settings interruptFlag serverName l
         ++ "\n\nResult:\n"
         ++ raw
     )
+  where
+    displayedOutput =
+      outputBodyVisible
+        (modeToolOutput (renderMode (settingVerbosity settings) context))
 
 runAgent
-  :: TurnContext
+  :: PromptPresentation
+  -> TurnContext
   -> FilePath
   -> JobRuntime
   -> LlmSettings
@@ -280,7 +298,7 @@ runAgent
   -> SubagentConfig
   -> String
   -> IO (Either String String)
-runAgent parent workingDirectory jobs settings interruptFlag agent prompt = do
+runAgent presentation parent workingDirectory jobs settings interruptFlag agent prompt = do
   servers <-
     discoverMcpServers
       consoleWriteErrorLine
@@ -309,7 +327,11 @@ runAgent parent workingDirectory jobs settings interruptFlag agent prompt = do
     consoleWriteToolDefinitions
       childContext
       (toolSummaryLines (toolDefinitionsFor (settingTools subagentSettings)))
-  consoleWriteSubagentPrompt childLabel prompt
+  case presentation of
+    SubagentPromptPresentation ->
+      consoleWriteSubagentPrompt childLabel prompt
+    ResultPromptPresentation showBody ->
+      consoleWriteResultPromptIn parent childLabel showBody prompt
   (_, finalResult) <-
     runModelTurn
       interruptFlag
