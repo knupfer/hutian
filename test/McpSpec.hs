@@ -23,6 +23,7 @@ import Hutian.Tool.Catalog
   )
 import Hutian.Tool.Config
   ( McpServerConfig (..)
+  , ResultConfigs (..)
   , ToolConfig (..)
   , defaultToolConfig
   )
@@ -58,6 +59,7 @@ tests =
                   { mcpServerName = "demo"
                   , mcpServerUrl = "http://127.0.0.1:" ++ show port ++ "/mcp"
                   , mcpServerPolicy = ToolAllow
+                  , mcpResults = ResultConfigs []
                   }
               config = defaultToolConfig {toolMcp = [server]}
           logs <- newIORef []
@@ -104,6 +106,7 @@ tests =
                 { mcpServerName = "denied"
                 , mcpServerUrl = "http://127.0.0.1:1/mcp"
                 , mcpServerPolicy = ToolDeny
+                , mcpResults = ResultConfigs []
                 }
         logs <- newIORef []
         discovered <-

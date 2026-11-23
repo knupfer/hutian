@@ -4,12 +4,15 @@
 -- tools and sessions live in "Hutian.Tool.Catalog".
 --
 -- The launcher passes one JSON document for the whole tree, including the
--- nested tools of every configured subagent. Keeping the parser here means a
--- malformed configuration is rejected before the shell accepts input.
+-- nested tools of every configured subagent and result handler. Keeping the
+-- parser here means a malformed configuration is rejected before the shell
+-- accepts input.
 module Hutian.Tool.Config
   ( ToolConfig (..)
   , SubagentConfig (..)
   , SubagentConfigs (..)
+  , ResultConfig (..)
+  , ResultConfigs (..)
   , McpServerConfig (..)
   , defaultToolConfig
   ) where
@@ -53,12 +56,31 @@ newtype SubagentConfigs = SubagentConfigs
   }
   deriving stock (Eq, Show)
 
+-- | A tool-result handler. It has the same settings as a subagent but no
+-- selector name: the tool name and the launcher derive its label. Only
+-- concrete MCP tools can attach a handler.
+data ResultConfig = ResultConfig
+  { resultModel :: String
+  , resultDescription :: String
+  , resultSystemPrompt :: String
+  , resultTools :: ToolConfig
+  }
+  deriving stock (Eq, Show)
+
+-- | The tool-keyed result-handler document. A handler may have its own
+-- handlers nested in its tools; the parent handler is never inherited.
+newtype ResultConfigs = ResultConfigs
+  { unResultConfigs :: [(String, ResultConfig)]
+  }
+  deriving stock (Eq, Show)
+
 -- | One configured MCP server. The JSON configuration is keyed by name; the
 -- discovered tools and session live in "Hutian.Tool.Catalog".
 data McpServerConfig = McpServerConfig
   { mcpServerName :: String
   , mcpServerUrl :: String
   , mcpServerPolicy :: ToolPolicy
+  , mcpResults :: ResultConfigs
   }
   deriving stock (Eq, Show)
 
@@ -128,11 +150,52 @@ instance FromJSON SubagentConfigs where
     SubagentConfigs . sortOn subagentName
       <$> traverse (uncurry parseSubagent) (KeyMap.toList agents)
 
+instance ToJSON ResultConfig where
+  toJSON config =
+    object
+      [ "model" .= resultModel config
+      , "description" .= resultDescription config
+      , "systemPrompt" .= resultSystemPrompt config
+      , "tools" .= resultTools config
+      ]
+
+instance FromJSON ResultConfig where
+  parseJSON = withObject "result handler" $ \values -> do
+    model <-
+      values .: "model"
+        >>= requireNonEmpty "result handler model"
+    description <-
+      values .: "description"
+        >>= requireNonEmpty "result handler description"
+    systemPrompt <- values .: "systemPrompt"
+    tools <- values .:? "tools" .!= defaultToolConfig
+    pure
+      ResultConfig
+        { resultModel = Text.unpack model
+        , resultDescription = Text.unpack description
+        , resultSystemPrompt = Text.unpack systemPrompt
+        , resultTools = tools
+        }
+
+instance ToJSON ResultConfigs where
+  toJSON = resultsObject . unResultConfigs
+
+instance FromJSON ResultConfigs where
+  parseJSON = withObject "results" $ \results ->
+    ResultConfigs . sortOn fst
+      <$> traverse parseEntry (KeyMap.toList results)
+    where
+      parseEntry (key, value) = do
+        name <- requireName "result tool" key
+        config <- parseJSON value
+        pure (name, config)
+
 instance ToJSON McpServerConfig where
   toJSON config =
     object
       [ "url" .= mcpServerUrl config
       , "policy" .= mcpServerPolicy config
+      , "results" .= mcpResults config
       ]
 
 instance ToJSON McpServers where
@@ -157,12 +220,23 @@ parseMcpServer nameKey = withObject "mcp server" $ \values -> do
   name <- requireName "MCP server" nameKey
   url <- values .: "url" >>= requireNonEmpty ("MCP server " ++ name ++ " URL")
   policy <- values .:? "policy" .!= ToolAsk
+  results <- values .:? "results" .!= ResultConfigs []
   pure
     McpServerConfig
       { mcpServerName = name
       , mcpServerUrl = Text.unpack url
       , mcpServerPolicy = policy
+      , mcpResults = results
       }
+
+resultsObject :: [(String, ResultConfig)] -> Value
+resultsObject results =
+  Object
+    ( KeyMap.fromList
+        [ (AesonKey.fromString name, toJSON config)
+        | (name, config) <- results
+        ]
+    )
 
 subagentObject :: [SubagentConfig] -> Value
 subagentObject agents =

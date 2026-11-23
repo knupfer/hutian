@@ -33,6 +33,8 @@ import Hutian.Tool.Catalog
   )
 import Hutian.Tool.Config
   ( McpServerConfig (..)
+  , ResultConfig (..)
+  , ResultConfigs (..)
   , SubagentConfig (..)
   , ToolConfig (..)
   , defaultToolConfig
@@ -285,6 +287,7 @@ tests =
                       , toolRuntimeContext = MainContext
                       , toolRuntimeVerbosity = VerbosityNormal
                       , toolRuntimeSubagent = \_ _ -> pure (Right "final answer\n")
+                      , toolRuntimeResult = \_ _ _ _ -> pure (Left "not configured")
                       }
                   catalog =
                     toolCatalog
@@ -300,6 +303,28 @@ tests =
               assertBool
                 "the subagent is not shown as a generic tool call"
                 (not ("tool subagent:" `isInfixOf` plain))
+    , testCase "result handler descriptions are appended to MCP tool definitions" $ do
+        let resultConfig =
+              ResultConfig
+                { resultModel = "cheap"
+                , resultDescription = "Summarize the search results."
+                , resultSystemPrompt = "Summarize."
+                , resultTools = defaultToolConfig
+                }
+            serverConfig =
+              demoServerConfig
+                { mcpResults = ResultConfigs [("search", resultConfig)]
+                }
+            catalog =
+              ToolCatalog
+                (defaultToolConfig {toolMcp = [serverConfig]})
+                [demoServer {mcpServerConfig = serverConfig}]
+            definitions =
+              LBS8.unpack (Aeson.encode (toolDefinitionsFor catalog))
+        assertBool "handler label" ("results_search" `isInfixOf` definitions)
+        assertBool
+          "handler description"
+          ("Summarize the search results." `isInfixOf` definitions)
     ]
 
 shellCall :: ToolCall
@@ -327,6 +352,7 @@ demoServerConfig =
     { mcpServerName = "demo"
     , mcpServerUrl = "https://mcp.example.test/mcp"
     , mcpServerPolicy = ToolAllow
+    , mcpResults = ResultConfigs []
     }
 
 demoServer :: McpServer

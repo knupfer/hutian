@@ -198,6 +198,19 @@
               checkedSubagent "${path}.${name}"
           ) value;
 
+      checkedResults =
+        path: value:
+        if !(builtins.isAttrs value) then
+          throw "hutian: option `${path}` must be an attribute set keyed by tool name"
+        else
+          lib.mapAttrs (
+            name:
+            if name == "" then
+              throw "hutian: option `${path}` has an empty tool name"
+            else
+              checkedSubagent "${path}.${name}"
+          ) value;
+
       checkedSubagent =
         path: value:
         if !(builtins.isAttrs value) then
@@ -253,6 +266,7 @@
             names = [
               "url"
               "policy"
+              "results"
             ];
             present = allowedKeys path names (requiredKeys path [ "url" ] value);
             policy = if present ? policy then toolPolicy "${path}.policy" present.policy else "ask";
@@ -264,6 +278,7 @@
               else
                 throw "hutian: option `${path}.url` must be a non-empty string";
             inherit policy;
+            results = checkedResults "${path}.results" (present.results or { });
           };
 
       # Normalize and validate the options shared by every helper. The result
@@ -505,6 +520,20 @@
             apiKeyCommand = "$(pass show key)";
           };
 
+          resultAgent = {
+            model = "probe-result";
+            description = "probe result description";
+            systemPrompt = "probe result prompt";
+            tools = defaults.agent.tools;
+          };
+          mcpResultLauncher = withAgent {
+            tools.mcp.demo = {
+              url = "https://mcp.example.test/mcp";
+              policy = "allow";
+              results.search = resultAgent;
+            };
+          };
+
           # Assertions for the generated launchers and scripts.
           grep = pattern: file: "${gnugrep}/bin/grep -F -- ${lib.escapeShellArg pattern} ${file}";
 
@@ -694,6 +723,12 @@
             (contains "$(pass show key)" (configFile shellTextKeyLauncher "hutian-api-key-command"))
           ];
 
+          result-option = check "result-option" [
+            (contains "probe-result" (configFile mcpResultLauncher "hutian-tools"))
+            (contains "probe result description" (configFile mcpResultLauncher "hutian-tools"))
+            (contains "\"search\"" (configFile mcpResultLauncher "hutian-tools"))
+          ];
+
           subagent-option = check "subagent-option" [
             (contains "\"subagent\":{}" (configFile probeLauncher "hutian-tools"))
             (contains "\"subagent\":{\"probe\":{" (configFile subagentLauncher "hutian-tools"))
@@ -785,6 +820,18 @@
                   tools = defaults.agent.tools // {
                     unknownTool = "ask";
                   };
+                })
+                (withAgent {
+                  tools.mcp.demo = {
+                    url = "https://mcp.example.test/mcp";
+                    policy = "allow";
+                    results.search = resultAgent // {
+                      unknownOption = true;
+                    };
+                  };
+                })
+                (withAgent {
+                  tools.results.webfetch = resultAgent;
                 })
               ];
 

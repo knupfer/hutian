@@ -75,6 +75,8 @@ import Hutian.Tool
 import Hutian.Tool.Catalog (McpServer (..), McpTool (..), ToolCatalog)
 import Hutian.Tool.Config
   ( McpServerConfig (..)
+  , ResultConfig (..)
+  , ResultConfigs (..)
   , SubagentConfig (..)
   )
 import Hutian.Web (fetchResultText, fetchUrl)
@@ -87,14 +89,15 @@ import Hutian.Verbosity
   )
 
 -- | The effects a tool run can reach. 'toolRuntimeContext' selects the main or
--- subagent palette. 'toolRuntimeSubagent' is a callback so the executor stays
--- independent of the model loop that runs a subagent.
+-- subagent palette. The callbacks keep the executor independent of the model
+-- loop that runs a subagent or a tool-result handler.
 data ToolRuntime = ToolRuntime
   { toolRuntimeJobs :: JobRuntime
   , toolRuntimeWorkingDirectory :: FilePath
   , toolRuntimeContext :: TurnContext
   , toolRuntimeVerbosity :: Verbosity
   , toolRuntimeSubagent :: SubagentConfig -> String -> IO (Either String String)
+  , toolRuntimeResult :: String -> ToolCall -> ResultConfig -> String -> IO (Either String String)
   }
 
 -- | Run each requested call in order with a shell-only policy. This preserves
@@ -110,6 +113,8 @@ runToolCalls jobs workingDirectory policy =
       , toolRuntimeVerbosity = VerbosityHigh
       , toolRuntimeSubagent = \_ _ ->
           pure (Left "tool error: the model subagent tool is disabled")
+      , toolRuntimeResult = \_ _ _ _ ->
+          pure (Left "tool error: the model result handler is disabled")
       }
 
 -- | Run each requested call in order using the full tool configuration. Once a
@@ -118,6 +123,9 @@ runToolCalls jobs workingDirectory policy =
 runToolCallsWith :: ToolRuntime -> ToolCatalog -> Conversation -> [ToolCall] -> IO (Bool, Conversation)
 runToolCallsWith runtime catalog =
   runToolCallsPlanned (planToolWith catalog) runtime
+
+lookupResultConfig :: ResultConfigs -> String -> Maybe ResultConfig
+lookupResultConfig (ResultConfigs results) name = lookup name results
 
 runToolCallsPlanned
   :: (ToolCall -> ToolPlan)
@@ -190,70 +198,79 @@ runToolCall planner runtime conversation call =
     aborted =
       pure (True, appendToolResult (toolCallId call) abortedToolMessage conversation)
 
+    finishError message = do
+      consoleWriteErrorLine message
+      pure (False, appendToolResult (toolCallId call) message conversation)
+
+    finishRaw raw =
+      pure (False, appendToolResult (toolCallId call) raw conversation)
+
+    finishResult resultConfig name raw =
+      case resultConfig of
+        Nothing -> finishRaw raw
+        Just config -> do
+          result <- withSubagentCursor (toolRuntimeResult runtime name call config raw)
+          case result of
+            Left message -> finishError message
+            Right answer ->
+              pure (False, appendToolResult (toolCallId call) answer conversation)
+
     runPlanned mode command =
       case mode of
         Foreground -> do
-          conversation' <- executeShellTool context toolOutput workingDirectory conversation call command
-          pure (False, conversation')
+          result <- executeShellTool context toolOutput workingDirectory command
+          case result of
+            Left message -> finishError message
+            Right output -> finishRaw output
         Background -> do
-          conversation' <- executeBackgroundTool context toolOutput jobs conversation call command
-          pure (False, conversation')
+          result <- executeBackgroundTool context toolOutput jobs command
+          case result of
+            Left message -> finishError message
+            Right output -> finishRaw output
 
     runJobsTool = do
       consoleWriteToolLabelIn context "jobs"
       printOutputLabelIn context ToolOutput
       current <- listJobs jobs
       when showOutputBody (printJobRows current)
-      pure (False, appendToolResult (toolCallId call) (jobListResult current) conversation)
+      finishRaw (jobListResult current)
 
     runJobOutputTool target requestedLines = do
       consoleWriteToolLabelIn context "job_output"
       printOutputLabelIn context ToolOutput
       result <- readJobOutput jobs target requestedLines
       case result of
-        Left message -> do
-          consoleWriteErrorLine message
-          pure (False, appendToolResult (toolCallId call) message conversation)
+        Left message -> finishError message
         Right (job, output', truncated) -> do
           when showOutputBody (displayJobOutput output' truncated)
-          pure
-            ( False
-            , appendToolResult (toolCallId call) (jobOutputResult job output' truncated) conversation
-            )
+          finishRaw (jobOutputResult job output' truncated)
 
     runJobKillTool target = do
       consoleWriteToolLabelIn context "job_kill"
       printOutputLabelIn context ToolOutput
       result <- killJob jobs target
       case result of
-        Left message -> do
-          consoleWriteErrorLine message
-          pure (False, appendToolResult (toolCallId call) message conversation)
+        Left message -> finishError message
         Right (job, wasRunning) -> do
           let message = jobKillResult wasRunning job
           when showOutputBody (consoleWriteGrayLine message)
-          pure (False, appendToolResult (toolCallId call) message conversation)
+          finishRaw message
 
     runWebfetchTool url = do
       printOutputLabelIn context ToolOutput
       result <- fetchUrl url
       case result of
-        Left message -> do
-          consoleWriteErrorLine message
-          pure (False, appendToolResult (toolCallId call) message conversation)
+        Left message -> finishError message
         Right fetched -> do
           let text = fetchResultText fetched
           when showOutputBody (displayToolText text)
-          pure (False, appendToolResult (toolCallId call) text conversation)
+          finishRaw text
 
     runSubagentTool agent prompt = do
       result <- withSubagentCursor (toolRuntimeSubagent runtime agent prompt)
       case result of
-        Left message -> do
-          consoleWriteErrorLine message
-          pure (False, appendToolResult (toolCallId call) message conversation)
-        Right answer ->
-          pure (False, appendToolResult (toolCallId call) answer conversation)
+        Left message -> finishError message
+        Right answer -> finishRaw answer
 
     showMcpCall server tool arguments =
       consoleWriteToolTextIn
@@ -265,42 +282,39 @@ runToolCall planner runtime conversation call =
       printOutputLabelIn context ToolOutput
       result <- callMcpTool server tool arguments
       case result of
-        Left failure -> do
-          let message = mcpErrorText failure
-          consoleWriteErrorLine message
-          pure (False, appendToolResult (toolCallId call) message conversation)
+        Left failure -> finishError (mcpErrorText failure)
         Right text -> do
           let formatted = trailingNewline text
+              localName = mcpToolName tool
+              resultConfig =
+                lookupResultConfig (mcpResults (mcpServerConfig server)) localName
           when showOutputBody (displayToolText formatted)
-          pure (False, appendToolResult (toolCallId call) formatted conversation)
+          finishResult resultConfig localName formatted
 
 -- | Run a command the model is already allowed to execute. The caller is
--- responsible for showing the command first.
-executeShellTool :: TurnContext -> Visibility -> FilePath -> Conversation -> ToolCall -> String -> IO Conversation
-executeShellTool context toolOutput workingDirectory conversation call command = do
+-- responsible for showing the command first. Returns the captured output.
+executeShellTool :: TurnContext -> Visibility -> FilePath -> String -> IO (Either String String)
+executeShellTool context toolOutput workingDirectory command = do
   printOutputLabelIn context ToolOutput
   result <- runShellCommandOutput workingDirectory command
   case result of
-    Left message -> do
-      consoleWriteErrorLine message
-      pure (appendToolResult (toolCallId call) message conversation)
+    Left message -> pure (Left message)
     Right commandOutput -> do
       when (outputBodyVisible toolOutput) (displayCommandResult commandOutput)
-      pure (appendToolResult (toolCallId call) (commandResultText commandOutput) conversation)
+      pure (Right (commandResultText commandOutput))
 
 -- | Start a command as a job and return its id to the model. The job's output
 -- goes to its log, so the turn is not held open by a long-running process.
-executeBackgroundTool :: TurnContext -> Visibility -> JobRuntime -> Conversation -> ToolCall -> String -> IO Conversation
-executeBackgroundTool context toolOutput jobs conversation call command = do
+executeBackgroundTool :: TurnContext -> Visibility -> JobRuntime -> String -> IO (Either String String)
+executeBackgroundTool context toolOutput jobs command = do
   printOutputLabelIn context ToolOutput
   result <- startJob jobs command
   case result of
-    Left message -> do
-      consoleWriteErrorLine message
-      pure (appendToolResult (toolCallId call) message conversation)
+    Left message -> pure (Left message)
     Right job -> do
-      when (outputBodyVisible toolOutput) (consoleWriteGrayLine (jobStartedLine job))
-      pure (appendToolResult (toolCallId call) (jobStartedLine job) conversation)
+      let message = jobStartedLine job
+      when (outputBodyVisible toolOutput) (consoleWriteGrayLine message)
+      pure (Right message)
 
 -- | Display captured command output the same way it would appear if the command
 -- had inherited the terminal.

@@ -69,6 +69,22 @@
       #   exa = {
       #     url = "https://mcp.exa.ai/mcp";
       #     policy = "ask";
+      #
+      #     # Route a concrete MCP tool result through a subagent configuration.
+      #     # The handler gets the raw result and returns only its answer. Its
+      #     # description is appended to the tool description; the terminal
+      #     # label is `subagent results_<tool>`.
+      #     results.search = {
+      #       model = "cheap-summarizer";
+      #       description = "Summarize search results; preserve facts and links.";
+      #       systemPrompt = "You summarize tool output for another LLM. Be terse.";
+      #       tools = {
+      #         shell = "deny";
+      #         webfetch = "deny";
+      #         subagent = { };
+      #         mcp = { };
+      #       };
+      #     };
       #   };
       # };
 

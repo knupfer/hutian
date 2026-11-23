@@ -43,6 +43,8 @@ import Hutian.Tool.Catalog
   )
 import Hutian.Tool.Config
   ( McpServerConfig (..)
+  , ResultConfig (..)
+  , ResultConfigs (..)
   , SubagentConfig (..)
   , ToolConfig (..)
   , defaultToolConfig
@@ -128,10 +130,47 @@ toolDefinitionsFor catalog =
     mcpTools = concatMap serverTools (catalogMcp catalog)
     serverTools server
       | toolPolicyAdvertised (mcpServerPolicy (mcpServerConfig server)) =
-          map
-            (mcpToolDefinition (mcpServerName (mcpServerConfig server)))
-            (mcpServerTools server)
+          [ appendResultDescription (mcpToolName tool) (mcpResults (mcpServerConfig server))
+              (mcpToolDefinition (mcpServerName (mcpServerConfig server)) tool)
+          | tool <- mcpServerTools server
+          ]
       | otherwise = []
+
+-- | Append the result handler's description to a tool definition. The suffix
+-- tells the main model that the raw result is processed before it sees it.
+appendResultDescription :: String -> ResultConfigs -> Value -> Value
+appendResultDescription toolName (ResultConfigs results) definition =
+  case lookup toolName results of
+    Nothing -> definition
+    Just config -> mapFunctionDescription (\description -> description ++ suffix config) definition
+  where
+    suffix config =
+      "\n\nResults from this tool are processed by the `results_"
+        ++ toolName
+        ++ "` subagent: "
+        ++ resultDescription config
+
+mapFunctionDescription :: (String -> String) -> Value -> Value
+mapFunctionDescription f (Object fields) =
+  case KeyMap.lookup "function" fields of
+    Just (Object function) ->
+      case KeyMap.lookup "description" function of
+        Just (String description) ->
+          Object
+            ( KeyMap.insert
+                "function"
+                ( Object
+                    ( KeyMap.insert
+                        "description"
+                        (String (Text.pack (f (Text.unpack description))))
+                        function
+                    )
+                )
+                fields
+            )
+        _ -> Object fields
+    _ -> Object fields
+mapFunctionDescription _ value = value
 
 shellDescription :: String
 shellDescription =

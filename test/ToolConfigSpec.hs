@@ -7,6 +7,8 @@ import qualified Data.Aeson as Aeson
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Config
   ( McpServerConfig (..)
+  , ResultConfig (..)
+  , ResultConfigs (..)
   , SubagentConfig (..)
   , ToolConfig (..)
   , defaultToolConfig
@@ -93,9 +95,112 @@ tests =
                       { mcpServerName = "demo"
                       , mcpServerUrl = "https://mcp.example.test/mcp"
                       , mcpServerPolicy = ToolAllow
+                      , mcpResults = ResultConfigs []
                       }
                   ]
               }
+    , testCase "MCP result handlers can have their own MCP result handlers" $
+        let nestedResult =
+              ResultConfig
+                { resultModel = "nested"
+                , resultDescription = "Nested summary."
+                , resultSystemPrompt = "Summarize."
+                , resultTools = defaultToolConfig
+                }
+            innerServer =
+              McpServerConfig
+                { mcpServerName = "inner"
+                , mcpServerUrl = "https://inner.example.test/mcp"
+                , mcpServerPolicy = ToolAllow
+                , mcpResults = ResultConfigs [("fetch", nestedResult)]
+                }
+            outerResult =
+              ResultConfig
+                { resultModel = "cheap"
+                , resultDescription = "Summarize search results."
+                , resultSystemPrompt = "Summarize."
+                , resultTools = defaultToolConfig {toolMcp = [innerServer]}
+                }
+            innerJson =
+              object
+                [ "url" .= ("https://inner.example.test/mcp" :: String)
+                , "policy" .= String "allow"
+                , "results"
+                    .= object
+                      [ "fetch"
+                          .= resultValue
+                            "nested"
+                            "Nested summary."
+                            (toolsValue (String "deny") (String "deny") (object []))
+                      ]
+                ]
+            outerJson =
+              resultValue
+                "cheap"
+                "Summarize search results."
+                ( toolsObject
+                    (String "deny")
+                    (String "deny")
+                    (object [])
+                    (object ["inner" .= innerJson])
+                )
+            mcpJson =
+              object
+                [ "demo"
+                    .= object
+                      [ "url" .= ("https://mcp.example.test/mcp" :: String)
+                      , "policy" .= String "allow"
+                      , "results" .= object ["search" .= outerJson]
+                      ]
+                ]
+         in decodeConfig (toolsObject (String "deny") (String "deny") (object []) mcpJson)
+              @?= Just
+                defaultToolConfig
+                  { toolMcp =
+                      [ McpServerConfig
+                          { mcpServerName = "demo"
+                          , mcpServerUrl = "https://mcp.example.test/mcp"
+                          , mcpServerPolicy = ToolAllow
+                          , mcpResults = ResultConfigs [("search", outerResult)]
+                          }
+                      ]
+                  }
+    , testCase "MCP server result handlers are decoded" $
+        let resultConfig =
+              ResultConfig
+                { resultModel = "cheap"
+                , resultDescription = "Summarize search results."
+                , resultSystemPrompt = "Summarize."
+                , resultTools = defaultToolConfig
+                }
+            mcpJson =
+              object
+                [ "demo"
+                    .= object
+                      [ "url" .= ("https://mcp.example.test/mcp" :: String)
+                      , "policy" .= String "allow"
+                      , "results"
+                          .= object
+                            [ "search"
+                                .= resultValue
+                                  "cheap"
+                                  "Summarize search results."
+                                  (toolsValue (String "deny") (String "deny") (object []))
+                            ]
+                      ]
+                ]
+         in decodeConfig (toolsObject (String "deny") (String "deny") (object []) mcpJson)
+              @?= Just
+                defaultToolConfig
+                  { toolMcp =
+                      [ McpServerConfig
+                          { mcpServerName = "demo"
+                          , mcpServerUrl = "https://mcp.example.test/mcp"
+                          , mcpServerPolicy = ToolAllow
+                          , mcpResults = ResultConfigs [("search", resultConfig)]
+                          }
+                      ]
+                  }
     , testCase "unknown policies and malformed shapes are rejected" $ do
         decodeConfig
           (toolsValue (String "sometimes") (String "deny") (object []))
@@ -144,6 +249,17 @@ tests =
                         { mcpServerName = "demo"
                         , mcpServerUrl = "https://mcp.example.test/mcp"
                         , mcpServerPolicy = ToolAsk
+                        , mcpResults =
+                            ResultConfigs
+                              [ ( "search"
+                                , ResultConfig
+                                    { resultModel = "cheap"
+                                    , resultDescription = "Summarize search."
+                                    , resultSystemPrompt = "Summarize."
+                                    , resultTools = defaultToolConfig
+                                    }
+                                )
+                              ]
                         }
                     ]
                 }
@@ -167,6 +283,15 @@ toolsObject shell webfetch subagent mcp =
     , "webfetch" .= webfetch
     , "subagent" .= subagent
     , "mcp" .= mcp
+    ]
+
+resultValue :: String -> String -> Value -> Value
+resultValue model description tools =
+  object
+    [ "model" .= model
+    , "description" .= description
+    , "systemPrompt" .= ("Summarize." :: String)
+    , "tools" .= tools
     ]
 
 agentValue :: String -> String -> Value

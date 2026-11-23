@@ -5,6 +5,16 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- MCP tool result handlers. `agent.tools.mcp.<server>.results.<tool>` takes a
+  subagent configuration (`model`, `description`, `systemPrompt`, `tools`) for
+  a concrete MCP tool. The handler gets the raw tool result, runs in its own
+  context with its own tools, and returns only its final answer to the agent.
+  Its description is appended to the tool description and its terminal label is
+  `subagent results_<tool>`. A handler's MCP tool results can have their own
+  handlers. Built-in tools return their results directly.
+
 ### Changed
 
 - The flake configuration is split into `sandbox`, `endpoint`, `output`, and

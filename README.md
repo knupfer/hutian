@@ -36,6 +36,8 @@ advertises it but needs approval, and `"allow"` runs it automatically.
 - `tools.mcp` maps names to MCP servers. At startup Hutian initializes each
   server, lists its tools, and advertises them as
   `mcp__<server>__<tool>`. The server policy applies to every tool it exposes.
+  A concrete tool can route its result through a subagent configuration; see
+  “Tool result handlers” below.
 
 The mandatory `output.verbosity` option controls model and tool output:
 
@@ -217,7 +219,7 @@ message, and tool permissions:
 | `output.verbosity` | output | `"low"`, `"normal"`, or `"high"` model/tool output detail. |
 | `agent.model` | agent | Model name sent to the endpoint. |
 | `agent.systemPrompt` | agent | System message for every LLM request. |
-| `agent.tools` | agent | Tool policies and configuration: `shell`, `webfetch`, `subagent`, and `mcp`. |
+| `agent.tools` | agent | Tool policies and configuration: `shell`, `webfetch`, `subagent`, and `mcp`, including per-MCP-tool result handlers. |
 
 Every option above is mandatory and has no default. Omitting one fails with an
 error that lists the missing option paths, and unknown options are rejected, so
@@ -341,6 +343,66 @@ tools = {
 MCP discovery and calls run in the sandbox, so `sandbox.network = true` is
 required for normal internet access. Use a local MCP proxy when the server
 needs credentials or a fixed network path.
+
+#### Tool result handlers
+
+A result handler is a subagent configuration attached to a concrete MCP tool.
+It receives the raw tool result and returns only its final answer to the agent.
+The handler runs in its own context with its own model and tools, so raw output,
+tool calls, and reasoning stay out of the caller's conversation. The caller then
+continues and decides whether to fetch more.
+
+```nix
+tools = {
+  shell = "deny";
+  webfetch = "deny";
+  subagent = { };
+
+  mcp.szmcp = {
+    url = "http://localhost:3001";
+    policy = "allow";
+
+    results.zim_get = {
+      model = "tiny";
+      description = "Summarize the article; preserve paths and citations.";
+      systemPrompt = ''
+        You summarize tool output for another LLM. Be terse and preserve facts,
+        names, numbers, paths, and citations.
+      '';
+      tools = {
+        shell = "deny";
+        webfetch = "deny";
+        subagent = { };
+        mcp = { };
+      };
+    };
+  };
+};
+```
+
+The value has the same shape as a subagent: `model`, `description`,
+`systemPrompt`, and `tools`. It has no `name`; the terminal label is derived as
+`subagent results_<tool>`, for example `subagent results_zim_get`.
+
+The handler is automatic. When the agent calls `mcp__szmcp__zim_get`, the raw
+article goes to the handler, and only the handler's answer is appended as the
+tool result. The handler's `tools` are real tools: it can search, fetch, run
+commands, or call its own subagents. Its MCP tool results can have their own
+`results` handlers; it never inherits the caller's handlers.
+
+The handler's `description` is appended to the tool description so the caller
+knows the result is processed:
+
+```text
+<original tool description>
+
+Results from this tool are processed by the `results_zim_get` subagent:
+Summarize the article; preserve paths and citations.
+```
+
+Use `tools.mcp.<server>.results.<tool>` for a concrete MCP tool, keyed by the
+server's local tool name. Built-in tools return their results directly. The
+map applies only to successful results; errors are returned directly.
 
 Then run `nix run .#hutian` from that project. Package versions come from the
 consumer flake's lock file.
@@ -619,14 +681,14 @@ The code keeps pure logic separate from IO:
   or multi-line.
 - `Hutian.Policy` defines the shared three-way tool policy (`deny`, `ask`, or
   `allow`) used by the LLM protocol and the tool loop. `Hutian.Tool.Config`
-  holds the pure tool policies, subagent configuration, and
-  MCP server list; `Hutian.Tool.Catalog` pairs that configuration with the MCP
-  tools and sessions discovered at runtime.
+  holds the pure tool policies, subagent and result-handler configuration, and
+  the MCP server list; `Hutian.Tool.Catalog` pairs that configuration with the
+  MCP tools and sessions discovered at runtime.
 - `Hutian.Tool` turns a model tool call and the tool configuration into a pure
-  `ToolPlan`. `Hutian.Tool.Exec` performs only the terminal, shell, web, MCP, or
-  subagent IO that the plan requests, so refusals, approvals, commands, and job
-  actions can be tested without a terminal. `Hutian.Web` performs bounded HTTP
-  fetches.
+  `ToolPlan`. `Hutian.Tool.Exec` performs only the terminal, shell, web, MCP,
+  subagent, or result-handler IO that the plan requests, so refusals, approvals,
+  commands, and job actions can be tested without a terminal. `Hutian.Web`
+  performs bounded HTTP fetches.
 - `Hutian.Mcp.Protocol` builds pure MCP JSON-RPC messages and decodes tools and
   results. `Hutian.Mcp` performs the Streamable HTTP handshake, discovery, and
   tool calls.
@@ -723,8 +785,8 @@ src/Hutian/Shell.hs             Captured shell command execution
 src/Hutian/Terminal.hs          Prompt driver over Prompt and Console
 src/Hutian/Tool.hs              Pure tool schemas, decoding, and planning
 src/Hutian/Tool/Catalog.hs      Runtime tool catalog and MCP state
-src/Hutian/Tool/Config.hs       Tool policies, subagent, and MCP config
-src/Hutian/Tool/Exec.hs         Terminal execution of tool-call plans
+src/Hutian/Tool/Config.hs       Tool policies, subagents, results, and MCP config
+src/Hutian/Tool/Exec.hs         Execution of tool-call plans and result handlers
 src/Hutian/Verbosity.hs         Pure output-visibility decisions
 src/Hutian/Web.hs               Bounded HTTP fetches
 app/Main.hs                     Shell executable entry point

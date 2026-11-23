@@ -24,6 +24,7 @@ import Hutian.Console
   )
 import Hutian.Conversation
   ( Conversation
+  , ToolCall (..)
   , appendResult
   , appendTerminal
   , emptyConversation
@@ -72,7 +73,7 @@ import Hutian.Shell
 import Hutian.Terminal (promptForInput)
 import Hutian.Tool (toolDefinitionsFor)
 import Hutian.Tool.Catalog (ToolCatalog (..), toolCatalog)
-import Hutian.Tool.Config (SubagentConfig (..), ToolConfig (..))
+import Hutian.Tool.Config (ResultConfig (..), SubagentConfig (..), ToolConfig (..))
 import Hutian.Tool.Exec (ToolRuntime (..), runToolCallsWith)
 import Hutian.Tool.Summary (toolSummaryLines)
 import Hutian.Verbosity (Verbosity (..))
@@ -218,17 +219,58 @@ toolRuntime context verbosity workingDirectory jobs settings interruptFlag =
     , toolRuntimeVerbosity = verbosity
     , toolRuntimeSubagent =
         runSubagent workingDirectory jobs settings interruptFlag
+    , toolRuntimeResult =
+        runResultAgent workingDirectory jobs settings interruptFlag
     }
 
-runSubagent
+runSubagent :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> SubagentConfig -> String -> IO (Either String String)
+runSubagent = runAgent True
+
+-- | Run a tool-result handler. The handler gets the raw result as its prompt,
+-- but only its final answer is returned. Its own tool results use its own
+-- handlers, never the caller's.
+runResultAgent
   :: FilePath
+  -> JobRuntime
+  -> LlmSettings
+  -> InterruptFlag
+  -> String
+  -> ToolCall
+  -> ResultConfig
+  -> String
+  -> IO (Either String String)
+runResultAgent workingDirectory jobs settings interruptFlag localName call config raw =
+  runAgent
+    False
+    workingDirectory
+    jobs
+    settings
+    interruptFlag
+    SubagentConfig
+      { subagentName = "results_" ++ localName
+      , subagentModel = resultModel config
+      , subagentDescription = resultDescription config
+      , subagentSystemPrompt = resultSystemPrompt config
+      , subagentTools = resultTools config
+      }
+    ( "Tool: "
+        ++ toolCallName call
+        ++ "\nArguments: "
+        ++ toolCallArguments call
+        ++ "\n\nResult:\n"
+        ++ raw
+    )
+
+runAgent
+  :: Bool
+  -> FilePath
   -> JobRuntime
   -> LlmSettings
   -> InterruptFlag
   -> SubagentConfig
   -> String
   -> IO (Either String String)
-runSubagent workingDirectory jobs settings interruptFlag agent prompt = do
+runAgent showPrompt workingDirectory jobs settings interruptFlag agent prompt = do
   servers <-
     discoverMcpServers
       consoleWriteErrorLine
@@ -258,7 +300,9 @@ runSubagent workingDirectory jobs settings interruptFlag agent prompt = do
       SubagentContext
       name
       (toolSummaryLines (toolDefinitionsFor (settingTools subagentSettings)))
-  consoleWriteSubagentPrompt name prompt
+  if showPrompt
+    then consoleWriteSubagentPrompt name prompt
+    else consoleWriteSubagentPrompt name ""
   (_, finalResult) <-
     runModelTurn
       interruptFlag
