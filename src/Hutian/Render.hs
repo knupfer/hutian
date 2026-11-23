@@ -34,6 +34,7 @@ module Hutian.Render
   , boldVibrantPink
   , boldTeal
   , boldBlue
+  , boldRed
   , dimTealForeground
   , dimBlueForeground
   , CursorStyle (..)
@@ -61,7 +62,7 @@ import Hutian.Editor
   , suggestionRowCount
   )
 import Hutian.Markdown (renderMarkdownRows)
-import Hutian.Highlight (highlightShellLine)
+import Hutian.Highlight (highlightJsonText, highlightShellLine)
 import System.Console.ANSI
   ( clearFromCursorToScreenEndCode
   , cursorDownCode
@@ -78,7 +79,6 @@ data PromptKind
   = LlmPrompt
   | ShellPrompt
   | ToolPrompt TurnContext String
-  | ToolTextPrompt TurnContext String
   | SubagentPrompt String
   deriving stock (Eq, Show)
 
@@ -112,7 +112,6 @@ promptRenderText kind previousRow width prompt =
     plainTextRows =
       case kind of
         LlmPrompt -> True
-        ToolTextPrompt _ _ -> True
         SubagentPrompt _ -> True
         _ -> False
     rows
@@ -130,14 +129,9 @@ promptRenderText kind previousRow width prompt =
             | prefixCount > 0 = prefixForegroundFor kind ++ prefixPart ++ reset
             | otherwise = ""
           restRendered
-            | plainTextRows = plainRow rest
+            | plainTextRows = rest
             | index < inputRowCount = inputRow rest
             | otherwise = rest
-          plainRow text =
-            case kind of
-              ToolTextPrompt SubagentContext _ ->
-                grayForeground ++ text ++ reset
-              _ -> text
           inputRow text =
             case kind of
               ToolPrompt SubagentContext _ ->
@@ -165,10 +159,16 @@ toolPromptTextIn context toolName width command =
     ++ "\n"
 
 -- | Render a tool call whose argument is data rather than shell input. JSON
--- arguments are shown plainly; syntax highlighting is reserved for commands.
+-- arguments are syntax-highlighted with a dim Skylighting style.
 toolTextPromptTextIn :: TurnContext -> String -> Int -> String -> String
-toolTextPromptTextIn context toolName width text =
-  fst (promptRenderText (ToolTextPrompt context toolName) 0 width (setPromptText text initialPrompt))
+toolTextPromptTextIn context toolName _width text =
+  toolPromptForeground context
+    ++ "tool "
+    ++ toolName
+    ++ ":"
+    ++ reset
+    ++ "\n"
+    ++ highlightJsonText text
     ++ reset
     ++ "\n"
 
@@ -193,12 +193,10 @@ prefixFor :: PromptKind -> String
 prefixFor LlmPrompt = "ask:\n"
 prefixFor ShellPrompt = "shell:\n"
 prefixFor (ToolPrompt _ toolName) = "tool " ++ toolName ++ ":\n"
-prefixFor (ToolTextPrompt _ toolName) = "tool " ++ toolName ++ ":\n"
 prefixFor (SubagentPrompt modelName) = "subagent " ++ modelName ++ ":\n"
 
 prefixForegroundFor :: PromptKind -> String
 prefixForegroundFor (ToolPrompt context _) = toolPromptForeground context
-prefixForegroundFor (ToolTextPrompt context _) = toolPromptForeground context
 prefixForegroundFor (SubagentPrompt _) = boldBlue
 prefixForegroundFor _ = boldVibrantPink
 
@@ -389,6 +387,7 @@ resetCursorText = showCursorText ++ resetCursorColor ++ defaultCursorShape
 boldVibrantPink,
   boldTeal,
   boldBlue,
+  boldRed,
   dimPinkForeground,
   dimTealForeground,
   dimBlueForeground,
@@ -405,15 +404,17 @@ boldVibrantPink,
   clearLine,
   reset :: String
 
-pinkColour, tealColour, blueColour :: Ansi.Colour
+pinkColour, tealColour, blueColour, redColour :: Ansi.Colour
 pinkColour = Ansi.rgb 255 20 147
 tealColour = Ansi.rgb 0 255 200
 blueColour = Ansi.rgb 0 153 255
+redColour = Ansi.rgb 255 85 85
 
-pinkStyle, tealStyle, blueStyle, dimPinkStyle, dimTealStyle, dimBlueStyle, grayStyle :: Ansi.Style
+pinkStyle, tealStyle, blueStyle, redStyle, dimPinkStyle, dimTealStyle, dimBlueStyle, grayStyle :: Ansi.Style
 pinkStyle = Ansi.bold <> Ansi.foreground pinkColour
 tealStyle = Ansi.bold <> Ansi.foreground tealColour
 blueStyle = Ansi.bold <> Ansi.foreground blueColour
+redStyle = Ansi.bold <> Ansi.foreground redColour
 dimPinkStyle = Ansi.darkenStyle 0.6 pinkStyle
 dimTealStyle = Ansi.darkenStyle 0.6 tealStyle
 dimBlueStyle = Ansi.darkenStyle 0.6 blueStyle
@@ -422,6 +423,7 @@ grayStyle = Ansi.darkenStyle 0.6 $ Ansi.foreground (Ansi.rgb 255 255 255)
 boldVibrantPink = Ansi.styleCode pinkStyle
 boldTeal = Ansi.styleCode tealStyle
 boldBlue = Ansi.styleCode blueStyle
+boldRed = Ansi.styleCode redStyle
 dimPinkForeground = Ansi.styleCode dimPinkStyle
 dimTealForeground = Ansi.styleCode dimTealStyle
 dimBlueForeground = Ansi.styleCode dimBlueStyle

@@ -117,7 +117,7 @@ tests =
         assertBool "command text" ("echo hi" `isInfixOf` stripAnsi output)
         assertBool "label sits above the command" ("tool shell:\necho hi" `isInfixOf` stripAnsi output)
         assertBool "resets colors" (resetSequence `isInfixOf` output)
-    , testCase "plain tool prompts show data without shell highlighting" $ do
+    , testCase "tool data prompts use JSON syntax highlighting" $ do
         let output =
               toolTextPromptTextIn
                 MainContext
@@ -128,7 +128,7 @@ tests =
         assertBool
           "arguments sit below the label"
           ("tool mcp__demo__search:\n{\"query\":\"haskell\"}" `isInfixOf` stripAnsi output)
-        assertBool "no shell syntax style" (not ("\ESC[38;2;" `isInfixOf` output))
+        assertBool "json syntax style" ("\ESC[38;2;" `isInfixOf` output)
     , testCase "toolLabelText labels commandless tool calls" $
         toolLabelText "jobs" @?= boldTeal ++ "tool jobs:" ++ reset
     , testCase "subagent prompts use blue and show the submitted task" $ do
@@ -151,7 +151,7 @@ tests =
         outputForegroundIn SubagentContext ToolOutput @?= dimBlueForeground
         outputLabelTextIn SubagentContext ToolOutput True
           @?= dimBlueForeground ++ "tool output:" ++ reset
-    , testCase "subagent MCP tool arguments are dim" $ do
+    , testCase "subagent MCP tool arguments are dim and highlighted" $ do
         let output =
               toolTextPromptTextIn
                 SubagentContext
@@ -160,9 +160,8 @@ tests =
                 "{\"query\":\"haskell\"}"
         assertBool
           "dim input"
-          ( (grayForeground ++ "{\"query\":\"haskell\"}" ++ reset)
-              `isInfixOf` output
-          )
+          ((dimBlueForeground ++ "tool mcp__demo__search:") `isInfixOf` output)
+        assertBool "json syntax style" ("\ESC[38;2;" `isInfixOf` output)
         assertBool
           "subagent output does not keep the teal"
           (outputForegroundIn SubagentContext ToolOutput /= dimTealForeground)

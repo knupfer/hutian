@@ -2,7 +2,8 @@ module ConsoleSpec (tests) where
 
 import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
 import Hutian.Console
-  ( consoleWriteGrayLine
+  ( consoleWriteErrorLine
+  , consoleWriteGrayLine
   , consoleWriteLine
   , consoleWriteSubagentPrompt
   , consoleWriteToolDefinitions
@@ -14,6 +15,7 @@ import Hutian.Render
   , approvalDecisionText
   , approvalForKey
   , approvePromptText
+  , boldRed
   , boldVibrantPink
   , grayForeground
   , reset
@@ -69,6 +71,11 @@ tests =
           consoleWriteGrayLine "job\ESC[2J started"
           output <- readOutput
           stripAnsi output @?= "job [2J started\r\n"
+    , testCase "error lines are bold red on a terminal" $
+        withPseudoTerminalOutput $ \readOutput -> do
+          consoleWriteErrorLine "tool error"
+          output <- readOutput
+          output @?= boldRed ++ "tool error" ++ reset ++ "\r\n"
     , testCase "tool summaries print under a tools label, one per line" $
         withPseudoTerminalOutput $ \readOutput -> do
           consoleWriteToolDefinitions

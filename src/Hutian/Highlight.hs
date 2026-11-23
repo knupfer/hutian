@@ -1,8 +1,10 @@
 -- | Shared Skylighting integration for ANSI syntax highlighting.
 module Hutian.Highlight
   ( codeStyle
+  , dimCodeStyle
   , highlightLines
   , highlightShellLine
+  , highlightJsonText
   , sanitize
   , sanitizeChar
   , sanitizeOutput
@@ -14,12 +16,14 @@ import Data.Char (isControl)
 import Data.List (intercalate)
 import qualified Data.Text as Text
 import Data.Word (Word8)
+import qualified Hutian.Ansi as Ansi
 import Skylighting
   ( ANSIColorLevel (..)
   , Color (..)
   , FormatOptions (..)
   , Style (..)
   , TokenizerConfig (..)
+  , TokenStyle (..)
   , defaultFormatOpts
   , defaultSyntaxMap
   , lookupSyntax
@@ -60,6 +64,40 @@ highlightShellLine line =
   case highlightLines codeStyle "bash" [line] of
     Just [rendered] -> rendered
     _ -> sanitize line
+
+-- | Darken every colour in a Skylighting style. The Markdown renderer uses the
+-- same factor for dim thinking output.
+dimCodeStyle :: Double -> Style -> Style
+dimCodeStyle factor style =
+  style
+    { tokenStyles = fmap dimTokenStyle (tokenStyles style)
+    , defaultColor = fmap dim (defaultColor style)
+    , backgroundColor = fmap dim (backgroundColor style)
+    , lineNumberColor = fmap dim (lineNumberColor style)
+    , lineNumberBackgroundColor = fmap dim (lineNumberBackgroundColor style)
+    }
+  where
+    dim = dimSkylightingColour factor
+    dimTokenStyle tokenStyle =
+      tokenStyle
+        { tokenColor = fmap dim (tokenColor tokenStyle)
+        , tokenBackground = fmap dim (tokenBackground tokenStyle)
+        }
+
+dimSkylightingColour :: Double -> Color -> Color
+dimSkylightingColour factor (RGB red green blue) =
+  let (red', green', blue') =
+        Ansi.colourChannels
+          (Ansi.darkenColour factor (Ansi.rgb red green blue))
+   in RGB red' green' blue'
+
+-- | Highlight a JSON tool argument with the same dimming used for thinking
+-- output. The text is returned unchanged apart from ANSI styles.
+highlightJsonText :: String -> String
+highlightJsonText text =
+  case highlightLines (dimCodeStyle 0.6 codeStyle) "json" (lines text) of
+    Just rendered | not (null rendered) -> intercalate "\n" rendered
+    _ -> sanitizeOutput text
 
 -- | Replace control characters except tabs with spaces so terminal escape
 -- sequences cannot leak through.

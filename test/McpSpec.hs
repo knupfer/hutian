@@ -23,6 +23,7 @@ import Hutian.Tool.Catalog
   )
 import Hutian.Tool.Config
   ( McpServerConfig (..)
+  , ResultConfig (..)
   , ResultConfigs (..)
   , ToolConfig (..)
   , defaultToolConfig
@@ -100,6 +101,38 @@ tests =
                 (\body -> "tools/call" `isInfixOf` BS8.unpack body && "Mcp-Session-Id: test-session" `isInfixOf` BS8.unpack body)
                 bodies
             )
+    , testCase "result handlers for unknown MCP tools are reported" $
+        withMcpUpstream $ \port _ -> do
+          let handler =
+                ResultConfig
+                  { resultModel = "unused"
+                  , resultDescription = "unused"
+                  , resultSystemPrompt = "unused"
+                  , resultTools = defaultToolConfig
+                  }
+              server =
+                McpServerConfig
+                  { mcpServerName = "demo"
+                  , mcpServerUrl = "http://127.0.0.1:" ++ show port ++ "/mcp"
+                  , mcpServerPolicy = ToolAllow
+                  , mcpResults = ResultConfigs [("missing", handler)]
+                  }
+          logs <- newIORef []
+          servers <-
+            discoverMcpServers
+              (\message -> modifyIORef' logs (message :))
+              [server]
+          messages <- readIORef logs
+          assertBool
+            "unknown result tool is reported"
+            ( any
+                (\message ->
+                   "results.missing" `isInfixOf` message
+                     && "no tool" `isInfixOf` message
+                )
+                messages
+            )
+          length servers @?= 1
     , testCase "a denied MCP server is not contacted" $ do
         let server =
               McpServerConfig

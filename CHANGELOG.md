@@ -14,6 +14,10 @@ All notable changes to Hutian are documented here. The format follows
   Its description is appended to the tool description and its terminal label is
   `subagent results_<tool>`. A handler's MCP tool results can have their own
   handlers. Built-in tools return their results directly.
+- MCP tool arguments are shown with dim JSON syntax highlighting, and error
+  lines are bold red when standard error is a terminal.
+- A result handler whose tool name is not exposed by its MCP server is reported
+  after discovery and ignored.
 
 ### Changed
 

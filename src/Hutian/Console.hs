@@ -56,6 +56,7 @@ import Hutian.Render
   , approvalDecisionText
   , approvalForKey
   , approvePromptText
+  , boldRed
   , cursorStyleText
   , grayForeground
   , grayOutputText
@@ -131,7 +132,13 @@ consoleWriteError :: String -> IO ()
 consoleWriteError = hPutStr stderr
 
 consoleWriteErrorLine :: String -> IO ()
-consoleWriteErrorLine message = hPutStrLn stderr (sanitizeOutput message)
+consoleWriteErrorLine message = do
+  interactive <- consoleIsErrorInteractive
+  let text = sanitizeOutput message
+  hPutStrLn stderr $
+    if interactive
+      then boldRed ++ text ++ reset
+      else text
 
 consoleFlush :: IO ()
 consoleFlush = hFlush stdout

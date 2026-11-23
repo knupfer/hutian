@@ -13,12 +13,7 @@ import Data.Char (isDigit, isSpace)
 import Data.List (intercalate, isPrefixOf, mapAccumL)
 import qualified Data.Text as Text
 import qualified Hutian.Ansi as Ansi
-import Hutian.Highlight (codeStyle, highlightLines, sanitize, sanitizeChar)
-import Skylighting
-  ( Color (..)
-  , Style (..)
-  , TokenStyle (..)
-  )
+import Hutian.Highlight (codeStyle, dimCodeStyle, highlightLines, sanitize, sanitizeChar)
 
 data MarkdownState = MarkdownState
   { markdownFence :: Maybe Fence
@@ -258,35 +253,8 @@ highlightCode colours language codeLines =
     Just rendered | not (null rendered) -> rendered
     _ -> fallback
   where
-    styledCodeStyle = darkenCodeStyle (coloursScale colours) codeStyle
+    styledCodeStyle = dimCodeStyle (coloursScale colours) codeStyle
     fallback = map (styled (coloursCode colours)) codeLines
-
--- | Darken a Skylighting style before handing it to 'formatANSI'. This keeps
--- Skylighting in charge of token rendering while still applying the dimming
--- factor used for thinking output.
-darkenCodeStyle :: Double -> Style -> Style
-darkenCodeStyle factor style =
-  style
-    { tokenStyles = fmap darkenTokenStyle (tokenStyles style)
-    , defaultColor = fmap darken (defaultColor style)
-    , backgroundColor = fmap darken (backgroundColor style)
-    , lineNumberColor = fmap darken (lineNumberColor style)
-    , lineNumberBackgroundColor = fmap darken (lineNumberBackgroundColor style)
-    }
-  where
-    darken = darkenSkylightingColour factor
-    darkenTokenStyle tokenStyle =
-      tokenStyle
-        { tokenColor = fmap darken (tokenColor tokenStyle)
-        , tokenBackground = fmap darken (tokenBackground tokenStyle)
-        }
-
-darkenSkylightingColour :: Double -> Color -> Color
-darkenSkylightingColour factor (RGB red green blue) =
-  let (red', green', blue') =
-        Ansi.colourChannels
-          (Ansi.darkenColour factor (Ansi.rgb red green blue))
-   in RGB red' green' blue'
 
 highlightInline :: MarkdownContext -> String -> String
 highlightInline context = go

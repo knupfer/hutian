@@ -39,6 +39,9 @@ advertises it but needs approval, and `"allow"` runs it automatically.
   A concrete tool can route its result through a subagent configuration; see
   “Tool result handlers” below.
 
+MCP tool calls show their JSON arguments under the tool label with dim JSON
+syntax highlighting. Error lines are bold red when standard error is a terminal.
+
 The mandatory `output.verbosity` option controls model and tool output:
 
 - `"low"` prints tool calls with their arguments and main-turn answers. Other
@@ -402,7 +405,9 @@ Summarize the article; preserve paths and citations.
 
 Use `tools.mcp.<server>.results.<tool>` for a concrete MCP tool, keyed by the
 server's local tool name. Built-in tools return their results directly. The
-map applies only to successful results; errors are returned directly.
+map applies only to successful results; errors are returned directly. If the
+server does not expose `<tool>`, Hutian reports the unknown handler after
+discovery and ignores it.
 
 Then run `nix run .#hutian` from that project. Package versions come from the
 consumer flake's lock file.
@@ -785,7 +790,7 @@ src/Hutian/Shell.hs             Captured shell command execution
 src/Hutian/Terminal.hs          Prompt driver over Prompt and Console
 src/Hutian/Tool.hs              Pure tool schemas, decoding, and planning
 src/Hutian/Tool/Catalog.hs      Runtime tool catalog and MCP state
-src/Hutian/Tool/Config.hs       Tool policies, subagents, results, and MCP config
+src/Hutian/Tool/Config.hs       Tool policies, subagents, MCP, results config
 src/Hutian/Tool/Exec.hs         Execution of tool-call plans and result handlers
 src/Hutian/Verbosity.hs         Pure output-visibility decisions
 src/Hutian/Web.hs               Bounded HTTP fetches
