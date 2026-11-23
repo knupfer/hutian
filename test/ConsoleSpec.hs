@@ -42,7 +42,7 @@ tests =
         approvalForKey '\ETX' @?= Just ToolAborted
     , testCase "approval prompt puts the label and choices on separate lines" $ do
         approvePromptText
-          @?= boldVibrantPink ++ "approve:" ++ reset ++ "\n[y] Yes\n[n] No\n"
+          @?= boldVibrantPink ++ "approve" ++ reset ++ "\n[y] Yes\n[n] No\n"
         assertBool "Yes should be on its own line" ("\n[y] Yes\n" `isInfixOf` approvePromptText)
         assertBool "No should be on its own line" ("\n[n] No\n" `isInfixOf` approvePromptText)
     , testCase "a decision replaces both option lines" $ do
@@ -80,7 +80,6 @@ tests =
         withPseudoTerminalOutput $ \readOutput -> do
           consoleWriteToolDefinitions
             MainContext
-            ""
             [ "# shell(command: str)"
             , "Run a shell command."
             , "# jobs()"
@@ -88,7 +87,7 @@ tests =
             ]
           output <- readOutput
           let plain = filter (/= '\r') (stripAnsi output)
-          assertBool "tools label" ("tools:\n" `isInfixOf` plain)
+          assertBool "tools label" ("tools\n" `isInfixOf` plain)
           assertBool
             "one summary per line"
             ( "# shell(command: str)\nRun a shell command.\n# jobs()\nList background jobs."
@@ -104,10 +103,10 @@ tests =
           let plain = filter (/= '\r') (stripAnsi output)
           assertBool
             "the label sits above the task"
-            ("subagent cheap:\nsummarize this" `isInfixOf` plain)
+            ("cheap\nsummarize this" `isInfixOf` plain)
     , testCase "an empty tool catalog prints no tools block" $
         withPseudoTerminalOutput $ \readOutput -> do
-          consoleWriteToolDefinitions MainContext "" []
+          consoleWriteToolDefinitions MainContext []
           output <- readOutput
           output @?= ""
     ]

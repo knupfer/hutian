@@ -156,16 +156,16 @@ unitTests =
         prefixCharacterCounts 80 "abcd" ["abc", "def"] @?= [3, 1]
         prefixCharacterCounts 80 "abcdefghi" ["abc", "def"] @?= [3, 3]
         prefixCharacterCounts 80 "ab" [] @?= []
-        prefixCharacterCounts 80 "ask:\n" ["ask:", "abc"] @?= [4, 0]
-        prefixCharacterCounts 80 "ask:\n" ["ask:", ""] @?= [4, 0]
+        prefixCharacterCounts 80 "ask\n" ["ask", "abc"] @?= [3, 0]
+        prefixCharacterCounts 80 "ask\n" ["ask", ""] @?= [3, 0]
     , testCase "a prompt prefix is included in the first line layout" $ do
         let prompt = runText "abc"
         physicalRows 6 "~ $ " prompt @?= ["~ $ ab", "c"]
         cursorPosition 6 "~ $ " prompt @?= (1, 1)
     , testCase "a multi-line prefix puts the input on the next row" $ do
         let prompt = runText "abc"
-        physicalRows 80 "ask:\n" prompt @?= ["ask:", "abc"]
-        cursorPosition 80 "ask:\n" prompt @?= (1, 3)
+        physicalRows 80 "ask\n" prompt @?= ["ask", "abc"]
+        cursorPosition 80 "ask\n" prompt @?= (1, 3)
     , testCase "the prompt prefix only appears on the first line" $ do
         let prompt = run (text "a" ++ [KeyEnter] ++ text "b")
         physicalRows 10 "> " prompt @?= ["> a", "b"]
@@ -460,13 +460,13 @@ prop_multilinePrefixCounts :: Property
 prop_multilinePrefixCounts =
   forAll keySequence $ \keys ->
     let prompt = run keys
-        prefix = "ask:\n"
+        prefix = "ask\n"
         rows = physicalRows 80 prefix prompt
         counts = prefixCharacterCounts 80 prefix rows
      in counterexample (show counts) $
           property (length counts === length rows)
-            .&&. property (sum counts === length "ask:")
-            .&&. property (take 1 counts === [length "ask:"])
+            .&&. property (sum counts === length "ask")
+            .&&. property (take 1 counts === [length "ask"])
 
 prop_completionTarget :: Property
 prop_completionTarget =

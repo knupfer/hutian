@@ -11,15 +11,23 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.Char (toLower)
 import Data.Either (fromRight)
-import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (isInfixOf)
 import Data.Maybe (listToMaybe)
+import Hutian.Context (TurnContext (..))
+import Hutian.Conversation
+  ( ConversationEntry (..)
+  , ToolCall (..)
+  , emptyConversation
+  )
+import Hutian.Jobs.Runtime (withJobRuntime)
 import Hutian.Mcp (callMcpTool, discoverMcpServers)
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Catalog
   ( McpServer (..)
   , McpSessionId (..)
   , McpTool (..)
+  , ToolCatalog (..)
   )
 import Hutian.Tool.Config
   ( McpServerConfig (..)
@@ -28,6 +36,8 @@ import Hutian.Tool.Config
   , ToolConfig (..)
   , defaultToolConfig
   )
+import Hutian.Tool.Exec (ToolRuntime (..), runToolCallsWith)
+import Hutian.Verbosity (Verbosity (..))
 import Network.Socket
   ( Family (AF_INET)
   , SockAddr (SockAddrInet)
@@ -47,6 +57,7 @@ import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
 import Test.Tasty
 import Test.Tasty.HUnit
+import TestSupport (stripAnsi, withPseudoTerminalOutput, withTemporaryDirectory)
 import Text.Read (readMaybe)
 
 tests :: TestTree
@@ -133,6 +144,62 @@ tests =
                 messages
             )
           length servers @?= 1
+    , testCase "a result handler replaces the MCP output label" $
+        withMcpUpstream $ \port _ ->
+          withTemporaryDirectory "hutian-mcp-result" $ \directory ->
+            withJobRuntime directory directory $ \jobs -> do
+              let handler =
+                    ResultConfig
+                      { resultModel = "unused"
+                      , resultDescription = "unused"
+                      , resultSystemPrompt = "unused"
+                      , resultTools = defaultToolConfig
+                      }
+                  server =
+                    McpServerConfig
+                      { mcpServerName = "demo"
+                      , mcpServerUrl = "http://127.0.0.1:" ++ show port ++ "/mcp"
+                      , mcpServerPolicy = ToolAllow
+                      , mcpResults = ResultConfigs [("search", handler)]
+                      }
+              discovered <- discoverMcpServers (\_ -> pure ()) [server]
+              received <- newIORef Nothing
+              withPseudoTerminalOutput $ \readOutput -> do
+                let runtime =
+                      ToolRuntime
+                        { toolRuntimeJobs = jobs
+                        , toolRuntimeWorkingDirectory = directory
+                        , toolRuntimeContext = MainContext
+                        , toolRuntimeVerbosity = VerbosityNormal
+                        , toolRuntimeSubagent = \_ _ -> pure (Left "not configured")
+                        , toolRuntimeResult =
+                            \_ _ _ _ raw -> do
+                              writeIORef received (Just raw)
+                              pure (Right "handled\n")
+                        }
+                    catalog =
+                      ToolCatalog
+                        (defaultToolConfig {toolMcp = [server]})
+                        discovered
+                (_, conversation) <-
+                  runToolCallsWith
+                    runtime
+                    catalog
+                    emptyConversation
+                    [ToolCall "call-1" "mcp__demo__search" "{\"query\":\"haskell\"}"]
+                output <- readOutput
+                let plain = stripAnsi output
+                assertBool
+                  "the MCP call is shown"
+                  ("mcp.demo.search" `isInfixOf` plain)
+                assertBool
+                  "the raw result has no output label of its own"
+                  (not ("mcp.demo.search.output" `isInfixOf` plain))
+                assertBool
+                  "the raw result is not printed outside the handler"
+                  (not ("Found results" `isInfixOf` plain))
+                readIORef received >>= (@?= Just "Found results\n")
+                conversation @?= [ToolResultEntry "call-1" "handled\n"]
     , testCase "a denied MCP server is not contacted" $ do
         let server =
               McpServerConfig

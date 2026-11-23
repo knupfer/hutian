@@ -122,7 +122,7 @@ socketTests =
           (result, output) <-
             maybe (assertFailure "runLlm timed out" >> pure (Nothing, "")) pure captured
           result @?= Just "answer\n"
-          assertBool ("answer label missing: " ++ output) ("answer:" `isInfixOf` output)
+          assertBool ("answer label missing: " ++ output) ("answer" `isInfixOf` output)
           request <- awaitMVar "Unix server did not receive a request" requests
           assertInfix "current" request
           assertInfix "prior" request

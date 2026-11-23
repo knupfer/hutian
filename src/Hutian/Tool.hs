@@ -33,7 +33,7 @@ import Hutian.Jobs
   , lineCountValue
   , maxJobOutputLines
   )
-import Hutian.Mcp.Protocol (mcpToolDefinition, mcpToolFunctionName)
+import Hutian.Mcp.Protocol (mcpResultAgentName, mcpToolDefinition, mcpToolFunctionName)
 import Hutian.Policy (ToolPolicy (..), toolPolicyAdvertised)
 import Hutian.Tool.Catalog
   ( McpServer (..)
@@ -130,7 +130,7 @@ toolDefinitionsFor catalog =
     mcpTools = concatMap serverTools (catalogMcp catalog)
     serverTools server
       | toolPolicyAdvertised (mcpServerPolicy (mcpServerConfig server)) =
-          [ appendResultDescription (mcpToolName tool) (mcpResults (mcpServerConfig server))
+          [ appendResultDescription (mcpServerName (mcpServerConfig server)) (mcpToolName tool) (mcpResults (mcpServerConfig server))
               (mcpToolDefinition (mcpServerName (mcpServerConfig server)) tool)
           | tool <- mcpServerTools server
           ]
@@ -138,15 +138,15 @@ toolDefinitionsFor catalog =
 
 -- | Append the result handler's description to a tool definition. The suffix
 -- tells the main model that the raw result is processed before it sees it.
-appendResultDescription :: String -> ResultConfigs -> Value -> Value
-appendResultDescription toolName (ResultConfigs results) definition =
+appendResultDescription :: String -> String -> ResultConfigs -> Value -> Value
+appendResultDescription serverName toolName (ResultConfigs results) definition =
   case lookup toolName results of
     Nothing -> definition
     Just config -> mapFunctionDescription (\description -> description ++ suffix config) definition
   where
     suffix config =
-      "\n\nResults from this tool are processed by the `results_"
-        ++ toolName
+      "\n\nResults from this tool are processed by the `"
+        ++ mcpResultAgentName serverName toolName
         ++ "` subagent: "
         ++ resultDescription config
 

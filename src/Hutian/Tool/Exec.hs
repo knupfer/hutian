@@ -52,7 +52,7 @@ import Hutian.Jobs.Runtime
   , startJob
   )
 import Hutian.Mcp (callMcpTool)
-import Hutian.Mcp.Protocol (mcpErrorText, mcpToolFunctionName)
+import Hutian.Mcp.Protocol (mcpErrorText, mcpToolDisplayName)
 import Hutian.Policy (ToolPolicy)
 import Hutian.Render
   ( OutputKind (..)
@@ -97,7 +97,7 @@ data ToolRuntime = ToolRuntime
   , toolRuntimeContext :: TurnContext
   , toolRuntimeVerbosity :: Verbosity
   , toolRuntimeSubagent :: SubagentConfig -> String -> IO (Either String String)
-  , toolRuntimeResult :: String -> ToolCall -> ResultConfig -> String -> IO (Either String String)
+  , toolRuntimeResult :: String -> String -> ToolCall -> ResultConfig -> String -> IO (Either String String)
   }
 
 -- | Run each requested call in order with a shell-only policy. This preserves
@@ -113,7 +113,7 @@ runToolCalls jobs workingDirectory policy =
       , toolRuntimeVerbosity = VerbosityHigh
       , toolRuntimeSubagent = \_ _ ->
           pure (Left "tool error: the model subagent tool is disabled")
-      , toolRuntimeResult = \_ _ _ _ ->
+      , toolRuntimeResult = \_ _ _ _ _ ->
           pure (Left "tool error: the model result handler is disabled")
       }
 
@@ -205,11 +205,13 @@ runToolCall planner runtime conversation call =
     finishRaw raw =
       pure (False, appendToolResult (toolCallId call) raw conversation)
 
-    finishResult resultConfig name raw =
+    finishResult resultConfig serverName toolName raw =
       case resultConfig of
         Nothing -> finishRaw raw
         Just config -> do
-          result <- withSubagentCursor (toolRuntimeResult runtime name call config raw)
+          result <-
+            withSubagentCursor
+              (toolRuntimeResult runtime serverName toolName call config raw)
           case result of
             Left message -> finishError message
             Right answer ->
@@ -218,26 +220,28 @@ runToolCall planner runtime conversation call =
     runPlanned mode command =
       case mode of
         Foreground -> do
-          result <- executeShellTool context toolOutput workingDirectory command
+          printOutputLabelIn context (toolCallName call) ToolOutput
+          result <- executeShellTool toolOutput workingDirectory command
           case result of
             Left message -> finishError message
             Right output -> finishRaw output
         Background -> do
-          result <- executeBackgroundTool context toolOutput jobs command
+          printOutputLabelIn context (toolCallName call) ToolOutput
+          result <- executeBackgroundTool toolOutput jobs command
           case result of
             Left message -> finishError message
             Right output -> finishRaw output
 
     runJobsTool = do
       consoleWriteToolLabelIn context "jobs"
-      printOutputLabelIn context ToolOutput
+      printOutputLabelIn context "jobs" ToolOutput
       current <- listJobs jobs
       when showOutputBody (printJobRows current)
       finishRaw (jobListResult current)
 
     runJobOutputTool target requestedLines = do
       consoleWriteToolLabelIn context "job_output"
-      printOutputLabelIn context ToolOutput
+      printOutputLabelIn context "job_output" ToolOutput
       result <- readJobOutput jobs target requestedLines
       case result of
         Left message -> finishError message
@@ -247,7 +251,7 @@ runToolCall planner runtime conversation call =
 
     runJobKillTool target = do
       consoleWriteToolLabelIn context "job_kill"
-      printOutputLabelIn context ToolOutput
+      printOutputLabelIn context "job_kill" ToolOutput
       result <- killJob jobs target
       case result of
         Left message -> finishError message
@@ -257,7 +261,7 @@ runToolCall planner runtime conversation call =
           finishRaw message
 
     runWebfetchTool url = do
-      printOutputLabelIn context ToolOutput
+      printOutputLabelIn context "webfetch" ToolOutput
       result <- fetchUrl url
       case result of
         Left message -> finishError message
@@ -275,27 +279,31 @@ runToolCall planner runtime conversation call =
     showMcpCall server tool arguments =
       consoleWriteToolTextIn
         context
-        (mcpToolFunctionName (mcpServerName (mcpServerConfig server)) (mcpToolName tool))
+        (mcpToolDisplayName (mcpServerName (mcpServerConfig server)) (mcpToolName tool))
         (LBS8.unpack (Aeson.encode arguments))
 
     runMcpTool server tool arguments = do
-      printOutputLabelIn context ToolOutput
+      let localName = mcpToolName tool
+          serverName = mcpServerName (mcpServerConfig server)
+          displayName = mcpToolDisplayName serverName localName
+          resultConfig =
+            lookupResultConfig (mcpResults (mcpServerConfig server)) localName
       result <- callMcpTool server tool arguments
       case result of
         Left failure -> finishError (mcpErrorText failure)
         Right text -> do
           let formatted = trailingNewline text
-              localName = mcpToolName tool
-              resultConfig =
-                lookupResultConfig (mcpResults (mcpServerConfig server)) localName
-          when showOutputBody (displayToolText formatted)
-          finishResult resultConfig localName formatted
+          case resultConfig of
+            Nothing -> do
+              printOutputLabelIn context displayName ToolOutput
+              when showOutputBody (displayToolText formatted)
+            Just _ -> pure ()
+          finishResult resultConfig serverName localName formatted
 
 -- | Run a command the model is already allowed to execute. The caller is
 -- responsible for showing the command first. Returns the captured output.
-executeShellTool :: TurnContext -> Visibility -> FilePath -> String -> IO (Either String String)
-executeShellTool context toolOutput workingDirectory command = do
-  printOutputLabelIn context ToolOutput
+executeShellTool :: Visibility -> FilePath -> String -> IO (Either String String)
+executeShellTool toolOutput workingDirectory command = do
   result <- runShellCommandOutput workingDirectory command
   case result of
     Left message -> pure (Left message)
@@ -305,9 +313,8 @@ executeShellTool context toolOutput workingDirectory command = do
 
 -- | Start a command as a job and return its id to the model. The job's output
 -- goes to its log, so the turn is not held open by a long-running process.
-executeBackgroundTool :: TurnContext -> Visibility -> JobRuntime -> String -> IO (Either String String)
-executeBackgroundTool context toolOutput jobs command = do
-  printOutputLabelIn context ToolOutput
+executeBackgroundTool :: Visibility -> JobRuntime -> String -> IO (Either String String)
+executeBackgroundTool toolOutput jobs command = do
   result <- startJob jobs command
   case result of
     Left message -> pure (Left message)

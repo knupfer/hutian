@@ -287,7 +287,7 @@ tests =
                       , toolRuntimeContext = MainContext
                       , toolRuntimeVerbosity = VerbosityNormal
                       , toolRuntimeSubagent = \_ _ -> pure (Right "final answer\n")
-                      , toolRuntimeResult = \_ _ _ _ -> pure (Left "not configured")
+                      , toolRuntimeResult = \_ _ _ _ _ -> pure (Left "not configured")
                       }
                   catalog =
                     toolCatalog
@@ -302,7 +302,7 @@ tests =
               let plain = stripAnsi output
               assertBool
                 "the subagent is not shown as a generic tool call"
-                (not ("tool subagent:" `isInfixOf` plain))
+                (not ("subagent" `isInfixOf` plain))
     , testCase "result handler descriptions are appended to MCP tool definitions" $ do
         let resultConfig =
               ResultConfig
@@ -321,7 +321,7 @@ tests =
                 [demoServer {mcpServerConfig = serverConfig}]
             definitions =
               LBS8.unpack (Aeson.encode (toolDefinitionsFor catalog))
-        assertBool "handler label" ("results_search" `isInfixOf` definitions)
+        assertBool "handler label" ("mcp.demo.results.search" `isInfixOf` definitions)
         assertBool
           "handler description"
           ("Summarize the search results." `isInfixOf` definitions)

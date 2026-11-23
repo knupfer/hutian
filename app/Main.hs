@@ -22,6 +22,7 @@ import Hutian.Console
   , withRespondingCursor
   , withoutEcho
   )
+import Hutian.Context (pathLabel, subagentContext)
 import Hutian.Conversation
   ( Conversation
   , ToolCall (..)
@@ -59,6 +60,7 @@ import Hutian.Llm
   )
 import Hutian.Llm.Loop (LlmLoop (..), runToolLoopWithResult)
 import Hutian.Mcp (discoverMcpServers)
+import Hutian.Mcp.Protocol (mcpResultAgentName, mcpToolDisplayName)
 import Hutian.Render (OutputKind (..), TurnContext (..))
 import Hutian.Session
   ( Session (..)
@@ -123,11 +125,9 @@ main = do
         when (settingVerbosity settings == VerbosityHigh) $ do
           consoleWriteSystemPrompt
             MainContext
-            ""
             (unSystemPrompt (settingSystemPrompt settings))
           consoleWriteToolDefinitions
             MainContext
-            ""
             (toolSummaryLines (toolDefinitionsFor (settingTools settings)))
         runSession
           (sessionEffects workingDirectory commands jobs settings interruptFlag)
@@ -218,51 +218,13 @@ toolRuntime context verbosity workingDirectory jobs settings interruptFlag =
     , toolRuntimeContext = context
     , toolRuntimeVerbosity = verbosity
     , toolRuntimeSubagent =
-        runSubagent workingDirectory jobs settings interruptFlag
+        runSubagent context workingDirectory jobs settings interruptFlag
     , toolRuntimeResult =
-        runResultAgent workingDirectory jobs settings interruptFlag
+        runResultAgent context workingDirectory jobs settings interruptFlag
     }
 
-runSubagent :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> SubagentConfig -> String -> IO (Either String String)
-runSubagent = runAgent True
-
--- | Run a tool-result handler. The handler gets the raw result as its prompt,
--- but only its final answer is returned. Its own tool results use its own
--- handlers, never the caller's.
-runResultAgent
-  :: FilePath
-  -> JobRuntime
-  -> LlmSettings
-  -> InterruptFlag
-  -> String
-  -> ToolCall
-  -> ResultConfig
-  -> String
-  -> IO (Either String String)
-runResultAgent workingDirectory jobs settings interruptFlag localName call config raw =
-  runAgent
-    False
-    workingDirectory
-    jobs
-    settings
-    interruptFlag
-    SubagentConfig
-      { subagentName = "results_" ++ localName
-      , subagentModel = resultModel config
-      , subagentDescription = resultDescription config
-      , subagentSystemPrompt = resultSystemPrompt config
-      , subagentTools = resultTools config
-      }
-    ( "Tool: "
-        ++ toolCallName call
-        ++ "\nArguments: "
-        ++ toolCallArguments call
-        ++ "\n\nResult:\n"
-        ++ raw
-    )
-
-runAgent
-  :: Bool
+runSubagent
+  :: TurnContext
   -> FilePath
   -> JobRuntime
   -> LlmSettings
@@ -270,12 +232,61 @@ runAgent
   -> SubagentConfig
   -> String
   -> IO (Either String String)
-runAgent showPrompt workingDirectory jobs settings interruptFlag agent prompt = do
+runSubagent = runAgent
+
+-- | Run a tool-result handler. The handler gets the raw result as its prompt,
+-- but only its final answer is returned. Its own tool results use its own
+-- handlers, never the caller's.
+runResultAgent
+  :: TurnContext
+  -> FilePath
+  -> JobRuntime
+  -> LlmSettings
+  -> InterruptFlag
+  -> String
+  -> String
+  -> ToolCall
+  -> ResultConfig
+  -> String
+  -> IO (Either String String)
+runResultAgent context workingDirectory jobs settings interruptFlag serverName localName call config raw =
+  runAgent
+    context
+    workingDirectory
+    jobs
+    settings
+    interruptFlag
+    SubagentConfig
+      { subagentName = mcpResultAgentName serverName localName
+      , subagentModel = resultModel config
+      , subagentDescription = resultDescription config
+      , subagentSystemPrompt = resultSystemPrompt config
+      , subagentTools = resultTools config
+      }
+    ( "Tool: "
+        ++ mcpToolDisplayName serverName localName
+        ++ "\nArguments: "
+        ++ toolCallArguments call
+        ++ "\n\nResult:\n"
+        ++ raw
+    )
+
+runAgent
+  :: TurnContext
+  -> FilePath
+  -> JobRuntime
+  -> LlmSettings
+  -> InterruptFlag
+  -> SubagentConfig
+  -> String
+  -> IO (Either String String)
+runAgent parent workingDirectory jobs settings interruptFlag agent prompt = do
   servers <-
     discoverMcpServers
       consoleWriteErrorLine
       (toolMcp (subagentTools agent))
-  let name = subagentName agent
+  let childContext = subagentContext parent (subagentName agent)
+      childLabel = pathLabel childContext
       subagentSettings =
         settings
           { settingModel = ModelName (subagentModel agent)
@@ -285,7 +296,7 @@ runAgent showPrompt workingDirectory jobs settings interruptFlag agent prompt = 
           }
       runtime =
         toolRuntime
-          SubagentContext
+          childContext
           (settingVerbosity subagentSettings)
           workingDirectory
           jobs
@@ -293,16 +304,12 @@ runAgent showPrompt workingDirectory jobs settings interruptFlag agent prompt = 
           interruptFlag
   when (settingVerbosity settings == VerbosityHigh) $ do
     consoleWriteSystemPrompt
-      SubagentContext
-      name
+      childContext
       (subagentSystemPrompt agent)
     consoleWriteToolDefinitions
-      SubagentContext
-      name
+      childContext
       (toolSummaryLines (toolDefinitionsFor (settingTools subagentSettings)))
-  if showPrompt
-    then consoleWriteSubagentPrompt name prompt
-    else consoleWriteSubagentPrompt name ""
+  consoleWriteSubagentPrompt childLabel prompt
   (_, finalResult) <-
     runModelTurn
       interruptFlag
@@ -335,7 +342,7 @@ runTerminalInput workingDirectory conversation text =
 
 runTerminalScript :: FilePath -> Conversation -> String -> IO Conversation
 runTerminalScript workingDirectory conversation command = do
-  printOutputLabel TermOutput
+  printOutputLabel "shell" TermOutput
   withGrayOutput (runStreamingCommand workingDirectory command)
   pure (appendTerminal command conversation)
 

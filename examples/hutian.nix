@@ -51,7 +51,8 @@
     #   with its own upstream model, system prompt, and tools, and returns only
     #   its final answer.
     # - `mcp` maps names to MCP servers. Hutian discovers each server's tools at
-    #   startup and advertises them as `mcp__<server>__<tool>`. The Exa server
+    #   startup and advertises them with the API-safe name
+    #   `mcp__<server>__<tool>`; prompts display `mcp.<server>.<tool>`. The Exa server
     #   works without a key for search and fetch; add an explicit API key
     #   through a local MCP proxy if you need higher limits. MCP runs in the
     #   sandbox, so `sandbox.network = true` is required.
@@ -73,7 +74,7 @@
       #     # Route a concrete MCP tool result through a subagent configuration.
       #     # The handler gets the raw result and returns only its answer. Its
       #     # description is appended to the tool description; the terminal
-      #     # label is `subagent results_<tool>`.
+      #     # label is `mcp.<server>.results.<tool>`.
       #     results.search = {
       #       model = "cheap-summarizer";
       #       description = "Summarize search results; preserve facts and links.";

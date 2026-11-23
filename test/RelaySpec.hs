@@ -412,7 +412,7 @@ endToEndTests =
               (result, output) <-
                 maybe (assertFailure "relay request timed out" >> pure (Nothing, "")) pure captured
               result @?= Just "answer\n"
-              assertBool ("answer label missing: " ++ output) ("answer:" `isInfixOf` output)
+              assertBool ("answer label missing: " ++ output) ("answer" `isInfixOf` output)
               assertBool ("relay leaked the key: " ++ output) (not ("s3cret-key" `isInfixOf` output))
               upstream <- awaitMVar "upstream did not receive a request" requests
               assertInfix "Authorization: Bearer s3cret-key" upstream

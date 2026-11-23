@@ -10,6 +10,8 @@ module Hutian.Mcp.Protocol
   , mcpListToolsRequest
   , mcpCallToolRequest
   , mcpToolFunctionName
+  , mcpToolDisplayName
+  , mcpResultAgentName
    , mcpToolDefinition
   , McpError (..)
   , mcpErrorText
@@ -105,6 +107,16 @@ mcpCallToolRequest identifier toolName arguments =
 mcpToolFunctionName :: String -> String -> String
 mcpToolFunctionName serverName toolName =
   "mcp__" ++ sanitizeName serverName ++ "__" ++ sanitizeName toolName
+
+-- | The dotted label used in prompts for one MCP tool.
+mcpToolDisplayName :: String -> String -> String
+mcpToolDisplayName serverName toolName =
+  "mcp." ++ sanitizeName serverName ++ "." ++ sanitizeName toolName
+
+-- | The path of the result handler for one concrete MCP tool.
+mcpResultAgentName :: String -> String -> String
+mcpResultAgentName serverName toolName =
+  "mcp." ++ sanitizeName serverName ++ ".results." ++ sanitizeName toolName
 
 sanitizeName :: String -> String
 sanitizeName text =

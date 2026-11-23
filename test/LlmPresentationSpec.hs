@@ -26,13 +26,13 @@ tests =
     "llm-presentation"
     [ testCase "reasoning is labelled and uses the thinking colour" $ do
         let output = presentAll [reasoningEvent "thinking\n"]
-        assertBool "think label" ((dimTealForeground ++ "think:" ++ reset) `isInfixOf` output)
+        assertBool "think label" ((dimTealForeground ++ "think" ++ reset) `isInfixOf` output)
         assertBool "thinking colour" (grayForeground `isInfixOf` output)
     , testCase "an answer after reasoning flushes thinking and adds an answer label" $ do
         let output = presentAll [reasoningEvent "thinking", contentEvent "hello\n"]
             finished = finishAll [reasoningEvent "thinking", contentEvent "hello\n"]
         assertBool "thinking reset" (reset `isInfixOf` output)
-        assertBool "answer label" ((boldTeal ++ "answer:" ++ reset) `isInfixOf` output)
+        assertBool "answer label" ((boldTeal ++ "answer" ++ reset) `isInfixOf` output)
         assertBool "answer text" ("hello" `isInfixOf` (output ++ finished))
     , testCase "reasoning after a flushed answer gets its own label" $ do
         let output =
@@ -41,12 +41,12 @@ tests =
                 , contentEvent "answer\n"
                 , reasoningEvent "second"
                 ]
-            label = dimTealForeground ++ "think:" ++ reset
+            label = dimTealForeground ++ "think" ++ reset
         Text.count (Text.pack label) (Text.pack output) @?= 2
     , testCase "finishing flushes a partial answer line" $ do
         let output = presentAll [contentEvent "partial"]
             finished = finishAll [contentEvent "partial"]
-        assertBool "answer label is emitted before the partial line" ("answer:" `isInfixOf` output)
+        assertBool "answer label is emitted before the partial line" ("answer" `isInfixOf` output)
         assertBool "partial answer is not emitted before a newline" (not ("partial" `isInfixOf` output))
         assertBool "partial answer flushed" ("partial" `isInfixOf` finished)
     , testCase "empty content events emit nothing" $ do
@@ -54,21 +54,21 @@ tests =
     , testCase "a subagent uses dim blue reasoning and answer labels" $ do
         let output =
               presentAllIn
-                SubagentContext
+                (SubagentContext ["cheap"])
                 [reasoningEvent "thinking\n", contentEvent "hello\n"]
         assertBool
           "blue think label"
-          ((dimBlueForeground ++ "think:" ++ reset) `isInfixOf` output)
+          ((dimBlueForeground ++ "cheap.think" ++ reset) `isInfixOf` output)
         assertBool
           "dim blue answer label"
-          ((dimBlueForeground ++ "answer:" ++ reset) `isInfixOf` output)
+          ((dimBlueForeground ++ "cheap.answer" ++ reset) `isInfixOf` output)
         assertBool
           "no teal labels"
-          (not ((dimTealForeground ++ "think:") `isInfixOf` output))
+          (not ((dimTealForeground ++ "think") `isInfixOf` output))
     , testCase "low shows the reasoning label without its content" $ do
         let output =
               presentAllWith VerbosityLow MainContext [reasoningEvent "hidden reasoning\n"]
-        assertBool "think label" ("think:" `isInfixOf` output)
+        assertBool "think label" ("think" `isInfixOf` output)
         assertBool "reasoning hidden" (not ("hidden reasoning" `isInfixOf` output))
     , testCase "low keeps main answers but hides subagent answers" $ do
         let mainOutput =
@@ -79,12 +79,12 @@ tests =
             subagentOutput =
               presentAllWith
                 VerbosityLow
-                SubagentContext
+                (SubagentContext ["cheap"])
                 [contentEvent "hidden answer\n"]
         assertBool "main answer shown" ("visible answer" `isInfixOf` mainOutput)
         assertBool
           "subagent answer label"
-          ("answer:" `isInfixOf` subagentOutput)
+          ("cheap.answer" `isInfixOf` subagentOutput)
         assertBool
           "subagent answer hidden"
           (not ("hidden answer" `isInfixOf` subagentOutput))
@@ -97,39 +97,39 @@ tests =
             subagentOutput =
               presentAllWith
                 VerbosityNormal
-                SubagentContext
+                (SubagentContext ["cheap"])
                 [reasoningEvent "hidden reasoning\n"]
             subagentAnswerOutput =
               presentAllWith
                 VerbosityNormal
-                SubagentContext
+                (SubagentContext ["cheap"])
                 [contentEvent "hidden answer\n"]
-        assertBool "main think label" ("think:" `isInfixOf` mainOutput)
+        assertBool "main think label" ("think" `isInfixOf` mainOutput)
         assertBool "main reasoning shown" ("visible reasoning" `isInfixOf` mainOutput)
         assertBool "answer shown" ("answer" `isInfixOf` mainOutput)
-        assertBool "subagent think label" ("think:" `isInfixOf` subagentOutput)
+        assertBool "subagent think label" ("cheap.think" `isInfixOf` subagentOutput)
         assertBool
           "subagent reasoning hidden"
           (not ("hidden reasoning" `isInfixOf` subagentOutput))
         assertBool
           "subagent answer label"
-          ("answer:" `isInfixOf` subagentAnswerOutput)
+          ("cheap.answer" `isInfixOf` subagentAnswerOutput)
         assertBool
           "subagent answer streams"
           ("hidden answer" `isInfixOf` subagentAnswerOutput)
         assertBool
           "subagent answer is dim"
           (grayForeground `isInfixOf` subagentAnswerOutput)
-        Text.count (Text.pack "answer:") (Text.pack subagentAnswerOutput) @?= 1
+        Text.count (Text.pack "cheap.answer") (Text.pack subagentAnswerOutput) @?= 1
     , testCase "high subagent answers use the dim style" $ do
         let output =
               presentAllWith
                 VerbosityHigh
-                SubagentContext
+                (SubagentContext ["cheap"])
                 [contentEvent "dim answer\n"]
         assertBool
           "dim blue answer label"
-          ((dimBlueForeground ++ "answer:" ++ reset) `isInfixOf` output)
+          ((dimBlueForeground ++ "cheap.answer" ++ reset) `isInfixOf` output)
         assertBool "dim body" (grayForeground `isInfixOf` output)
         assertBool "answer text" ("dim answer" `isInfixOf` output)
     ]

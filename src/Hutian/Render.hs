@@ -51,7 +51,7 @@ import Data.Char (toUpper)
 import Data.List (isSuffixOf)
 import Numeric (showHex)
 import qualified Hutian.Ansi as Ansi
-import Hutian.Context (TurnContext (..))
+import Hutian.Context (TurnContext (..), pathPrefix)
 import Hutian.Editor
   ( Prompt
   , cursorPosition
@@ -134,7 +134,7 @@ promptRenderText kind previousRow width prompt =
             | otherwise = rest
           inputRow text =
             case kind of
-              ToolPrompt SubagentContext _ ->
+              ToolPrompt (SubagentContext _) _ ->
                 grayForeground ++ text ++ reset
               _ -> highlightShellLine text
           styleReset
@@ -163,9 +163,8 @@ toolPromptTextIn context toolName width command =
 toolTextPromptTextIn :: TurnContext -> String -> Int -> String -> String
 toolTextPromptTextIn context toolName _width text =
   toolPromptForeground context
-    ++ "tool "
+    ++ pathPrefix context
     ++ toolName
-    ++ ":"
     ++ reset
     ++ "\n"
     ++ highlightJsonText text
@@ -178,22 +177,22 @@ toolLabelText = toolLabelTextIn MainContext
 
 toolLabelTextIn :: TurnContext -> String -> String
 toolLabelTextIn context toolName =
-  toolPromptForeground context ++ "tool " ++ toolName ++ ":" ++ reset
+  toolPromptForeground context ++ pathPrefix context ++ toolName ++ reset
 
--- | A blue label announcing which subagent is working, followed by the task
--- prompt it was given. The task is plain text rather than shell input.
+-- | Announce the subagent and the task prompt it was given. The label is the
+-- full dotted path.
 subagentPromptText :: String -> Int -> String -> String
-subagentPromptText modelName width prompt =
-  fst (promptRenderText (SubagentPrompt modelName) 0 width (setPromptText prompt initialPrompt))
+subagentPromptText label width prompt =
+  fst (promptRenderText (SubagentPrompt label) 0 width (setPromptText prompt initialPrompt))
     ++ reset
     ++ "\n"
 
 -- | The prefix shown above a prompt. Every prompt label occupies its own line.
 prefixFor :: PromptKind -> String
-prefixFor LlmPrompt = "ask:\n"
-prefixFor ShellPrompt = "shell:\n"
-prefixFor (ToolPrompt _ toolName) = "tool " ++ toolName ++ ":\n"
-prefixFor (SubagentPrompt modelName) = "subagent " ++ modelName ++ ":\n"
+prefixFor LlmPrompt = "ask\n"
+prefixFor ShellPrompt = "shell\n"
+prefixFor (ToolPrompt context toolName) = pathPrefix context ++ toolName ++ "\n"
+prefixFor (SubagentPrompt label) = label ++ "\n"
 
 prefixForegroundFor :: PromptKind -> String
 prefixForegroundFor (ToolPrompt context _) = toolPromptForeground context
@@ -202,37 +201,37 @@ prefixForegroundFor _ = boldVibrantPink
 
 toolPromptForeground :: TurnContext -> String
 toolPromptForeground MainContext = boldTeal
-toolPromptForeground SubagentContext = dimBlueForeground
+toolPromptForeground (SubagentContext _) = dimBlueForeground
 
 toolOutputForeground :: TurnContext -> String
 toolOutputForeground MainContext = dimTealForeground
-toolOutputForeground SubagentContext = dimBlueForeground
+toolOutputForeground (SubagentContext _) = dimBlueForeground
 
 -- | The label above streamed reasoning. A subagent's reasoning uses its blue
 -- so the nested turn stays visually distinct from the main model.
 reasoningLabelText :: TurnContext -> String
 reasoningLabelText context =
-  reasoningForeground context ++ "think:" ++ reset
+  reasoningForeground context ++ pathPrefix context ++ "think" ++ reset
 
 -- | The label above a streamed final answer.
 answerLabelText :: TurnContext -> String
 answerLabelText context =
-  answerForeground context ++ "answer:" ++ reset
+  answerForeground context ++ pathPrefix context ++ "answer" ++ reset
 
 -- | A full system message shown in high verbosity. The label matches the turn
 -- palette and the body is dimmed, while the text itself is unchanged.
-systemPromptText :: TurnContext -> String -> String -> String
+systemPromptText :: TurnContext -> String -> String
 systemPromptText = requestBlockText "system"
 
 -- | The tool definitions sent with the request, shown in high verbosity right
 -- after the system block. The body is the exact JSON, dimmed.
-toolsPromptText :: TurnContext -> String -> String -> String
+toolsPromptText :: TurnContext -> String -> String
 toolsPromptText = requestBlockText "tools"
 
-requestBlockText :: String -> TurnContext -> String -> String -> String
-requestBlockText _ _ _ "" = ""
-requestBlockText kind context name text =
-  requestLabel kind context name
+requestBlockText :: String -> TurnContext -> String -> String
+requestBlockText _ _ "" = ""
+requestBlockText kind context text =
+  requestLabel kind context
     ++ "\n"
     ++ grayForeground
     ++ text
@@ -243,25 +242,24 @@ requestBlockText kind context name text =
       | "\n" `isSuffixOf` text = ""
       | otherwise = "\n"
 
-requestLabel :: String -> TurnContext -> String -> String
-requestLabel kind context name =
+requestLabel :: String -> TurnContext -> String
+requestLabel kind context =
   requestPromptForeground context
+    ++ pathPrefix context
     ++ kind
-    ++ (if null name then "" else " " ++ name)
-    ++ ":"
     ++ reset
 
 requestPromptForeground :: TurnContext -> String
 requestPromptForeground MainContext = dimTealForeground
-requestPromptForeground SubagentContext = dimBlueForeground
+requestPromptForeground (SubagentContext _) = dimBlueForeground
 
 reasoningForeground :: TurnContext -> String
 reasoningForeground MainContext = dimTealForeground
-reasoningForeground SubagentContext = dimBlueForeground
+reasoningForeground (SubagentContext _) = dimBlueForeground
 
 answerForeground :: TurnContext -> String
 answerForeground MainContext = boldTeal
-answerForeground SubagentContext = dimBlueForeground
+answerForeground (SubagentContext _) = dimBlueForeground
 
 -- | The user's decision about a model-requested command. Only an explicit
 -- @y@ or @n@ decides; @Ctrl+C@ aborts the whole LLM turn.
@@ -286,7 +284,7 @@ approvalForKey _ = Nothing
 approvePromptText :: String
 approvePromptText =
   boldVibrantPink
-    ++ "approve:"
+    ++ "approve"
     ++ reset
     ++ "\n[y] Yes\n[n] No\n"
 
@@ -323,18 +321,17 @@ outputForegroundIn :: TurnContext -> OutputKind -> String
 outputForegroundIn _ TermOutput = dimPinkForeground
 outputForegroundIn context ToolOutput = toolOutputForeground context
 
--- | The label printed above captured output, coloured when interactive.
-outputLabelText :: OutputKind -> Bool -> String
+-- | The label printed above captured output, coloured when interactive. The
+-- tool path makes the label match the input prompt that caused the output.
+outputLabelText :: String -> OutputKind -> Bool -> String
 outputLabelText = outputLabelTextIn MainContext
 
-outputLabelTextIn :: TurnContext -> OutputKind -> Bool -> String
-outputLabelTextIn context kind interactive
+outputLabelTextIn :: TurnContext -> String -> OutputKind -> Bool -> String
+outputLabelTextIn context toolPath kind interactive
   | interactive = outputForegroundIn context kind ++ label ++ reset
   | otherwise = label
   where
-    label
-      | kind == ToolOutput = "tool output:"
-      | otherwise = "output:"
+    label = pathPrefix context ++ toolPath ++ ".output"
 
 -- | Wrap captured output in gray when it is going to a terminal.
 grayOutputText :: Bool -> String -> String

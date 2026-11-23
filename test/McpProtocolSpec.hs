@@ -16,8 +16,17 @@ tests =
     [ testCase "tool names are namespaced and sanitized" $ do
         mcpToolFunctionName "demo" "search"
           @?= "mcp__demo__search"
+        mcpToolDisplayName "demo" "search"
+          @?= "mcp.demo.search"
         mcpToolFunctionName "a.b" "x y"
           @?= "mcp__a_b__x_y"
+        mcpToolDisplayName "a.b" "x y"
+          @?= "mcp.a_b.x_y"
+    , testCase "result handler paths are namespaced and sanitized" $ do
+        mcpResultAgentName "demo" "search"
+          @?= "mcp.demo.results.search"
+        mcpResultAgentName "a.b" "x y"
+          @?= "mcp.a_b.results.x_y"
     , testCase "tools/list decodes descriptions and schemas" $
         parseTools
           ( object

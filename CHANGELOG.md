@@ -12,7 +12,7 @@ All notable changes to Hutian are documented here. The format follows
   a concrete MCP tool. The handler gets the raw tool result, runs in its own
   context with its own tools, and returns only its final answer to the agent.
   Its description is appended to the tool description and its terminal label is
-  `subagent results_<tool>`. A handler's MCP tool results can have their own
+  `mcp.<server>.results.<tool>`. A handler's MCP tool results can have their own
   handlers. Built-in tools return their results directly.
 - MCP tool arguments are shown with dim JSON syntax highlighting, and error
   lines are bold red when standard error is a terminal.
@@ -21,6 +21,20 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Changed
 
+- MCP prompt labels use `mcp.<server>.<tool>`, while the model-facing function
+  name stays API-safe as `mcp__<server>__<tool>`.
+- Prompt labels use dotted agent paths. The main agent prints `think`,
+  `answer`, `output`, tool names, `system`, and `tools`. A subagent `foo`
+  prefixes its prompts with `foo.`, so its reasoning is `foo.think`, its answer
+  `foo.answer`, its tool input `foo.shell`, and its output `foo.shell.output`.
+  Nested agents extend the path, for example `foo.bar.think`. The old
+  `subagent <name>:`, `tool <tool>:`, `think:`, `answer:`, `output:`,
+  `tool output:`, `system:`, and `tools:` labels are gone. The `ask`, `shell`,
+  and `approve` labels also drop their trailing colon.
+- Tool output labels include the path of the tool that produced them, for
+  example `shell.output` or `mcp.<server>.<tool>.output`. When an MCP tool has
+  a result handler, neither `<tool>.output` nor the raw result is printed:
+  the raw result is the body of the handler's prompt instead.
 - The flake configuration is split into `sandbox`, `endpoint`, `output`, and
   `agent` groups. `model.name` is now `agent.model`, matching subagents, which
   already use `<name>.model`. The shared host-side settings moved out of the

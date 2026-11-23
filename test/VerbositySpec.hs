@@ -17,7 +17,7 @@ tests =
             , modeAnswerStyle = AnswerNormal
             , modeToolOutput = LabelOnly
             }
-        renderMode VerbosityLow SubagentContext
+        renderMode VerbosityLow (SubagentContext ["cheap"])
           @?= RenderMode
             { modeReasoning = LabelOnly
             , modeAnswer = LabelOnly
@@ -33,7 +33,7 @@ tests =
             , modeToolOutput = Full
             }
     , testCase "normal presents subagents like low and keeps their answer" $
-        renderMode VerbosityNormal SubagentContext
+        renderMode VerbosityNormal (SubagentContext ["cheap"])
           @?= RenderMode
             { modeReasoning = LabelOnly
             , modeAnswer = Full
@@ -48,7 +48,7 @@ tests =
             , modeAnswerStyle = AnswerNormal
             , modeToolOutput = Full
             }
-        renderMode VerbosityHigh SubagentContext
+        renderMode VerbosityHigh (SubagentContext ["cheap"])
           @?= RenderMode
             { modeReasoning = Full
             , modeAnswer = Full

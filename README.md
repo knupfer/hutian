@@ -15,8 +15,8 @@ Everything else on the host is hidden. The root filesystem is built from Nix's
 static BusyBox sandbox shell and the `hutian-shell` binary.
 
 The prompt is a multiline editor with two modes. It starts in LLM mode, where
-input is preceded by a bold pink `ask:` line and sent to the model. `Ctrl+X`
-switches to term mode, where a bold pink `shell:` line precedes input that runs
+input is preceded by a bold pink `ask` line and sent to the model. `Ctrl+X`
+switches to term mode, where a bold pink `shell` line precedes input that runs
 through BusyBox `ash`, so shell builtins and redirection work as expected.
 
 The model's tools are controlled by the mandatory `agent.tools` option. Each
@@ -34,40 +34,47 @@ advertises it but needs approval, and `"allow"` runs it automatically.
   `subagent` tool. Subagents run serially, use the same model API and
   conversation loop, and return only their final answer to the caller.
 - `tools.mcp` maps names to MCP servers. At startup Hutian initializes each
-  server, lists its tools, and advertises them as
-  `mcp__<server>__<tool>`. The server policy applies to every tool it exposes.
-  A concrete tool can route its result through a subagent configuration; see
-  “Tool result handlers” below.
+  server, lists its tools, and advertises them with the API-safe name
+  `mcp__<server>__<tool>`; prompts display them as `mcp.<server>.<tool>`. The
+  server policy applies to every tool it exposes. A concrete tool can route its
+  result through a subagent configuration; see “Tool result handlers” below.
 
 MCP tool calls show their JSON arguments under the tool label with dim JSON
 syntax highlighting. Error lines are bold red when standard error is a terminal.
+
+Prompt labels are dotted paths. The main agent prints `think`, `answer`,
+`output`, and the tool name. A subagent `foo` prefixes every prompt with `foo.`,
+so its reasoning is `foo.think`, its answer `foo.answer`, its tool input
+`foo.shell`, and its tool output `foo.shell.output`. Nested agents extend the
+path: `foo.bar.think`.
 
 The mandatory `output.verbosity` option controls model and tool output:
 
 - `"low"` prints tool calls with their arguments and main-turn answers. Other
   blocks, including a subagent's answer, show only their prompt, such as
-  `think:`, `answer:`, or `tool output:`.
+  `think`, `answer`, or `shell.output`.
 - `"normal"` shows thinking blocks for the main agent. A subagent is presented
   like low, but its final answer streams in dim colors, using the same styling
   as a thinking block.
 - `"high"` prints everything, including full reasoning and every subagent block.
   Subagent answers still use the dim styling. It also prints the exact system
   message and, per tool, a `# name(...)` heading followed by its complete
-  description, rendered as dim Markdown, with dim labels and text: `system:`
-  then `tools:` before the first main `ask:`, and `system <name>:` then
-  `tools <name>:` before every subagent block.
+  description, rendered as dim Markdown, with dim labels and text: `system`
+  then `tools` before the first main `ask`, and `foo.system` then `foo.tools`
+  before every `foo` subagent block.
 
 Term mode is always available. Model commands run through the same `/bin/sh -c`
-path as term mode and are shown with a bold teal `tool shell:` line. In `"ask"`
-mode Hutian shows an `approve:` prompt in the user's pink prompt colour while
+path as term mode and are shown with a bold teal `shell` line. In `"ask"`
+mode Hutian shows an `approve` prompt in the user's pink prompt colour while
 the cursor is hidden, with `[y] Yes` and `[n] No` on their own lines. The choice
 collapses into a single `Yes` or `No` line; only `y` or `n` decides, other keys
 are ignored, and `Ctrl+C` aborts the current LLM turn. Shell output is preceded
-by a dimmed pink `output:` line and tool output by a dimmed teal `tool output:`
-line. In every mode, subagent work starts under a blue `subagent <name>:` line,
-followed by the task it was given. Low and normal abbreviate the internal
-blocks to their prompts; normal additionally prints the final answer in dim
-colors. Every subagent tool prompt, answer, and output label uses the dim
+by a dimmed pink `shell.output` line and tool output by a dimmed teal
+`<tool>.output` line, for example `mcp.<server>.<tool>.output`.
+In every mode, subagent work starts under a blue `<name>` line, followed by the
+task it was given. Low and normal abbreviate the internal blocks to their
+prompts; normal additionally prints the final answer in dim colors. Every
+subagent tool prompt, answer, and output label uses the dim
 subagent blue; the input text under a tool prompt is dim gray.
 
 ## Quick start
@@ -112,13 +119,13 @@ term mode.
 
 ### LLM mode
 
-LLM mode is the initial mode. Input is preceded by a bold pink `ask:` line and
+LLM mode is the initial mode. Input is preceded by a bold pink `ask` line and
 is syntax-highlighted as Markdown while you type, including headings, emphasis,
 links, lists, and fenced code blocks. Replies use the same highlighting, and
 fenced blocks tagged with a language use that language's syntax highlighter.
-Reasoning/thinking tokens are shown in grey under a dimmed teal `think:` line,
+Reasoning/thinking tokens are shown in grey under a dimmed teal `think` line,
 with dimmed Markdown and code highlighting; the reply follows under a bold teal
-`answer:` line.
+`answer` line.
 
 Every LLM request includes the session's prior conversation: earlier prompts,
 assistant replies, commands submitted in term mode, and tool calls with their
@@ -126,18 +133,18 @@ results.
 
 The model can call the `shell` tool according to `agent.tools.shell`. Each
 command runs with `/bin/sh -c` in the sandbox working directory, its output is
-streamed to the terminal in gray under a dimmed teal `tool output:` line, and
+streamed to the terminal in gray under a dimmed teal `shell.output` line, and
 the output is sent back to the model. Every call runs in a fresh shell, so `cd`,
 exported variables, and other shell state do not persist between calls. The
-requested command is shown under a bold teal `tool shell:` line,
+requested command is shown under a bold teal `shell` line,
 syntax-highlighted as shell, which distinguishes it from commands typed by the
 user. In `"ask"` mode, non-interactive runs deny tool calls automatically.
 
 For servers, watchers, and long builds, the model can call `shell_background`
 instead of `shell`. It receives a job id immediately and uses `jobs`,
 `job_output`, and `job_kill` to inspect and control the job. The requested
-command is shown under a bold teal `tool shell_background:` line, and the start
-result follows under `tool output:` in gray.
+command is shown under a bold teal `shell_background` line, and the start
+result follows under `shell_background.output` in gray.
 
 The model can also fetch pages with `webfetch` and delegate a self-contained
 task to a configured subagent. Web tools run in the sandbox and need direct
@@ -145,7 +152,7 @@ networking (`sandbox.network = true`) unless the URL is reachable another way. A
 subagent gets its own system prompt and tools and runs
 synchronously inside the tool call; only its final answer becomes the tool
 result in the main conversation. In every mode its work appears under a blue
-`subagent <name>:` line followed by the task prompt. Low abbreviates internal
+`<name>` line followed by the task prompt. Low abbreviates internal
 blocks to prompts and hides subagent answer content. Normal streams the final
 answer in dim colors. High streams everything, with subagent answers using the
 same dim styling.
@@ -157,10 +164,10 @@ Explain what a syscall is.
 
 ### Term mode
 
-Term mode shows a bold pink `shell:` line above the input and prints command
-output in gray under a dimmed pink `output:` line. Input is syntax-highlighted
-as shell while you type. Every line is executed with `/bin/sh -c` in the
-sandbox working directory.
+Term mode shows a bold pink `shell` line above the input and prints command
+output in gray under a dimmed pink `shell.output` line. Input is
+syntax-highlighted as shell while you type. Every line is executed with
+`/bin/sh -c` in the sandbox working directory.
 
 Each command runs in a fresh shell, so `cd`, exported variables, and other shell
 state do not carry over. Use absolute paths or combine steps in one command, for
@@ -187,7 +194,7 @@ SIGTERM to the process group and then SIGKILL if it has not exited.
 Up to eight jobs can run at once. Finished jobs stay listed until the shell
 exits, and exiting the shell stops any that are still running. Model job tool
 calls use the same layout as the foreground shell tool: a bold teal
-`tool <name>:` line, then `tool output:` with the result in gray. A background
+`<tool>` line, then `<tool>.output` with the result in gray. A background
 start therefore shows `job <id> started` as tool output. A start notice shows
 only the job id because the command is already visible on the request line. Job
 completion is not announced; the model checks with `jobs` or `job_output`.
@@ -328,8 +335,9 @@ tools = {
 
 `agent.tools.mcp` maps names to remote MCP servers. Hutian performs the
 Streamable HTTP handshake at startup, listens to `tools/list`, and advertises
-each tool to the model as `mcp__<server>__<tool>`. Tool calls use the session
-id returned by the server. The policy applies to every tool on that server.
+each tool with the API-safe name `mcp__<server>__<tool>`; prompts display it as
+`mcp.<server>.<tool>`. Tool calls use the session id returned by the server.
+The policy applies to every tool on that server.
 
 ```nix
 tools = {
@@ -385,13 +393,20 @@ tools = {
 
 The value has the same shape as a subagent: `model`, `description`,
 `systemPrompt`, and `tools`. It has no `name`; the terminal label is derived as
-`subagent results_<tool>`, for example `subagent results_zim_get`.
+`mcp.<server>.results.<tool>`, for example `mcp.szmcp.results.zim_get`.
 
-The handler is automatic. When the agent calls `mcp__szmcp__zim_get`, the raw
-article goes to the handler, and only the handler's answer is appended as the
-tool result. The handler's `tools` are real tools: it can search, fetch, run
-commands, or call its own subagents. Its MCP tool results can have their own
-`results` handlers; it never inherits the caller's handlers.
+The handler is automatic. When the agent calls `mcp__szmcp__zim_get`, shown as
+`mcp.szmcp.zim_get`, the raw article goes to the handler, and only the handler's
+answer is appended as the tool result. Because the raw result is the handler's
+input, there is no separate `mcp.szmcp.zim_get.output` block: the result is the
+body of the handler's prompt, shown under its label, for example
+`mcp.szmcp.results.zim_get`. The handler's `tools` are real tools: it
+can search, fetch, run commands, or call its own subagents. Its MCP tool results
+can have their own `results` handlers; it never inherits the caller's handlers.
+The handler's prompts use its dotted path: reasoning is
+`mcp.szmcp.results.zim_get.think`, the answer is
+`mcp.szmcp.results.zim_get.answer`, and its tools are
+`mcp.szmcp.results.zim_get.<tool>`.
 
 The handler's `description` is appended to the tool description so the caller
 knows the result is processed:
@@ -399,7 +414,8 @@ knows the result is processed:
 ```text
 <original tool description>
 
-Results from this tool are processed by the `results_zim_get` subagent:
+Results from this tool are processed by the `mcp.szmcp.results.zim_get`
+subagent:
 Summarize the article; preserve paths and citations.
 ```
 

@@ -43,6 +43,7 @@ import qualified Data.Text as Text
 import Foreign.Marshal.Alloc (allocaBytes)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Hutian.Highlight (sanitize, sanitizeOutput)
+import Hutian.Context (pathPrefix)
 import Hutian.Markdown
   ( finishMarkdownWith
   , initialMarkdownState
@@ -201,21 +202,21 @@ consoleWriteToolLabelIn context toolName = do
   consoleWriteLine $
     if interactive
       then toolLabelTextIn context name
-      else "tool " ++ name ++ ":"
+      else pathPrefix context ++ name
   consoleFlush
 
--- | Announce the subagent and the task prompt it was given. The label is blue
--- when output goes to a terminal and plain otherwise.
+-- | Announce the subagent and the task prompt it was given. The label is the
+-- full dotted path, blue when output goes to a terminal and plain otherwise.
 consoleWriteSubagentPrompt :: String -> String -> IO ()
-consoleWriteSubagentPrompt modelName prompt = do
+consoleWriteSubagentPrompt label prompt = do
   interactive <- consoleIsInteractive
-  let name = sanitize modelName
+  let safeLabel = sanitize label
       task = sanitize prompt
   if interactive
     then do
       width <- consoleWidth
-      consoleWrite (subagentPromptText name width task)
-    else consoleWrite ("subagent " ++ name ++ ":\n" ++ task ++ taskNewline)
+      consoleWrite (subagentPromptText safeLabel width task)
+    else consoleWrite (safeLabel ++ "\n" ++ task ++ taskNewline)
   consoleFlush
   where
     taskNewline
@@ -224,41 +225,37 @@ consoleWriteSubagentPrompt modelName prompt = do
 
 -- | Show the exact system message sent to the model in high verbosity. The
 -- label is dim teal for the main agent and dim blue for a subagent.
-consoleWriteSystemPrompt :: TurnContext -> String -> String -> IO ()
-consoleWriteSystemPrompt _ _ "" = pure ()
-consoleWriteSystemPrompt context name prompt = do
+consoleWriteSystemPrompt :: TurnContext -> String -> IO ()
+consoleWriteSystemPrompt _ "" = pure ()
+consoleWriteSystemPrompt context prompt = do
   interactive <- consoleIsInteractive
-  let safeName = sanitize name
-      body = sanitizeOutput prompt
+  let body = sanitizeOutput prompt
   if interactive
-    then consoleWrite (systemPromptText context safeName body)
+    then consoleWrite (systemPromptText context body)
     else
       consoleWrite
-        ( "system"
-            ++ (if null safeName then "" else " " ++ safeName)
-            ++ ":\n"
+        ( pathPrefix context
+            ++ "system\n"
             ++ trailingNewline body
         )
   consoleFlush
 
 -- | Show the tool definitions sent with the request in high verbosity as one
 -- concise line per tool. The label follows the turn palette.
-consoleWriteToolDefinitions :: TurnContext -> String -> [String] -> IO ()
-consoleWriteToolDefinitions _ _ [] = pure ()
-consoleWriteToolDefinitions context name summaries = do
+consoleWriteToolDefinitions :: TurnContext -> [String] -> IO ()
+consoleWriteToolDefinitions _ [] = pure ()
+consoleWriteToolDefinitions context summaries = do
   interactive <- consoleIsInteractive
-  let safeName = sanitize name
-      source = sanitizeOutput (intercalate "\n" summaries)
+  let source = sanitizeOutput (intercalate "\n" summaries)
       body
         | interactive = renderedMarkdown source
         | otherwise = source
   if interactive
-    then consoleWrite (toolsPromptText context safeName body)
+    then consoleWrite (toolsPromptText context body)
     else
       consoleWrite
-        ( "tools"
-            ++ (if null safeName then "" else " " ++ safeName)
-            ++ ":\n"
+        ( pathPrefix context
+            ++ "tools\n"
             ++ trailingNewline body
         )
   consoleFlush
@@ -350,13 +347,13 @@ drainChunk :: Int
 drainChunk = 4096
 
 -- | Print the label shown on its own line before shell or tool output.
-printOutputLabel :: OutputKind -> IO ()
+printOutputLabel :: String -> OutputKind -> IO ()
 printOutputLabel = printOutputLabelIn MainContext
 
-printOutputLabelIn :: TurnContext -> OutputKind -> IO ()
-printOutputLabelIn context kind = do
+printOutputLabelIn :: TurnContext -> String -> OutputKind -> IO ()
+printOutputLabelIn context toolPath kind = do
   interactive <- consoleIsInteractive
-  consoleWriteLine (outputLabelTextIn context kind interactive)
+  consoleWriteLine (outputLabelTextIn context toolPath kind interactive)
   consoleFlush
 
 -- | Print streamed output in gray, restoring the terminal afterwards. When

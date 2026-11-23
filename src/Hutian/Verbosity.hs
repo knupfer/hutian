@@ -11,7 +11,7 @@ module Hutian.Verbosity
   , outputBodyVisible
   ) where
 
-import Hutian.Context (TurnContext (..))
+import Hutian.Context (TurnContext (..), isSubagentContext)
 
 -- | How much model activity is shown.
 data Verbosity
@@ -59,7 +59,7 @@ renderMode verbosity context =
     { modeReasoning = reasoningVisibility
     , modeAnswer = answerVisibility
     , modeAnswerStyle =
-        if context == SubagentContext then AnswerDim else AnswerNormal
+        if isSubagentContext context then AnswerDim else AnswerNormal
     , modeToolOutput = toolOutputVisibility
     }
   where
@@ -73,7 +73,7 @@ renderMode verbosity context =
     answerVisibility =
       case verbosity of
         VerbosityLow
-          | context == SubagentContext -> LabelOnly
+          | isSubagentContext context -> LabelOnly
         _ -> Full
     toolOutputVisibility =
       case verbosity of

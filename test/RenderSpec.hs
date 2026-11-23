@@ -17,18 +17,18 @@ tests =
         let prompt = setPromptText "abc" initialPrompt
             (output, position) = promptRenderText ShellPrompt 0 80 prompt
         assertBool "shell label colour matches ask" (boldVibrantPink `isInfixOf` output)
-        assertBool "label text" ("shell:" `isInfixOf` output)
+        assertBool "label text" ("shell" `isInfixOf` output)
         assertBool "default colour resumes after the label" (resetSequence `isInfixOf` output)
-        assertBool "label sits above the input" ("shell:\nabc" `isInfixOf` stripAnsi output)
+        assertBool "label sits above the input" ("shell\nabc" `isInfixOf` stripAnsi output)
         position @?= cursorPosition 80 termLine prompt
         position @?= (1, 3)
     , testCase "llm prompt shows a bold pink ask label on its own line" $ do
         let prompt = setPromptText "hello" initialPrompt
             (output, position) = promptRenderText LlmPrompt 0 80 prompt
-        assertBool "bold pink ask label" ((boldVibrantPink ++ "ask:") `isInfixOf` output)
-        assertBool "no shell label" (not ("shell:" `isInfixOf` output))
-        assertBool "label sits above the input" ("ask:\nhello" `isInfixOf` stripAnsi output)
-        position @?= cursorPosition 80 "ask:\n" prompt
+        assertBool "bold pink ask label" ((boldVibrantPink ++ "ask") `isInfixOf` output)
+        assertBool "no shell label" (not ("shell" `isInfixOf` output))
+        assertBool "label sits above the input" ("ask\nhello" `isInfixOf` stripAnsi output)
+        position @?= cursorPosition 80 "ask\n" prompt
         position @?= (1, 5)
     , testCase "llm prompt highlights markdown while typing" $ do
         let source = "# Heading\nUse **bold** and `code`.\n- item"
@@ -40,7 +40,7 @@ tests =
         assertBool "code style" ("\ESC[38;2;166;227;161m" `isInfixOf` output)
         assertBool "list marker style" ("\ESC[1;38;2;250;179;135m" `isInfixOf` output)
         assertBool "preserves the markdown text" (all (`isInfixOf` stripped) (lines source))
-        position @?= cursorPosition 80 "ask:\n" prompt
+        position @?= cursorPosition 80 "ask\n" prompt
         position @?= (3, 6)
     , testCase "llm prompt highlights fenced code while typing" $ do
         let source = "```\nmain = putStrLn \"hi\"\n```"
@@ -59,14 +59,14 @@ tests =
         assertBool "expected a shell syntax style" ("\ESC[38;2;" `isInfixOf` output)
         assertBool
           "shell input keeps its text below the label"
-          ("shell:\nif true; then echo \"hi\"; fi" `isInfixOf` stripAnsi output)
+          ("shell\nif true; then echo \"hi\"; fi" `isInfixOf` stripAnsi output)
     , testCase "tool prompt highlights shell input" $ do
         let prompt = setPromptText "if true; then echo \"hi\"; fi" initialPrompt
             (output, _) = promptRenderText (ToolPrompt MainContext "shell") 0 80 prompt
         assertBool "expected a shell syntax style" ("\ESC[38;2;" `isInfixOf` output)
         assertBool
           "tool input keeps its text below the label"
-          ("tool shell:\nif true; then echo \"hi\"; fi" `isInfixOf` stripAnsi output)
+          ("shell\nif true; then echo \"hi\"; fi" `isInfixOf` stripAnsi output)
     , testCase "prompt rendering uses no background colors" $ do
         let termPrompt = setPromptText "abc" initialPrompt
             (termOutput, _) = promptRenderText ShellPrompt 0 80 termPrompt
@@ -105,66 +105,67 @@ tests =
     , testCase "tool prompts use the answer teal on its own line" $ do
         let prompt = setPromptText "ls" initialPrompt
             (output, position) = promptRenderText (ToolPrompt MainContext "shell") 0 80 prompt
-        assertBool "teal prefix" ((boldTeal ++ "tool shell:") `isInfixOf` output)
-        assertBool "label text" ("tool shell:" `isInfixOf` output)
-        assertBool "label sits above the command" ("tool shell:\nls" `isInfixOf` stripAnsi output)
+        assertBool "teal prefix" ((boldTeal ++ "shell") `isInfixOf` output)
+        assertBool "label text" ("shell" `isInfixOf` output)
+        assertBool "label sits above the command" ("shell\nls" `isInfixOf` stripAnsi output)
         position @?= cursorPosition 80 toolLine prompt
         position @?= (1, 2)
     , testCase "toolPromptText renders a command with the tool label" $ do
         let output = toolPromptText "shell" 80 "echo hi"
-        assertBool "teal prefix" ((boldTeal ++ "tool shell:") `isInfixOf` output)
-        assertBool "label text" ("tool shell:" `isInfixOf` output)
+        assertBool "teal prefix" ((boldTeal ++ "shell") `isInfixOf` output)
+        assertBool "label text" ("shell" `isInfixOf` output)
         assertBool "command text" ("echo hi" `isInfixOf` stripAnsi output)
-        assertBool "label sits above the command" ("tool shell:\necho hi" `isInfixOf` stripAnsi output)
+        assertBool "label sits above the command" ("shell\necho hi" `isInfixOf` stripAnsi output)
         assertBool "resets colors" (resetSequence `isInfixOf` output)
     , testCase "tool data prompts use JSON syntax highlighting" $ do
         let output =
               toolTextPromptTextIn
                 MainContext
-                "mcp__demo__search"
+                "mcp.demo.search"
                 80
                 "{\"query\":\"haskell\"}"
-        assertBool "teal prefix" ((boldTeal ++ "tool mcp__demo__search:") `isInfixOf` output)
+        assertBool "teal prefix" ((boldTeal ++ "mcp.demo.search") `isInfixOf` output)
         assertBool
           "arguments sit below the label"
-          ("tool mcp__demo__search:\n{\"query\":\"haskell\"}" `isInfixOf` stripAnsi output)
+          ("mcp.demo.search\n{\"query\":\"haskell\"}" `isInfixOf` stripAnsi output)
         assertBool "json syntax style" ("\ESC[38;2;" `isInfixOf` output)
     , testCase "toolLabelText labels commandless tool calls" $
-        toolLabelText "jobs" @?= boldTeal ++ "tool jobs:" ++ reset
+        toolLabelText "jobs" @?= boldTeal ++ "jobs" ++ reset
     , testCase "subagent prompts use blue and show the submitted task" $ do
         let output = subagentPromptText "cheap" 80 "summarize the page"
-        assertBool "blue prefix" ((boldBlue ++ "subagent cheap:") `isInfixOf` output)
+        assertBool "blue prefix" ((boldBlue ++ "cheap") `isInfixOf` output)
         assertBool
           "task sits below the label"
-          ("subagent cheap:\nsummarize the page" `isInfixOf` stripAnsi output)
+          ("cheap\nsummarize the page" `isInfixOf` stripAnsi output)
         let prompt = setPromptText "work" initialPrompt
             (rendered, position) = promptRenderText (SubagentPrompt "cheap") 0 80 prompt
-        assertBool "blue prefix" ((boldBlue ++ "subagent cheap:") `isInfixOf` rendered)
-        assertBool "label sits above the work" ("subagent cheap:\nwork" `isInfixOf` stripAnsi rendered)
-        position @?= cursorPosition 80 "subagent cheap:\n" prompt
+        assertBool "blue prefix" ((boldBlue ++ "cheap") `isInfixOf` rendered)
+        assertBool "label sits above the work" ("cheap\nwork" `isInfixOf` stripAnsi rendered)
+        position @?= cursorPosition 80 "cheap\n" prompt
     , testCase "subagent tool prompts use blue labels with dim inputs" $ do
-        let promptOutput = toolPromptTextIn SubagentContext "shell" 80 "ls"
-        assertBool "dim blue prefix" ((dimBlueForeground ++ "tool shell:") `isInfixOf` promptOutput)
+        let promptOutput = toolPromptTextIn (SubagentContext ["cheap"]) "shell" 80 "ls"
+        assertBool "dim blue prefix" ((dimBlueForeground ++ "cheap.shell") `isInfixOf` promptOutput)
         assertBool "dim input" ((grayForeground ++ "ls" ++ reset) `isInfixOf` promptOutput)
-        assertBool "no teal prefix" (not ((boldTeal ++ "tool shell:") `isInfixOf` promptOutput))
-        toolLabelTextIn SubagentContext "jobs" @?= dimBlueForeground ++ "tool jobs:" ++ reset
-        outputForegroundIn SubagentContext ToolOutput @?= dimBlueForeground
-        outputLabelTextIn SubagentContext ToolOutput True
-          @?= dimBlueForeground ++ "tool output:" ++ reset
+        assertBool "no teal prefix" (not ((boldTeal ++ "cheap.shell") `isInfixOf` promptOutput))
+        toolLabelTextIn (SubagentContext ["cheap"]) "jobs"
+          @?= dimBlueForeground ++ "cheap.jobs" ++ reset
+        outputForegroundIn (SubagentContext ["cheap"]) ToolOutput @?= dimBlueForeground
+        outputLabelTextIn (SubagentContext ["cheap"]) "shell" ToolOutput True
+          @?= dimBlueForeground ++ "cheap.shell.output" ++ reset
     , testCase "subagent MCP tool arguments are dim and highlighted" $ do
         let output =
               toolTextPromptTextIn
-                SubagentContext
-                "mcp__demo__search"
+                (SubagentContext ["cheap"])
+                "mcp.demo.search"
                 80
                 "{\"query\":\"haskell\"}"
         assertBool
           "dim input"
-          ((dimBlueForeground ++ "tool mcp__demo__search:") `isInfixOf` output)
+          ((dimBlueForeground ++ "cheap.mcp.demo.search") `isInfixOf` output)
         assertBool "json syntax style" ("\ESC[38;2;" `isInfixOf` output)
         assertBool
           "subagent output does not keep the teal"
-          (outputForegroundIn SubagentContext ToolOutput /= dimTealForeground)
+          (outputForegroundIn (SubagentContext ["cheap"]) ToolOutput /= dimTealForeground)
     , testCase "toolPromptText resets before the final newline" $ do
         let output = toolPromptText "shell" 80 "echo hi"
             (beforeNewline, afterNewline) = splitLastNewline output
@@ -186,55 +187,61 @@ tests =
     , testCase "output labels are dimmed versions of the mode colours" $ do
         outputForeground TermOutput @?= "\ESC[1;38;2;153;12;88m"
         outputForeground ToolOutput @?= "\ESC[1;38;2;0;153;120m"
-        outputLabelText TermOutput True
-          @?= outputForeground TermOutput ++ "output:" ++ reset
-        outputLabelText ToolOutput True
-          @?= outputForeground ToolOutput ++ "tool output:" ++ reset
+        outputLabelText "shell" TermOutput True
+          @?= outputForeground TermOutput ++ "shell.output" ++ reset
+        outputLabelText "webfetch" ToolOutput True
+          @?= outputForeground ToolOutput ++ "webfetch.output" ++ reset
         assertBool
           "shell and tool labels differ"
           (outputForeground TermOutput /= outputForeground ToolOutput)
     , testCase "output labels are plain when not interactive" $ do
-        outputLabelText TermOutput False @?= "output:"
-        outputLabelText ToolOutput False @?= "tool output:"
+        outputLabelText "shell" TermOutput False @?= "shell.output"
+        outputLabelText "webfetch" ToolOutput False @?= "webfetch.output"
     , testCase "reasoning, answer, and tool labels are dim blue for a subagent" $ do
-        reasoningLabelText MainContext @?= dimTealForeground ++ "think:" ++ reset
-        reasoningLabelText SubagentContext @?= dimBlueForeground ++ "think:" ++ reset
-        answerLabelText MainContext @?= boldTeal ++ "answer:" ++ reset
-        answerLabelText SubagentContext @?= dimBlueForeground ++ "answer:" ++ reset
+        reasoningLabelText MainContext @?= dimTealForeground ++ "think" ++ reset
+        reasoningLabelText (SubagentContext ["cheap"])
+          @?= dimBlueForeground ++ "cheap.think" ++ reset
+        answerLabelText MainContext @?= boldTeal ++ "answer" ++ reset
+        answerLabelText (SubagentContext ["cheap"])
+          @?= dimBlueForeground ++ "cheap.answer" ++ reset
+        reasoningLabelText (SubagentContext ["foo", "bar"])
+          @?= dimBlueForeground ++ "foo.bar.think" ++ reset
+        answerLabelText (SubagentContext ["foo", "bar"])
+          @?= dimBlueForeground ++ "foo.bar.answer" ++ reset
     , testCase "system prompts use the turn palette and keep the text" $ do
-        let mainOutput = systemPromptText MainContext "" "system rules\n"
+        let mainOutput = systemPromptText MainContext "system rules\n"
             subagentOutput =
-              systemPromptText SubagentContext "cheap" "subagent rules\n"
+              systemPromptText (SubagentContext ["cheap"]) "subagent rules\n"
         assertBool
           "dim teal main label"
-          ((dimTealForeground ++ "system:" ++ reset) `isInfixOf` mainOutput)
+          ((dimTealForeground ++ "system" ++ reset) `isInfixOf` mainOutput)
         assertBool
           "dim blue subagent label"
-          ((dimBlueForeground ++ "system cheap:" ++ reset) `isInfixOf` subagentOutput)
+          ((dimBlueForeground ++ "cheap.system" ++ reset) `isInfixOf` subagentOutput)
         assertBool
           "dim main text"
           ((grayForeground ++ "system rules\n" ++ reset) `isInfixOf` mainOutput)
         assertBool
           "dim subagent text"
           ((grayForeground ++ "subagent rules\n" ++ reset) `isInfixOf` subagentOutput)
-        systemPromptText MainContext "" "" @?= ""
+        systemPromptText MainContext "" @?= ""
     , testCase "tool definitions use the turn palette and keep the JSON" $ do
-        let mainOutput = toolsPromptText MainContext "" "[\n  {\"name\": \"shell\"}\n]\n"
+        let mainOutput = toolsPromptText MainContext "[\n  {\"name\": \"shell\"}\n]\n"
             subagentOutput =
-              toolsPromptText SubagentContext "cheap" "[]\n"
+              toolsPromptText (SubagentContext ["cheap"]) "[]\n"
         assertBool
           "dim teal main label"
-          ((dimTealForeground ++ "tools:" ++ reset) `isInfixOf` mainOutput)
+          ((dimTealForeground ++ "tools" ++ reset) `isInfixOf` mainOutput)
         assertBool
           "dim blue subagent label"
-          ((dimBlueForeground ++ "tools cheap:" ++ reset) `isInfixOf` subagentOutput)
+          ((dimBlueForeground ++ "cheap.tools" ++ reset) `isInfixOf` subagentOutput)
         assertBool
           "dim main JSON"
           ((grayForeground ++ "[\n  {\"name\": \"shell\"}\n]\n" ++ reset) `isInfixOf` mainOutput)
         assertBool
           "dim subagent JSON"
           ((grayForeground ++ "[]\n" ++ reset) `isInfixOf` subagentOutput)
-        toolsPromptText MainContext "" "" @?= ""
+        toolsPromptText MainContext "" @?= ""
     , testCase "grayOutputText wraps terminal output and resets" $
         grayOutputText True "hello"
           @?= grayForeground ++ "hello" ++ reset
@@ -274,10 +281,10 @@ tests =
     ]
 
 termLine :: String
-termLine = "shell:\n"
+termLine = "shell\n"
 
 toolLine :: String
-toolLine = "tool shell:\n"
+toolLine = "shell\n"
 
 resetSequence :: String
 resetSequence = "\ESC[0m"
