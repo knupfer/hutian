@@ -40,7 +40,7 @@ import Hutian.Tool.Catalog
   , McpSessionId (..)
   , McpTool (..)
   )
-import Hutian.Tool.Config (McpServerConfig (..), ResultConfigs (..))
+import Hutian.Tool.Config (HandlerConfigs (..), McpServerConfig (..))
 import Network.HTTP.Client
   ( Manager
   , Request (..)
@@ -89,7 +89,7 @@ discoverServer report config
                   reportFailure failure
                   pure (McpServer config [] (session' `orElse` session))
                 Right tools -> do
-                  reportUnknownResultTools report config tools
+                  reportUnknownHandlers report config tools
                   pure (McpServer config tools (session' `orElse` session))
   where
     reportFailure failure =
@@ -98,11 +98,11 @@ discoverServer report config
 emptyServer :: McpServerConfig -> McpServer
 emptyServer config = McpServer config [] Nothing
 
--- | Report result-handler keys that do not match a tool discovered on the
--- server. The handler stays in the configuration but never runs.
-reportUnknownResultTools :: (String -> IO ()) -> McpServerConfig -> [McpTool] -> IO ()
-reportUnknownResultTools report config tools =
-  mapM_ reportMissing (unResultConfigs (mcpResults config))
+-- | Report handler keys that do not match a tool discovered on the server.
+-- The handler stays in the configuration but never runs.
+reportUnknownHandlers :: (String -> IO ()) -> McpServerConfig -> [McpTool] -> IO ()
+reportUnknownHandlers report config tools =
+  mapM_ reportMissing (unHandlerConfigs (mcpHandlers config))
   where
     known = map mcpToolName tools
     reportMissing (name, _)
@@ -111,7 +111,7 @@ reportUnknownResultTools report config tools =
           report
             ( "mcp "
                 ++ mcpServerName config
-                ++ ": results."
+                ++ ": handlers."
                 ++ name
                 ++ " is configured but the server has no tool named "
                 ++ show name

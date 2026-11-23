@@ -373,7 +373,7 @@ tools = {
     url = "http://localhost:3001";
     policy = "allow";
 
-    results.zim_get = {
+    handlers.zim_get = {
       model = "tiny";
       description = "Summarize the article; preserve paths and citations.";
       systemPrompt = ''
@@ -393,22 +393,22 @@ tools = {
 
 The value has the same shape as a subagent: `model`, `description`,
 `systemPrompt`, and `tools`. It has no `name`; the terminal label is derived as
-`mcp.<server>.results.<tool>`, for example `mcp.szmcp.results.zim_get`.
+`mcp.<server>.handlers.<tool>`, for example `mcp.szmcp.handlers.zim_get`.
 
 The handler is automatic. When the agent calls `mcp__szmcp__zim_get`, shown as
 `mcp.szmcp.zim_get`, the raw article goes to the handler, and only the handler's
 answer is appended as the tool result. Because the raw result is the handler's
 input, there is no separate `mcp.szmcp.zim_get.output` block: the result is the
 body of the handler's prompt, shown under its label, for example
-`mcp.szmcp.results.zim_get`. That block looks like tool output: the label is
+`mcp.szmcp.handlers.zim_get`. That block looks like tool output: the label is
 dim, the prompt body is gray, and the body follows tool-output visibility, so
 low verbosity hides it. The handler's `tools` are real tools: it
 can search, fetch, run commands, or call its own subagents. Its MCP tool results
-can have their own `results` handlers; it never inherits the caller's handlers.
+can have their own `handlers`; it never inherits the caller's handlers.
 The handler's prompts use its dotted path: reasoning is
-`mcp.szmcp.results.zim_get.think`, the answer is
-`mcp.szmcp.results.zim_get.answer`, and its tools are
-`mcp.szmcp.results.zim_get.<tool>`.
+`mcp.szmcp.handlers.zim_get.think`, the answer is
+`mcp.szmcp.handlers.zim_get.answer`, and its tools are
+`mcp.szmcp.handlers.zim_get.<tool>`.
 
 The handler's `description` is appended to the tool description so the caller
 knows the result is processed:
@@ -416,12 +416,12 @@ knows the result is processed:
 ```text
 <original tool description>
 
-Results from this tool are processed by the `mcp.szmcp.results.zim_get`
+Results from this tool are processed by the `mcp.szmcp.handlers.zim_get`
 subagent:
 Summarize the article; preserve paths and citations.
 ```
 
-Use `tools.mcp.<server>.results.<tool>` for a concrete MCP tool, keyed by the
+Use `tools.mcp.<server>.handlers.<tool>` for a concrete MCP tool, keyed by the
 server's local tool name. Built-in tools return their results directly. The
 map applies only to successful results; errors are returned directly. If the
 server does not expose `<tool>`, Hutian reports the unknown handler after
@@ -808,7 +808,7 @@ src/Hutian/Shell.hs             Captured shell command execution
 src/Hutian/Terminal.hs          Prompt driver over Prompt and Console
 src/Hutian/Tool.hs              Pure tool schemas, decoding, and planning
 src/Hutian/Tool/Catalog.hs      Runtime tool catalog and MCP state
-src/Hutian/Tool/Config.hs       Tool policies, subagents, MCP, results config
+src/Hutian/Tool/Config.hs       Tool policies, subagents, MCP, handlers config
 src/Hutian/Tool/Exec.hs         Execution of tool-call plans and result handlers
 src/Hutian/Verbosity.hs         Pure output-visibility decisions
 src/Hutian/Web.hs               Bounded HTTP fetches

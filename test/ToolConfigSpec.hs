@@ -6,9 +6,9 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Config
-  ( McpServerConfig (..)
-  , ResultConfig (..)
-  , ResultConfigs (..)
+  ( HandlerConfig (..)
+  , HandlerConfigs (..)
+  , McpServerConfig (..)
   , SubagentConfig (..)
   , ToolConfig (..)
   , defaultToolConfig
@@ -95,47 +95,47 @@ tests =
                       { mcpServerName = "demo"
                       , mcpServerUrl = "https://mcp.example.test/mcp"
                       , mcpServerPolicy = ToolAllow
-                      , mcpResults = ResultConfigs []
+                      , mcpHandlers = HandlerConfigs []
                       }
                   ]
               }
     , testCase "MCP result handlers can have their own MCP result handlers" $
-        let nestedResult =
-              ResultConfig
-                { resultModel = "nested"
-                , resultDescription = "Nested summary."
-                , resultSystemPrompt = "Summarize."
-                , resultTools = defaultToolConfig
+        let nestedHandler =
+              HandlerConfig
+                { handlerModel = "nested"
+                , handlerDescription = "Nested summary."
+                , handlerSystemPrompt = "Summarize."
+                , handlerTools = defaultToolConfig
                 }
             innerServer =
               McpServerConfig
                 { mcpServerName = "inner"
                 , mcpServerUrl = "https://inner.example.test/mcp"
                 , mcpServerPolicy = ToolAllow
-                , mcpResults = ResultConfigs [("fetch", nestedResult)]
+                , mcpHandlers = HandlerConfigs [("fetch", nestedHandler)]
                 }
-            outerResult =
-              ResultConfig
-                { resultModel = "cheap"
-                , resultDescription = "Summarize search results."
-                , resultSystemPrompt = "Summarize."
-                , resultTools = defaultToolConfig {toolMcp = [innerServer]}
+            outerHandler =
+              HandlerConfig
+                { handlerModel = "cheap"
+                , handlerDescription = "Summarize search results."
+                , handlerSystemPrompt = "Summarize."
+                , handlerTools = defaultToolConfig {toolMcp = [innerServer]}
                 }
             innerJson =
               object
                 [ "url" .= ("https://inner.example.test/mcp" :: String)
                 , "policy" .= String "allow"
-                , "results"
+                , "handlers"
                     .= object
                       [ "fetch"
-                          .= resultValue
+                          .= handlerValue
                             "nested"
                             "Nested summary."
                             (toolsValue (String "deny") (String "deny") (object []))
                       ]
                 ]
             outerJson =
-              resultValue
+              handlerValue
                 "cheap"
                 "Summarize search results."
                 ( toolsObject
@@ -150,7 +150,7 @@ tests =
                     .= object
                       [ "url" .= ("https://mcp.example.test/mcp" :: String)
                       , "policy" .= String "allow"
-                      , "results" .= object ["search" .= outerJson]
+                      , "handlers" .= object ["search" .= outerJson]
                       ]
                 ]
          in decodeConfig (toolsObject (String "deny") (String "deny") (object []) mcpJson)
@@ -161,17 +161,17 @@ tests =
                           { mcpServerName = "demo"
                           , mcpServerUrl = "https://mcp.example.test/mcp"
                           , mcpServerPolicy = ToolAllow
-                          , mcpResults = ResultConfigs [("search", outerResult)]
+                          , mcpHandlers = HandlerConfigs [("search", outerHandler)]
                           }
                       ]
                   }
     , testCase "MCP server result handlers are decoded" $
-        let resultConfig =
-              ResultConfig
-                { resultModel = "cheap"
-                , resultDescription = "Summarize search results."
-                , resultSystemPrompt = "Summarize."
-                , resultTools = defaultToolConfig
+        let handlerConfig =
+              HandlerConfig
+                { handlerModel = "cheap"
+                , handlerDescription = "Summarize search results."
+                , handlerSystemPrompt = "Summarize."
+                , handlerTools = defaultToolConfig
                 }
             mcpJson =
               object
@@ -179,10 +179,10 @@ tests =
                     .= object
                       [ "url" .= ("https://mcp.example.test/mcp" :: String)
                       , "policy" .= String "allow"
-                      , "results"
+                      , "handlers"
                           .= object
                             [ "search"
-                                .= resultValue
+                                .= handlerValue
                                   "cheap"
                                   "Summarize search results."
                                   (toolsValue (String "deny") (String "deny") (object []))
@@ -197,7 +197,7 @@ tests =
                           { mcpServerName = "demo"
                           , mcpServerUrl = "https://mcp.example.test/mcp"
                           , mcpServerPolicy = ToolAllow
-                          , mcpResults = ResultConfigs [("search", resultConfig)]
+                          , mcpHandlers = HandlerConfigs [("search", handlerConfig)]
                           }
                       ]
                   }
@@ -249,14 +249,14 @@ tests =
                         { mcpServerName = "demo"
                         , mcpServerUrl = "https://mcp.example.test/mcp"
                         , mcpServerPolicy = ToolAsk
-                        , mcpResults =
-                            ResultConfigs
+                        , mcpHandlers =
+                            HandlerConfigs
                               [ ( "search"
-                                , ResultConfig
-                                    { resultModel = "cheap"
-                                    , resultDescription = "Summarize search."
-                                    , resultSystemPrompt = "Summarize."
-                                    , resultTools = defaultToolConfig
+                                , HandlerConfig
+                                    { handlerModel = "cheap"
+                                    , handlerDescription = "Summarize search."
+                                    , handlerSystemPrompt = "Summarize."
+                                    , handlerTools = defaultToolConfig
                                     }
                                 )
                               ]
@@ -285,8 +285,8 @@ toolsObject shell webfetch subagent mcp =
     , "mcp" .= mcp
     ]
 
-resultValue :: String -> String -> Value -> Value
-resultValue model description tools =
+handlerValue :: String -> String -> Value -> Value
+handlerValue model description tools =
   object
     [ "model" .= model
     , "description" .= description

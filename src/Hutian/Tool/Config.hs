@@ -11,8 +11,8 @@ module Hutian.Tool.Config
   ( ToolConfig (..)
   , SubagentConfig (..)
   , SubagentConfigs (..)
-  , ResultConfig (..)
-  , ResultConfigs (..)
+  , HandlerConfig (..)
+  , HandlerConfigs (..)
   , McpServerConfig (..)
   , defaultToolConfig
   ) where
@@ -59,18 +59,18 @@ newtype SubagentConfigs = SubagentConfigs
 -- | A tool-result handler. It has the same settings as a subagent but no
 -- selector name: the tool name and the launcher derive its label. Only
 -- concrete MCP tools can attach a handler.
-data ResultConfig = ResultConfig
-  { resultModel :: String
-  , resultDescription :: String
-  , resultSystemPrompt :: String
-  , resultTools :: ToolConfig
+data HandlerConfig = HandlerConfig
+  { handlerModel :: String
+  , handlerDescription :: String
+  , handlerSystemPrompt :: String
+  , handlerTools :: ToolConfig
   }
   deriving stock (Eq, Show)
 
 -- | The tool-keyed result-handler document. A handler may have its own
 -- handlers nested in its tools; the parent handler is never inherited.
-newtype ResultConfigs = ResultConfigs
-  { unResultConfigs :: [(String, ResultConfig)]
+newtype HandlerConfigs = HandlerConfigs
+  { unHandlerConfigs :: [(String, HandlerConfig)]
   }
   deriving stock (Eq, Show)
 
@@ -80,7 +80,7 @@ data McpServerConfig = McpServerConfig
   { mcpServerName :: String
   , mcpServerUrl :: String
   , mcpServerPolicy :: ToolPolicy
-  , mcpResults :: ResultConfigs
+  , mcpHandlers :: HandlerConfigs
   }
   deriving stock (Eq, Show)
 
@@ -150,16 +150,16 @@ instance FromJSON SubagentConfigs where
     SubagentConfigs . sortOn subagentName
       <$> traverse (uncurry parseSubagent) (KeyMap.toList agents)
 
-instance ToJSON ResultConfig where
+instance ToJSON HandlerConfig where
   toJSON config =
     object
-      [ "model" .= resultModel config
-      , "description" .= resultDescription config
-      , "systemPrompt" .= resultSystemPrompt config
-      , "tools" .= resultTools config
+      [ "model" .= handlerModel config
+      , "description" .= handlerDescription config
+      , "systemPrompt" .= handlerSystemPrompt config
+      , "tools" .= handlerTools config
       ]
 
-instance FromJSON ResultConfig where
+instance FromJSON HandlerConfig where
   parseJSON = withObject "result handler" $ \values -> do
     model <-
       values .: "model"
@@ -170,23 +170,23 @@ instance FromJSON ResultConfig where
     systemPrompt <- values .: "systemPrompt"
     tools <- values .:? "tools" .!= defaultToolConfig
     pure
-      ResultConfig
-        { resultModel = Text.unpack model
-        , resultDescription = Text.unpack description
-        , resultSystemPrompt = Text.unpack systemPrompt
-        , resultTools = tools
+      HandlerConfig
+        { handlerModel = Text.unpack model
+        , handlerDescription = Text.unpack description
+        , handlerSystemPrompt = Text.unpack systemPrompt
+        , handlerTools = tools
         }
 
-instance ToJSON ResultConfigs where
-  toJSON = resultsObject . unResultConfigs
+instance ToJSON HandlerConfigs where
+  toJSON = handlersObject . unHandlerConfigs
 
-instance FromJSON ResultConfigs where
-  parseJSON = withObject "results" $ \results ->
-    ResultConfigs . sortOn fst
-      <$> traverse parseEntry (KeyMap.toList results)
+instance FromJSON HandlerConfigs where
+  parseJSON = withObject "handlers" $ \handlers ->
+    HandlerConfigs . sortOn fst
+      <$> traverse parseEntry (KeyMap.toList handlers)
     where
       parseEntry (key, value) = do
-        name <- requireName "result tool" key
+        name <- requireName "handler tool" key
         config <- parseJSON value
         pure (name, config)
 
@@ -195,7 +195,7 @@ instance ToJSON McpServerConfig where
     object
       [ "url" .= mcpServerUrl config
       , "policy" .= mcpServerPolicy config
-      , "results" .= mcpResults config
+      , "handlers" .= mcpHandlers config
       ]
 
 instance ToJSON McpServers where
@@ -220,21 +220,21 @@ parseMcpServer nameKey = withObject "mcp server" $ \values -> do
   name <- requireName "MCP server" nameKey
   url <- values .: "url" >>= requireNonEmpty ("MCP server " ++ name ++ " URL")
   policy <- values .:? "policy" .!= ToolAsk
-  results <- values .:? "results" .!= ResultConfigs []
+  handlers <- values .:? "handlers" .!= HandlerConfigs []
   pure
     McpServerConfig
       { mcpServerName = name
       , mcpServerUrl = Text.unpack url
       , mcpServerPolicy = policy
-      , mcpResults = results
+      , mcpHandlers = handlers
       }
 
-resultsObject :: [(String, ResultConfig)] -> Value
-resultsObject results =
+handlersObject :: [(String, HandlerConfig)] -> Value
+handlersObject handlers =
   Object
     ( KeyMap.fromList
         [ (AesonKey.fromString name, toJSON config)
-        | (name, config) <- results
+        | (name, config) <- handlers
         ]
     )
 

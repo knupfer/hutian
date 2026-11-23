@@ -13,7 +13,7 @@ import Hutian.Console
   , consoleIsInteractive
   , consoleWrite
   , consoleWriteErrorLine
-  , consoleWriteResultPromptIn
+  , consoleWriteHandlerPromptIn
   , consoleWriteSubagentPrompt
   , consoleWriteSystemPrompt
   , consoleWriteToolDefinitions
@@ -61,7 +61,7 @@ import Hutian.Llm
   )
 import Hutian.Llm.Loop (LlmLoop (..), runToolLoopWithResult)
 import Hutian.Mcp (discoverMcpServers)
-import Hutian.Mcp.Protocol (mcpResultAgentName, mcpToolDisplayName)
+import Hutian.Mcp.Protocol (mcpHandlerName, mcpToolDisplayName)
 import Hutian.Render (OutputKind (..), TurnContext (..))
 import Hutian.Session
   ( Session (..)
@@ -76,7 +76,7 @@ import Hutian.Shell
 import Hutian.Terminal (promptForInput)
 import Hutian.Tool (toolDefinitionsFor)
 import Hutian.Tool.Catalog (ToolCatalog (..), toolCatalog)
-import Hutian.Tool.Config (ResultConfig (..), SubagentConfig (..), ToolConfig (..))
+import Hutian.Tool.Config (HandlerConfig (..), SubagentConfig (..), ToolConfig (..))
 import Hutian.Tool.Exec (ToolRuntime (..), runToolCallsWith)
 import Hutian.Tool.Summary (toolSummaryLines)
 import Hutian.Verbosity
@@ -225,15 +225,15 @@ toolRuntime context verbosity workingDirectory jobs settings interruptFlag =
     , toolRuntimeVerbosity = verbosity
     , toolRuntimeSubagent =
         runSubagent context workingDirectory jobs settings interruptFlag
-    , toolRuntimeResult =
-        runResultAgent context workingDirectory jobs settings interruptFlag
+    , toolRuntimeHandler =
+        runResultHandler context workingDirectory jobs settings interruptFlag
     }
 
 -- | How an agent's prompt is announced. Result handlers use tool-output
 -- styling and visibility because their prompt is the raw tool result.
 data PromptPresentation
   = SubagentPromptPresentation
-  | ResultPromptPresentation Bool
+  | HandlerPromptPresentation Bool
 
 runSubagent
   :: TurnContext
@@ -249,7 +249,7 @@ runSubagent = runAgent SubagentPromptPresentation
 -- | Run a tool-result handler. The handler gets the raw result as its prompt,
 -- but only its final answer is returned. Its own tool results use its own
 -- handlers, never the caller's.
-runResultAgent
+runResultHandler
   :: TurnContext
   -> FilePath
   -> JobRuntime
@@ -258,23 +258,23 @@ runResultAgent
   -> String
   -> String
   -> ToolCall
-  -> ResultConfig
+  -> HandlerConfig
   -> String
   -> IO (Either String String)
-runResultAgent context workingDirectory jobs settings interruptFlag serverName localName call config raw =
+runResultHandler context workingDirectory jobs settings interruptFlag serverName localName call config raw =
   runAgent
-    (ResultPromptPresentation displayedOutput)
+    (HandlerPromptPresentation displayedOutput)
     context
     workingDirectory
     jobs
     settings
     interruptFlag
     SubagentConfig
-      { subagentName = mcpResultAgentName serverName localName
-      , subagentModel = resultModel config
-      , subagentDescription = resultDescription config
-      , subagentSystemPrompt = resultSystemPrompt config
-      , subagentTools = resultTools config
+      { subagentName = mcpHandlerName serverName localName
+      , subagentModel = handlerModel config
+      , subagentDescription = handlerDescription config
+      , subagentSystemPrompt = handlerSystemPrompt config
+      , subagentTools = handlerTools config
       }
     ( "Tool: "
         ++ mcpToolDisplayName serverName localName
@@ -330,8 +330,8 @@ runAgent presentation parent workingDirectory jobs settings interruptFlag agent 
   case presentation of
     SubagentPromptPresentation ->
       consoleWriteSubagentPrompt childLabel prompt
-    ResultPromptPresentation showBody ->
-      consoleWriteResultPromptIn parent childLabel showBody prompt
+    HandlerPromptPresentation showBody ->
+      consoleWriteHandlerPromptIn parent childLabel showBody prompt
   (_, finalResult) <-
     runModelTurn
       interruptFlag

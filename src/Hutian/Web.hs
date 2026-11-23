@@ -70,7 +70,7 @@ fetchUrl url = do
             initialRequest
               { method = "GET"
               , requestHeaders =
-                  [ ("User-Agent", "hutian/0.9")
+                  [ ("User-Agent", "hutian/0.10")
                   , ("Accept", "*/*")
                   ]
               , responseTimeout = responseTimeoutMicro webTimeoutMicros

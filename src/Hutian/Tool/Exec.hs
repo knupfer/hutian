@@ -74,9 +74,9 @@ import Hutian.Tool
   )
 import Hutian.Tool.Catalog (McpServer (..), McpTool (..), ToolCatalog)
 import Hutian.Tool.Config
-  ( McpServerConfig (..)
-  , ResultConfig (..)
-  , ResultConfigs (..)
+  ( HandlerConfig (..)
+  , HandlerConfigs (..)
+  , McpServerConfig (..)
   , SubagentConfig (..)
   )
 import Hutian.Web (fetchResultText, fetchUrl)
@@ -97,7 +97,7 @@ data ToolRuntime = ToolRuntime
   , toolRuntimeContext :: TurnContext
   , toolRuntimeVerbosity :: Verbosity
   , toolRuntimeSubagent :: SubagentConfig -> String -> IO (Either String String)
-  , toolRuntimeResult :: String -> String -> ToolCall -> ResultConfig -> String -> IO (Either String String)
+  , toolRuntimeHandler :: String -> String -> ToolCall -> HandlerConfig -> String -> IO (Either String String)
   }
 
 -- | Run each requested call in order with a shell-only policy. This preserves
@@ -113,7 +113,7 @@ runToolCalls jobs workingDirectory policy =
       , toolRuntimeVerbosity = VerbosityHigh
       , toolRuntimeSubagent = \_ _ ->
           pure (Left "tool error: the model subagent tool is disabled")
-      , toolRuntimeResult = \_ _ _ _ _ ->
+      , toolRuntimeHandler = \_ _ _ _ _ ->
           pure (Left "tool error: the model result handler is disabled")
       }
 
@@ -124,8 +124,8 @@ runToolCallsWith :: ToolRuntime -> ToolCatalog -> Conversation -> [ToolCall] -> 
 runToolCallsWith runtime catalog =
   runToolCallsPlanned (planToolWith catalog) runtime
 
-lookupResultConfig :: ResultConfigs -> String -> Maybe ResultConfig
-lookupResultConfig (ResultConfigs results) name = lookup name results
+lookupHandlerConfig :: HandlerConfigs -> String -> Maybe HandlerConfig
+lookupHandlerConfig (HandlerConfigs handlers) name = lookup name handlers
 
 runToolCallsPlanned
   :: (ToolCall -> ToolPlan)
@@ -205,13 +205,13 @@ runToolCall planner runtime conversation call =
     finishRaw raw =
       pure (False, appendToolResult (toolCallId call) raw conversation)
 
-    finishResult resultConfig serverName toolName raw =
-      case resultConfig of
+    finishResult handlerConfig serverName toolName raw =
+      case handlerConfig of
         Nothing -> finishRaw raw
         Just config -> do
           result <-
             withSubagentCursor
-              (toolRuntimeResult runtime serverName toolName call config raw)
+              (toolRuntimeHandler runtime serverName toolName call config raw)
           case result of
             Left message -> finishError message
             Right answer ->
@@ -286,19 +286,19 @@ runToolCall planner runtime conversation call =
       let localName = mcpToolName tool
           serverName = mcpServerName (mcpServerConfig server)
           displayName = mcpToolDisplayName serverName localName
-          resultConfig =
-            lookupResultConfig (mcpResults (mcpServerConfig server)) localName
+          handlerConfig =
+            lookupHandlerConfig (mcpHandlers (mcpServerConfig server)) localName
       result <- callMcpTool server tool arguments
       case result of
         Left failure -> finishError (mcpErrorText failure)
         Right text -> do
           let formatted = trailingNewline text
-          case resultConfig of
+          case handlerConfig of
             Nothing -> do
               printOutputLabelIn context displayName ToolOutput
               when showOutputBody (displayToolText formatted)
             Just _ -> pure ()
-          finishResult resultConfig serverName localName formatted
+          finishResult handlerConfig serverName localName formatted
 
 -- | Run a command the model is already allowed to execute. The caller is
 -- responsible for showing the command first. Returns the captured output.

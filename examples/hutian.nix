@@ -74,8 +74,8 @@
       #     # Route a concrete MCP tool result through a subagent configuration.
       #     # The handler gets the raw result and returns only its answer. Its
       #     # description is appended to the tool description; the terminal
-      #     # label is `mcp.<server>.results.<tool>`.
-      #     results.search = {
+      #     # label is `mcp.<server>.handlers.<tool>`.
+      #     handlers.search = {
       #       model = "cheap-summarizer";
       #       description = "Summarize search results; preserve facts and links.";
       #       systemPrompt = "You summarize tool output for another LLM. Be terse.";

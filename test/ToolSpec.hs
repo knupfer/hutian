@@ -32,9 +32,9 @@ import Hutian.Tool.Catalog
   , toolCatalog
   )
 import Hutian.Tool.Config
-  ( McpServerConfig (..)
-  , ResultConfig (..)
-  , ResultConfigs (..)
+  ( HandlerConfig (..)
+  , HandlerConfigs (..)
+  , McpServerConfig (..)
   , SubagentConfig (..)
   , ToolConfig (..)
   , defaultToolConfig
@@ -287,7 +287,7 @@ tests =
                       , toolRuntimeContext = MainContext
                       , toolRuntimeVerbosity = VerbosityNormal
                       , toolRuntimeSubagent = \_ _ -> pure (Right "final answer\n")
-                      , toolRuntimeResult = \_ _ _ _ _ -> pure (Left "not configured")
+                      , toolRuntimeHandler = \_ _ _ _ _ -> pure (Left "not configured")
                       }
                   catalog =
                     toolCatalog
@@ -304,16 +304,16 @@ tests =
                 "the subagent is not shown as a generic tool call"
                 (not ("subagent" `isInfixOf` plain))
     , testCase "result handler descriptions are appended to MCP tool definitions" $ do
-        let resultConfig =
-              ResultConfig
-                { resultModel = "cheap"
-                , resultDescription = "Summarize the search results."
-                , resultSystemPrompt = "Summarize."
-                , resultTools = defaultToolConfig
+        let handlerConfig =
+              HandlerConfig
+                { handlerModel = "cheap"
+                , handlerDescription = "Summarize the search results."
+                , handlerSystemPrompt = "Summarize."
+                , handlerTools = defaultToolConfig
                 }
             serverConfig =
               demoServerConfig
-                { mcpResults = ResultConfigs [("search", resultConfig)]
+                { mcpHandlers = HandlerConfigs [("search", handlerConfig)]
                 }
             catalog =
               ToolCatalog
@@ -321,7 +321,7 @@ tests =
                 [demoServer {mcpServerConfig = serverConfig}]
             definitions =
               LBS8.unpack (Aeson.encode (toolDefinitionsFor catalog))
-        assertBool "handler label" ("mcp.demo.results.search" `isInfixOf` definitions)
+        assertBool "handler label" ("mcp.demo.handlers.search" `isInfixOf` definitions)
         assertBool
           "handler description"
           ("Summarize the search results." `isInfixOf` definitions)
@@ -352,7 +352,7 @@ demoServerConfig =
     { mcpServerName = "demo"
     , mcpServerUrl = "https://mcp.example.test/mcp"
     , mcpServerPolicy = ToolAllow
-    , mcpResults = ResultConfigs []
+    , mcpHandlers = HandlerConfigs []
     }
 
 demoServer :: McpServer

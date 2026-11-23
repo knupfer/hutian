@@ -30,9 +30,9 @@ import Hutian.Tool.Catalog
   , ToolCatalog (..)
   )
 import Hutian.Tool.Config
-  ( McpServerConfig (..)
-  , ResultConfig (..)
-  , ResultConfigs (..)
+  ( HandlerConfig (..)
+  , HandlerConfigs (..)
+  , McpServerConfig (..)
   , ToolConfig (..)
   , defaultToolConfig
   )
@@ -71,7 +71,7 @@ tests =
                   { mcpServerName = "demo"
                   , mcpServerUrl = "http://127.0.0.1:" ++ show port ++ "/mcp"
                   , mcpServerPolicy = ToolAllow
-                  , mcpResults = ResultConfigs []
+                  , mcpHandlers = HandlerConfigs []
                   }
               config = defaultToolConfig {toolMcp = [server]}
           logs <- newIORef []
@@ -115,18 +115,18 @@ tests =
     , testCase "result handlers for unknown MCP tools are reported" $
         withMcpUpstream $ \port _ -> do
           let handler =
-                ResultConfig
-                  { resultModel = "unused"
-                  , resultDescription = "unused"
-                  , resultSystemPrompt = "unused"
-                  , resultTools = defaultToolConfig
+                HandlerConfig
+                  { handlerModel = "unused"
+                  , handlerDescription = "unused"
+                  , handlerSystemPrompt = "unused"
+                  , handlerTools = defaultToolConfig
                   }
               server =
                 McpServerConfig
                   { mcpServerName = "demo"
                   , mcpServerUrl = "http://127.0.0.1:" ++ show port ++ "/mcp"
                   , mcpServerPolicy = ToolAllow
-                  , mcpResults = ResultConfigs [("missing", handler)]
+                  , mcpHandlers = HandlerConfigs [("missing", handler)]
                   }
           logs <- newIORef []
           servers <-
@@ -138,7 +138,7 @@ tests =
             "unknown result tool is reported"
             ( any
                 (\message ->
-                   "results.missing" `isInfixOf` message
+                   "handlers.missing" `isInfixOf` message
                      && "no tool" `isInfixOf` message
                 )
                 messages
@@ -149,18 +149,18 @@ tests =
           withTemporaryDirectory "hutian-mcp-result" $ \directory ->
             withJobRuntime directory directory $ \jobs -> do
               let handler =
-                    ResultConfig
-                      { resultModel = "unused"
-                      , resultDescription = "unused"
-                      , resultSystemPrompt = "unused"
-                      , resultTools = defaultToolConfig
+                    HandlerConfig
+                      { handlerModel = "unused"
+                      , handlerDescription = "unused"
+                      , handlerSystemPrompt = "unused"
+                      , handlerTools = defaultToolConfig
                       }
                   server =
                     McpServerConfig
                       { mcpServerName = "demo"
                       , mcpServerUrl = "http://127.0.0.1:" ++ show port ++ "/mcp"
                       , mcpServerPolicy = ToolAllow
-                      , mcpResults = ResultConfigs [("search", handler)]
+                      , mcpHandlers = HandlerConfigs [("search", handler)]
                       }
               discovered <- discoverMcpServers (\_ -> pure ()) [server]
               received <- newIORef Nothing
@@ -172,7 +172,7 @@ tests =
                         , toolRuntimeContext = MainContext
                         , toolRuntimeVerbosity = VerbosityNormal
                         , toolRuntimeSubagent = \_ _ -> pure (Left "not configured")
-                        , toolRuntimeResult =
+                        , toolRuntimeHandler =
                             \_ _ _ _ raw -> do
                               writeIORef received (Just raw)
                               pure (Right "handled\n")
@@ -206,7 +206,7 @@ tests =
                 { mcpServerName = "denied"
                 , mcpServerUrl = "http://127.0.0.1:1/mcp"
                 , mcpServerPolicy = ToolDeny
-                , mcpResults = ResultConfigs []
+                , mcpHandlers = HandlerConfigs []
                 }
         logs <- newIORef []
         discovered <-

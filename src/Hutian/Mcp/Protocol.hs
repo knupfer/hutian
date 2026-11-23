@@ -11,7 +11,7 @@ module Hutian.Mcp.Protocol
   , mcpCallToolRequest
   , mcpToolFunctionName
   , mcpToolDisplayName
-  , mcpResultAgentName
+  , mcpHandlerName
    , mcpToolDefinition
   , McpError (..)
   , mcpErrorText
@@ -68,7 +68,7 @@ mcpInitializeRequest identifier =
           , "clientInfo"
               .= object
                 [ "name" .= ("hutian" :: String)
-                , "version" .= ("0.9" :: String)
+                , "version" .= ("0.10" :: String)
                 ]
           ]
     ]
@@ -114,9 +114,9 @@ mcpToolDisplayName serverName toolName =
   "mcp." ++ sanitizeName serverName ++ "." ++ sanitizeName toolName
 
 -- | The path of the result handler for one concrete MCP tool.
-mcpResultAgentName :: String -> String -> String
-mcpResultAgentName serverName toolName =
-  "mcp." ++ sanitizeName serverName ++ ".results." ++ sanitizeName toolName
+mcpHandlerName :: String -> String -> String
+mcpHandlerName serverName toolName =
+  "mcp." ++ sanitizeName serverName ++ ".handlers." ++ sanitizeName toolName
 
 sanitizeName :: String -> String
 sanitizeName text =

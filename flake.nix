@@ -198,7 +198,7 @@
               checkedSubagent "${path}.${name}"
           ) value;
 
-      checkedResults =
+      checkedHandlers =
         path: value:
         if !(builtins.isAttrs value) then
           throw "hutian: option `${path}` must be an attribute set keyed by tool name"
@@ -266,7 +266,7 @@
             names = [
               "url"
               "policy"
-              "results"
+              "handlers"
             ];
             present = allowedKeys path names (requiredKeys path [ "url" ] value);
             policy = if present ? policy then toolPolicy "${path}.policy" present.policy else "ask";
@@ -278,7 +278,7 @@
               else
                 throw "hutian: option `${path}.url` must be a non-empty string";
             inherit policy;
-            results = checkedResults "${path}.results" (present.results or { });
+            handlers = checkedHandlers "${path}.handlers" (present.handlers or { });
           };
 
       # Normalize and validate the options shared by every helper. The result
@@ -520,17 +520,17 @@
             apiKeyCommand = "$(pass show key)";
           };
 
-          resultAgent = {
+          handlerAgent = {
             model = "probe-result";
             description = "probe result description";
             systemPrompt = "probe result prompt";
             tools = defaults.agent.tools;
           };
-          mcpResultLauncher = withAgent {
+          mcpHandlerLauncher = withAgent {
             tools.mcp.demo = {
               url = "https://mcp.example.test/mcp";
               policy = "allow";
-              results.search = resultAgent;
+              handlers.search = handlerAgent;
             };
           };
 
@@ -723,10 +723,10 @@
             (contains "$(pass show key)" (configFile shellTextKeyLauncher "hutian-api-key-command"))
           ];
 
-          result-option = check "result-option" [
-            (contains "probe-result" (configFile mcpResultLauncher "hutian-tools"))
-            (contains "probe result description" (configFile mcpResultLauncher "hutian-tools"))
-            (contains "\"search\"" (configFile mcpResultLauncher "hutian-tools"))
+          handler-option = check "handler-option" [
+            (contains "probe-result" (configFile mcpHandlerLauncher "hutian-tools"))
+            (contains "probe result description" (configFile mcpHandlerLauncher "hutian-tools"))
+            (contains "\"search\"" (configFile mcpHandlerLauncher "hutian-tools"))
           ];
 
           subagent-option = check "subagent-option" [
@@ -825,13 +825,13 @@
                   tools.mcp.demo = {
                     url = "https://mcp.example.test/mcp";
                     policy = "allow";
-                    results.search = resultAgent // {
+                    handlers.search = handlerAgent // {
                       unknownOption = true;
                     };
                   };
                 })
                 (withAgent {
-                  tools.results.webfetch = resultAgent;
+                  tools.handlers.webfetch = handlerAgent;
                 })
               ];
 

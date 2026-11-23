@@ -5,14 +5,16 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0.0] - 2026-11-23
+
 ### Added
 
-- MCP tool result handlers. `agent.tools.mcp.<server>.results.<tool>` takes a
+- MCP tool result handlers. `agent.tools.mcp.<server>.handlers.<tool>` takes a
   subagent configuration (`model`, `description`, `systemPrompt`, `tools`) for
   a concrete MCP tool. The handler gets the raw tool result, runs in its own
   context with its own tools, and returns only its final answer to the agent.
   Its description is appended to the tool description and its terminal label is
-  `mcp.<server>.results.<tool>`. A handler's MCP tool results can have their own
+  `mcp.<server>.handlers.<tool>`. A handler's MCP tool results can have their own
   handlers. Built-in tools return their results directly.
 - MCP tool arguments are shown with dim JSON syntax highlighting, and error
   lines are bold red when standard error is a terminal.

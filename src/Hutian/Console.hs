@@ -16,7 +16,7 @@ module Hutian.Console
   , consoleWriteErrorLine
   , consoleWriteGrayLine
   , consoleWriteLine
-  , consoleWriteResultPromptIn
+  , consoleWriteHandlerPromptIn
   , consoleWriteSubagentPrompt
   , consoleWriteSystemPrompt
   , consoleWriteToolDefinitions
@@ -227,8 +227,8 @@ consoleWriteSubagentPrompt label prompt = do
 
 -- | Show a result handler's prompt as a tool-output block: a dim label and,
 -- when visible, the body in gray. The caller applies the verbosity policy.
-consoleWriteResultPromptIn :: TurnContext -> String -> Bool -> String -> IO ()
-consoleWriteResultPromptIn context label showBody prompt = do
+consoleWriteHandlerPromptIn :: TurnContext -> String -> Bool -> String -> IO ()
+consoleWriteHandlerPromptIn context label showBody prompt = do
   interactive <- consoleIsInteractive
   consoleWriteLine $
     outputBlockLabelTextIn context ToolOutput (sanitize label) interactive

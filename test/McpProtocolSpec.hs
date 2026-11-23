@@ -23,10 +23,10 @@ tests =
         mcpToolDisplayName "a.b" "x y"
           @?= "mcp.a_b.x_y"
     , testCase "result handler paths are namespaced and sanitized" $ do
-        mcpResultAgentName "demo" "search"
-          @?= "mcp.demo.results.search"
-        mcpResultAgentName "a.b" "x y"
-          @?= "mcp.a_b.results.x_y"
+        mcpHandlerName "demo" "search"
+          @?= "mcp.demo.handlers.search"
+        mcpHandlerName "a.b" "x y"
+          @?= "mcp.a_b.handlers.x_y"
     , testCase "tools/list decodes descriptions and schemas" $
         parseTools
           ( object
