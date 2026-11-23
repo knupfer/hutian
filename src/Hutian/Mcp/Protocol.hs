@@ -18,6 +18,7 @@ module Hutian.Mcp.Protocol
   , mcpToolFunctionName
   , mcpToolResultText
   , parseTools
+  , protocolError
   , selectJsonRpcResponse
   ) where
 

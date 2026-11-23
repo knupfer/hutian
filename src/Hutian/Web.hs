@@ -8,19 +8,13 @@ module Hutian.Web
   , fetchUrl
   ) where
 
-import Control.Exception
-  ( SomeAsyncException
-  , SomeException
-  , displayException
-  , fromException
-  , tryJust
-  )
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import qualified Data.Text.Encoding.Error as TextEncodingError
 import Hutian.Http.Body (readBodyAtMost)
+import Hutian.Http.Error (trySync)
 import Hutian.Render (trailingNewline)
 import Network.HTTP.Client
   ( Request (..)
@@ -62,7 +56,7 @@ fetchResultText result =
 fetchUrl :: String -> IO (Either String FetchResult)
 fetchUrl url = do
   manager <- newManager tlsManagerSettings
-  tryJust synchronous (fetch manager)
+  trySync (fetch manager)
   where
     fetch manager = do
       initialRequest <- parseRequest url
@@ -85,12 +79,6 @@ fetchUrl url = do
             , fetchContentType = maybe "" decodeHeader (lookup hContentType (responseHeaders response))
             , fetchBody = decodeBody body
             }
-
-    synchronous :: SomeException -> Maybe String
-    synchronous exception =
-      case fromException exception :: Maybe SomeAsyncException of
-        Just _ -> Nothing
-        Nothing -> Just (displayException exception)
 
 -- | Fetches should answer quickly; a stuck fetch must not hold an LLM turn
 -- open indefinitely.

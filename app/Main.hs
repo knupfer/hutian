@@ -142,15 +142,14 @@ main = do
 
 discoverMcpSettings :: LlmSettings -> IO LlmSettings
 discoverMcpSettings settings = do
-  servers <-
-    discoverMcpServers
-      consoleWriteErrorLine
-      (toolMcp (catalogConfig (settingTools settings)))
-  pure
-    settings
-      { settingTools =
-          (settingTools settings) {catalogMcp = servers}
-      }
+  tools <- discoverTools (catalogConfig (settingTools settings))
+  pure settings {settingTools = tools}
+
+-- | Discover the MCP tools configured by a tool configuration.
+discoverTools :: ToolConfig -> IO ToolCatalog
+discoverTools config = do
+  servers <- discoverMcpServers consoleWriteErrorLine (toolMcp config)
+  pure (toolCatalog config) {catalogMcp = servers}
 
 runInput :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> InputMode -> String -> Conversation -> IO Conversation
 runInput workingDirectory jobs settings interruptFlag mode text conversation =
@@ -299,18 +298,14 @@ runAgent
   -> String
   -> IO (Either String String)
 runAgent presentation parent workingDirectory jobs settings interruptFlag agent prompt = do
-  servers <-
-    discoverMcpServers
-      consoleWriteErrorLine
-      (toolMcp (subagentTools agent))
+  tools <- discoverTools (subagentTools agent)
   let childContext = subagentContext parent (subagentName agent)
       childLabel = pathLabel childContext
       subagentSettings =
         settings
           { settingModel = ModelName (subagentModel agent)
           , settingSystemPrompt = SystemPrompt (subagentSystemPrompt agent)
-          , settingTools =
-              (toolCatalog (subagentTools agent)) {catalogMcp = servers}
+          , settingTools = tools
           }
       runtime =
         toolRuntime

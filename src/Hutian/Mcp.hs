@@ -8,19 +8,13 @@ module Hutian.Mcp
   , callMcpTool
   ) where
 
-import Control.Exception
-  ( SomeAsyncException
-  , SomeException
-  , displayException
-  , fromException
-  , tryJust
-  )
 import Data.Aeson (Value (..))
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.List (isInfixOf)
 import Hutian.Http.Body (readBodyAtMost)
+import Hutian.Http.Error (trySync)
 import Hutian.Mcp.Protocol
   ( McpError (..)
   , decodeSsePayloads
@@ -32,6 +26,7 @@ import Hutian.Mcp.Protocol
   , mcpProtocolVersion
   , mcpToolResultText
   , parseTools
+  , protocolError
   , selectJsonRpcResponse
   )
 import Hutian.Policy (ToolPolicy (..))
@@ -177,7 +172,7 @@ postMcpRaw
   -> Value
   -> IO (Either McpError McpHttpReply)
 postMcpRaw manager config session message = do
-  outcome <- tryJust synchronous (send manager)
+  outcome <- trySync (send manager)
   pure $ case outcome of
     Left failure -> Left (McpTransportError failure)
     Right value -> value
@@ -227,12 +222,6 @@ postMcpRaw manager config session message = do
         Nothing -> []
         Just value -> [("Mcp-Session-Id", BS8.pack (unMcpSessionId value))]
 
-    synchronous :: SomeException -> Maybe String
-    synchronous exception =
-      case fromException exception :: Maybe SomeAsyncException of
-        Just _ -> Nothing
-        Nothing -> Just (displayException exception)
-
 -- | Decode either an SSE stream or a plain JSON response into JSON-RPC values.
 responseValues :: McpHttpReply -> Either McpError [Value]
 responseValues reply
@@ -247,9 +236,6 @@ responseValues reply
       case Aeson.decodeStrict' bytes of
         Just value -> Right value
         Nothing -> protocolError "MCP response is not valid JSON"
-
-protocolError :: String -> Either McpError a
-protocolError = Left . McpProtocolError
 
 -- | MCP tool results can be large pages or search bundles. A complete JSON
 -- document must fit, so this is larger than the web-tool body limit while still

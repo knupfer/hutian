@@ -25,6 +25,7 @@ import Hutian.Cli
   , missingOptionsMessage
   , optionValueFor
   , parseOptions
+  , requiredOption
   )
 import Hutian.Policy (ToolPolicy (..), toolPolicyFromArgument)
 import Hutian.Tool.Catalog (ToolCatalog, toolCatalog)
@@ -80,8 +81,8 @@ parseLlmSettingsWithFiles loaded arguments = do
   case missing of
     [] -> do
       url <- required "--llama-url" options
-      model <- valueOrFile "--model" "--model-file" loaded options
-      systemPrompt <- valueOrFile "--system-prompt" "--system-prompt-file" loaded options
+      model <- valueOrFile "--model" "--model-file" options
+      systemPrompt <- valueOrFile "--system-prompt" "--system-prompt-file" options
       verbosityValue <- required "--verbosity" options
       verbosity <-
         case verbosityFromArgument verbosityValue of
@@ -93,7 +94,7 @@ parseLlmSettingsWithFiles loaded arguments = do
                   ++ " (expected low, normal, or high)\n"
                   ++ llmUsage
               )
-      tools <- toolsOption loaded options
+      tools <- toolsOption options
       settingsFrom
         (LlmUrl url)
         (ModelName model)
@@ -103,33 +104,32 @@ parseLlmSettingsWithFiles loaded arguments = do
         tools
     _ -> Left (missingOptionsMessage llmUsage missing)
   where
-    required name options =
-      case optionValueFor name options of
-        Just value -> Right value
-        Nothing -> Left ("missing required argument: " ++ name ++ "\n" ++ llmUsage)
+    required = requiredOption llmUsage
 
-    valueOrFile inline file fileContents options =
+    loadedContents flag path =
+      case lookup path loaded of
+        Just contents -> Right contents
+        Nothing ->
+          Left ("missing contents for " ++ flag ++ ": " ++ path ++ "\n" ++ llmUsage)
+
+    valueOrFile inline file options =
       case (optionValueFor inline options, optionValueFor file options) of
         (Just value, Nothing) -> Right value
-        (Nothing, Just path) ->
-          case lookup path fileContents of
-            Just value -> Right value
-            Nothing -> Left ("missing contents for " ++ file ++ ": " ++ path ++ "\n" ++ llmUsage)
+        (Nothing, Just path) -> loadedContents file path
         (Just _, Just _) ->
           Left ("use only one of " ++ inline ++ " and " ++ file ++ "\n" ++ llmUsage)
         (Nothing, Nothing) ->
           Left ("missing required argument: " ++ inline ++ " or " ++ file ++ "\n" ++ llmUsage)
 
-    toolsOption fileContents options =
+    toolsOption options =
       case optionValueFor "--tools-file" options of
-        Just path ->
-          case lookup path fileContents of
-            Just contents -> decodeFile "--tools-file" path contents
-            Nothing -> Left ("missing contents for --tools-file: " ++ path ++ "\n" ++ llmUsage)
+        Just path -> do
+          contents <- loadedContents "--tools-file" path
+          decodeFile "--tools-file" path contents
         Nothing -> do
           shell <- policyOption "--model-shell" ToolDeny options
           webfetch <- policyOption "--model-webfetch" ToolDeny options
-          subagent <- subagentsOption fileContents options
+          subagent <- subagentsOption options
           pure
             defaultToolConfig
               { toolShell = shell
@@ -153,14 +153,12 @@ parseLlmSettingsWithFiles loaded arguments = do
                     ++ llmUsage
                 )
 
-    subagentsOption fileContents options =
+    subagentsOption options =
       case optionValueFor "--subagent-file" options of
         Nothing -> Right []
-        Just path ->
-          case lookup path fileContents of
-            Just contents ->
-              unSubagentConfigs <$> decodeFile "--subagent-file" path contents
-            Nothing -> Left ("missing contents for --subagent-file: " ++ path ++ "\n" ++ llmUsage)
+        Just path -> do
+          contents <- loadedContents "--subagent-file" path
+          unSubagentConfigs <$> decodeFile "--subagent-file" path contents
 
 decodeFile :: Aeson.FromJSON value => String -> FilePath -> String -> Either String value
 decodeFile flag path contents =
@@ -182,17 +180,15 @@ invalidFile flag path message =
 -- | File paths the caller must read before 'parseLlmSettingsWithFiles'. The
 -- paths are deduplicated so a caller can point both options at one file.
 llmFilePaths :: [String] -> Either String [FilePath]
-llmFilePaths arguments =
-  case parseOptions llmOptionSpec arguments of
-    Left message -> Left (message ++ "\n" ++ llmUsage)
-    Right options ->
-      Right . nub $
-        catMaybes
-          [ optionValueFor "--model-file" options
-          , optionValueFor "--system-prompt-file" options
-          , optionValueFor "--tools-file" options
-          , optionValueFor "--subagent-file" options
-          ]
+llmFilePaths arguments = do
+  options <- appendUsage llmUsage (parseOptions llmOptionSpec arguments)
+  pure . nub $
+    catMaybes
+      [ optionValueFor "--model-file" options
+      , optionValueFor "--system-prompt-file" options
+      , optionValueFor "--tools-file" options
+      , optionValueFor "--subagent-file" options
+      ]
 
 llmOptionSpec :: [(String, OptionKind)]
 llmOptionSpec =

@@ -140,12 +140,11 @@ instance FromJSON ToolConfig where
 
 instance ToJSON SubagentConfig where
   toJSON agent =
-    object
-      [ "model" .= subagentModel agent
-      , "description" .= subagentDescription agent
-      , "systemPrompt" .= subagentSystemPrompt agent
-      , "tools" .= subagentTools agent
-      ]
+    agentObject
+      (subagentModel agent)
+      (subagentDescription agent)
+      (subagentSystemPrompt agent)
+      (subagentTools agent)
 
 instance ToJSON SubagentConfigs where
   toJSON = subagentObject . unSubagentConfigs
@@ -157,23 +156,15 @@ instance FromJSON SubagentConfigs where
 
 instance ToJSON HandlerConfig where
   toJSON config =
-    object
-      [ "model" .= handlerModel config
-      , "description" .= handlerDescription config
-      , "systemPrompt" .= handlerSystemPrompt config
-      , "tools" .= handlerTools config
-      ]
+    agentObject
+      (handlerModel config)
+      (handlerDescription config)
+      (handlerSystemPrompt config)
+      (handlerTools config)
 
 instance FromJSON HandlerConfig where
   parseJSON = withObject "result handler" $ \values -> do
-    model <-
-      values .: "model"
-        >>= requireNonEmpty "result handler model"
-    description <-
-      values .: "description"
-        >>= requireNonEmpty "result handler description"
-    systemPrompt <- values .: "systemPrompt"
-    tools <- values .:? "tools" .!= defaultToolConfig
+    (model, description, systemPrompt, tools) <- parseAgentFields "result handler" values
     pure
       HandlerConfig
         { handlerModel = Text.unpack model
@@ -258,14 +249,8 @@ keyedObject entries =
 parseSubagent :: AesonKey.Key -> Value -> Parser SubagentConfig
 parseSubagent nameKey = withObject "subagent" $ \values -> do
   name <- requireName "subagent" nameKey
-  model <-
-    values .: "model"
-      >>= requireNonEmpty ("subagent " ++ name ++ " model")
-  description <-
-    values .: "description"
-      >>= requireNonEmpty ("subagent " ++ name ++ " description")
-  systemPrompt <- values .: "systemPrompt"
-  tools <- values .:? "tools" .!= defaultToolConfig
+  (model, description, systemPrompt, tools) <-
+    parseAgentFields ("subagent " ++ name) values
   pure
     SubagentConfig
       { subagentName = name
@@ -274,6 +259,30 @@ parseSubagent nameKey = withObject "subagent" $ \values -> do
       , subagentSystemPrompt = Text.unpack systemPrompt
       , subagentTools = tools
       }
+
+-- | Parse the fields shared by a subagent and a result handler. The label
+-- prefixes both required field errors.
+parseAgentFields
+  :: String
+  -> Object
+  -> Parser (Text.Text, Text.Text, Text.Text, ToolConfig)
+parseAgentFields label values = do
+  model <- values .: "model" >>= requireNonEmpty (label ++ " model")
+  description <-
+    values .: "description" >>= requireNonEmpty (label ++ " description")
+  systemPrompt <- values .: "systemPrompt"
+  tools <- values .:? "tools" .!= defaultToolConfig
+  pure (model, description, systemPrompt, tools)
+
+-- | Encode the fields shared by a subagent and a result handler.
+agentObject :: String -> String -> String -> ToolConfig -> Value
+agentObject model description systemPrompt tools =
+  object
+    [ "model" .= model
+    , "description" .= description
+    , "systemPrompt" .= systemPrompt
+    , "tools" .= tools
+    ]
 
 requireNonEmpty :: String -> Text.Text -> Parser Text.Text
 requireNonEmpty label text

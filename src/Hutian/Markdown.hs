@@ -279,55 +279,15 @@ highlightInline context = go
             ++ go after
         _ -> '`' : go rest
     go ('*' : '*' : rest) =
-      case breakOn "**" rest of
-        Just (body, after) ->
-          boldColour
-            ++ "**"
-            ++ sanitize body
-            ++ "**"
-            ++ boldOff base
-            ++ go after
-        Nothing -> "**" ++ go rest
+      emphasis "**" boldColour (boldOff base) rest
     go ('_' : '_' : rest) =
-      case breakOn "__" rest of
-        Just (body, after) ->
-          boldColour
-            ++ "__"
-            ++ sanitize body
-            ++ "__"
-            ++ boldOff base
-            ++ go after
-        Nothing -> "__" ++ go rest
+      emphasis "__" boldColour (boldOff base) rest
     go ('~' : '~' : rest) =
-      case breakOn "~~" rest of
-        Just (body, after) ->
-          strikeColour
-            ++ "~~"
-            ++ sanitize body
-            ++ "~~"
-            ++ strikeOff
-            ++ go after
-        Nothing -> "~~" ++ go rest
+      emphasis "~~" strikeColour strikeOff rest
     go ('*' : rest) =
-      case break (== '*') rest of
-        (body, '*' : after) ->
-          italicColour
-            ++ "*"
-            ++ sanitize body
-            ++ "*"
-            ++ italicOff base
-            ++ go after
-        _ -> '*' : go rest
+      emphasis "*" italicColour (italicOff base) rest
     go ('_' : rest) =
-      case break (== '_') rest of
-        (body, '_' : after) ->
-          italicColour
-            ++ "_"
-            ++ sanitize body
-            ++ "_"
-            ++ italicOff base
-            ++ go after
-        _ -> '_' : go rest
+      emphasis "_" italicColour (italicOff base) rest
     go ('[' : rest) =
       case break (== ']') rest of
         (text, ']' : '(' : after) ->
@@ -347,6 +307,12 @@ highlightInline context = go
       '\\' : sanitizeChar character : go rest
     go (character : rest) =
       sanitizeChar character : go rest
+
+    emphasis delimiter start end rest =
+      case breakOn delimiter rest of
+        Just (body, after) ->
+          start ++ delimiter ++ sanitize body ++ delimiter ++ end ++ go after
+        Nothing -> delimiter ++ go rest
 
 breakOn :: String -> String -> Maybe (String, String)
 breakOn needle = go ""

@@ -64,6 +64,7 @@ import Hutian.Cli
   , missingOptionsMessage
   , optionValueFor
   , parseOptions
+  , requiredOption
   )
 import Hutian.Http.Wire (WireError (..), recvAllLimited)
 import Hutian.Relay.Protocol (encodeStatus)
@@ -150,11 +151,11 @@ parseRelaySettings arguments = do
           }
     missing -> Left (missingOptionsMessage relayUsage missing)
   where
-    required name options =
-      case optionValueFor name options of
-        Just "" -> Left ("empty value for " ++ name ++ "\n" ++ relayUsage)
-        Just value -> Right value
-        Nothing -> Left ("missing required argument: " ++ name ++ "\n" ++ relayUsage)
+    required name options = do
+      value <- requiredOption relayUsage name options
+      if null value
+        then Left ("empty value for " ++ name ++ "\n" ++ relayUsage)
+        else Right value
 
 relayOptionSpec :: [(String, OptionKind)]
 relayOptionSpec =

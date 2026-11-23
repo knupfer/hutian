@@ -15,6 +15,7 @@ module Hutian.Cli
   , missingOptions
   , appendUsage
   , missingOptionsMessage
+  , requiredOption
   ) where
 
 import Data.List (find)
@@ -89,3 +90,10 @@ missingOptionsMessage usage missing =
     ++ unwords missing
     ++ "\n"
     ++ usage
+
+-- | The value of a required option, or a usage error naming it.
+requiredOption :: String -> String -> [Option] -> Either String String
+requiredOption usage name options =
+  case optionValueFor name options of
+    Just value -> Right value
+    Nothing -> Left ("missing required argument: " ++ name ++ "\n" ++ usage)

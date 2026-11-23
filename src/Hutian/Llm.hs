@@ -23,16 +23,13 @@ import Control.Concurrent.MVar
   , tryTakeMVar
   )
 import Control.Exception
-  ( SomeAsyncException
-  , SomeException
+  ( SomeException
   , displayException
   , evaluate
   , finally
-  , fromException
   , mask
   , onException
   , try
-  , tryJust
   )
 import Control.Monad (unless)
 import Data.Aeson (Value)
@@ -45,6 +42,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
 import Hutian.Conversation (Conversation)
 import Hutian.Http.Body (readBodyAtMost)
+import Hutian.Http.Error (trySync)
 import Hutian.Interrupt (InterruptFlag, isInterrupted)
 import Hutian.Llm.Presentation
   ( StreamPresenter
@@ -186,17 +184,6 @@ raceInterrupt interruptFlag action = mask $ \restore -> do
                     pure Nothing
                   else threadDelay interruptPollMicros >> wait
   restore wait `onException` killThread worker
-
--- | Catch synchronous failures so the worker always reports a result, but let
--- async exceptions, including the one used to cancel it, propagate.
-trySync :: IO a -> IO (Either String a)
-trySync = tryJust synchronous
-  where
-    synchronous :: SomeException -> Maybe String
-    synchronous exception =
-      case fromException exception :: Maybe SomeAsyncException of
-        Just _ -> Nothing
-        Nothing -> Just (displayException exception)
 
 -- | How often a blocked request checks whether the user interrupted it.
 interruptPollMicros :: Int

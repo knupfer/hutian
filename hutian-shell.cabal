@@ -67,6 +67,7 @@ library
       Hutian.Highlight
       Hutian.History
       Hutian.Http.Body
+      Hutian.Http.Error
       Hutian.Http.Wire
       Hutian.Interrupt
       Hutian.Jobs
