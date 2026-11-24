@@ -10,6 +10,7 @@ module Hutian.Shell
   , runShellCommandOutput
   , runShellCommandStreaming
   , shellExitSuffix
+  , shellProcess
   ) where
 
 import Control.Concurrent
@@ -58,16 +59,14 @@ data CommandResult = CommandResult
 -- process could not be started.
 runShellCommand :: FilePath -> String -> IO (Either String ())
 runShellCommand workingDirectory line =
-  ( do
-      (_, _, _, processHandle) <-
-        createProcess
-          (shellProcess workingDirectory line)
-            { delegate_ctlc = False
-            }
-      void (waitForProcess processHandle)
-      pure (Right ())
-  )
-    `catch` \(err :: IOException) -> pure (Left ("sh: " ++ show err))
+  shellFailure $ do
+    (_, _, _, processHandle) <-
+      createProcess
+        (shellProcess workingDirectory line)
+          { delegate_ctlc = False
+          }
+    void (waitForProcess processHandle)
+    pure (Right ())
 
 -- | Run a command with captured stdio and stream each chunk through the given
 -- byte transform to the supplied handles. Callers use this when output is not
@@ -81,36 +80,34 @@ runShellCommandStreaming
   -> String
   -> IO (Either String ())
 runShellCommandStreaming transformBytes outputDestination errorDestination workingDirectory line =
-  ( do
-      (_, maybeOutput, maybeError, processHandle) <-
-        createProcess
-          ( (shellProcess workingDirectory line)
-              { std_out = CreatePipe
-              , std_err = CreatePipe
-              , delegate_ctlc = False
-              }
-          )
-      case (maybeOutput, maybeError) of
-        (Just outputHandle, Just errorHandle) -> do
-          outputDone <- newEmptyMVar
-          errorDone <- newEmptyMVar
-          _ <-
-            forkIO $
-              copyPipe processHandle transformBytes outputHandle outputDestination
-                `finally` putMVar outputDone ()
-          _ <-
-            forkIO $
-              copyPipe processHandle transformBytes errorHandle errorDestination
-                `finally` putMVar errorDone ()
-          _ <- waitForProcess processHandle
-          takeMVar outputDone
-          takeMVar errorDone
-          pure (Right ())
-        _ -> do
-          _ <- waitForProcess processHandle
-          pure (Left "sh: could not capture output")
-  )
-    `catch` \(err :: IOException) -> pure (Left ("sh: " ++ show err))
+  shellFailure $ do
+    (_, maybeOutput, maybeError, processHandle) <-
+      createProcess
+        ( (shellProcess workingDirectory line)
+            { std_out = CreatePipe
+            , std_err = CreatePipe
+            , delegate_ctlc = False
+            }
+        )
+    case (maybeOutput, maybeError) of
+      (Just outputHandle, Just errorHandle) -> do
+        outputDone <- newEmptyMVar
+        errorDone <- newEmptyMVar
+        _ <-
+          forkIO $
+            copyPipe processHandle transformBytes outputHandle outputDestination
+              `finally` putMVar outputDone ()
+        _ <-
+          forkIO $
+            copyPipe processHandle transformBytes errorHandle errorDestination
+              `finally` putMVar errorDone ()
+        _ <- waitForProcess processHandle
+        takeMVar outputDone
+        takeMVar errorDone
+        pure (Right ())
+      _ -> do
+        _ <- waitForProcess processHandle
+        pure (Left "sh: could not capture output")
 
 -- | Drain one pipe until the child has exited and no more output is waiting.
 -- End-of-file alone is not enough: a background process can inherit the pipe
@@ -147,12 +144,16 @@ copyPollMicros = 20000
 -- | Run a command and capture its output for the model.
 runShellCommandOutput :: FilePath -> String -> IO (Either String CommandResult)
 runShellCommandOutput workingDirectory line =
-  ( do
-      (exitCode, output, errors) <-
-        readCreateProcessWithExitCode (shellProcess workingDirectory line) ""
-      pure (Right (CommandResult exitCode output errors))
-  )
-    `catch` \(err :: IOException) -> pure (Left ("sh: " ++ show err))
+  shellFailure $ do
+    (exitCode, output, errors) <-
+      readCreateProcessWithExitCode (shellProcess workingDirectory line) ""
+    pure (Right (CommandResult exitCode output errors))
+
+-- | Run a shell action, turning a synchronous IO failure into a message for
+-- the model. Every shell entry point reports failures the same way.
+shellFailure :: IO (Either String a) -> IO (Either String a)
+shellFailure action =
+  action `catch` \(err :: IOException) -> pure (Left ("sh: " ++ show err))
 
 -- | Commands start in the session directory, but the long-lived shell must not
 -- keep its own working directory there. gVisor caches the directory listing of

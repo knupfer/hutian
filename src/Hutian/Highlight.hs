@@ -95,7 +95,7 @@ dimSkylightingColour factor (RGB red green blue) =
 -- output. The text is returned unchanged apart from ANSI styles.
 highlightJsonText :: String -> String
 highlightJsonText text =
-  case highlightLines (dimCodeStyle 0.6 codeStyle) "json" (lines text) of
+  case highlightLines (dimCodeStyle Ansi.dimFactor codeStyle) "json" (lines text) of
     Just rendered | not (null rendered) -> intercalate "\n" rendered
     _ -> sanitizeOutput text
 

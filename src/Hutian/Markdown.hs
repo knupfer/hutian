@@ -388,7 +388,7 @@ normalColours =
 -- | Thinking output keeps the normal hues, scaled down so highlighting does
 -- not compete with the base colour.
 dimColours :: MarkdownColours
-dimColours = darkenColours 0.6 normalColours
+dimColours = darkenColours Ansi.dimFactor normalColours
 
 darkenColours :: Double -> MarkdownColours -> MarkdownColours
 darkenColours factor colours =

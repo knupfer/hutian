@@ -7,6 +7,7 @@ module Hutian.Ansi
   , rgb
   , colourChannels
   , darkenColour
+  , dimFactor
   , Style
   , styleCode
   , darkenStyle
@@ -44,6 +45,12 @@ rgb = RGB
 
 colourChannels :: Colour -> (Word8, Word8, Word8)
 colourChannels (RGB red green blue) = (red, green, blue)
+
+-- | How much accent colours are dimmed for subordinate text. Shared by the
+-- prompt palette, Markdown highlighting, and syntax highlighting so every
+-- muted element stays consistent.
+dimFactor :: Double
+dimFactor = 0.6
 
 -- | Darken every channel by a factor. Factors at or above one leave the
 -- colour unchanged, matching the old string-based implementation.

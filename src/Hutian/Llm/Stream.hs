@@ -31,18 +31,20 @@ module Hutian.Llm.Stream
 import Control.Applicative ((<|>))
 import Data.Aeson (Value (..))
 import qualified Data.Aeson as Aeson
-import Data.Aeson.Key (Key)
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
 import qualified Data.IntMap.Strict as IntMap
 import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
-import qualified Data.Text.Encoding.Error as TextEncodingError
-import qualified Data.Vector as Vector
 import Data.Word (Word8)
 import Hutian.Conversation (ToolCall (..))
-import Hutian.Json (jsonInt)
+import Hutian.Json
+  ( decodeUtf8LenientText
+  , jsonInt
+  , lookupObjectArray
+  , lookupTextField
+  )
 
 -- | The result of one streaming LLM request.
 data LlmResult = LlmResult
@@ -169,8 +171,8 @@ isCarriageReturn = (== 13)
 
 extractContent :: KeyMap.KeyMap Value -> Maybe Text.Text
 extractContent value =
-  lookupString "content" value
-    <|> listToMaybe (mapMaybe (lookupString "content") (deltas value))
+  lookupTextField "content" value
+    <|> listToMaybe (mapMaybe (lookupTextField "content") (deltas value))
 
 extractReasoning :: KeyMap.KeyMap Value -> Maybe Text.Text
 extractReasoning value =
@@ -184,7 +186,7 @@ extractError value =
   case KeyMap.lookup "error" value of
     Just (String message) -> Just message
     Just (Object nested) ->
-      lookupString "message" nested
+      lookupTextField "message" nested
         <|> Just (Text.pack (show (Object nested)))
     _ -> Nothing
 
@@ -199,7 +201,7 @@ indexedToolCalls :: Int -> [KeyMap.KeyMap Value] -> [ToolCallDelta]
 indexedToolCalls start objects =
   [ ToolCallDelta
       { toolCallDeltaIndex = fromMaybe (start + offset) (lookupIndex call)
-      , toolCallDeltaId = lookupString "id" call
+      , toolCallDeltaId = lookupTextField "id" call
       , toolCallDeltaName = lookupFunctionString "name" call
       , toolCallDeltaArguments = lookupFunctionString "arguments" call
       }
@@ -207,10 +209,7 @@ indexedToolCalls start objects =
   ]
 
 toolCallObjects :: KeyMap.KeyMap Value -> [KeyMap.KeyMap Value]
-toolCallObjects fields =
-  case KeyMap.lookup "tool_calls" fields of
-    Just (Array items) -> [item | Object item <- Vector.toList items]
-    _ -> []
+toolCallObjects = lookupObjectArray "tool_calls"
 
 lookupIndex :: KeyMap.KeyMap Value -> Maybe Int
 lookupIndex fields = do
@@ -218,10 +217,10 @@ lookupIndex fields = do
   index <- jsonInt value
   if index >= 0 then Just index else Nothing
 
-lookupFunctionString :: Key -> KeyMap.KeyMap Value -> Maybe Text.Text
+lookupFunctionString :: Text.Text -> KeyMap.KeyMap Value -> Maybe Text.Text
 lookupFunctionString key fields =
   case KeyMap.lookup "function" fields of
-    Just (Object function) -> lookupString key function
+    Just (Object function) -> lookupTextField key function
     _ -> Nothing
 
 -- | Merge streamed tool-call fragments by their index. A sparse or
@@ -266,10 +265,7 @@ isStop value =
 
 -- | The choice objects of a streaming response.
 choices :: KeyMap.KeyMap Value -> [KeyMap.KeyMap Value]
-choices value =
-  case KeyMap.lookup "choices" value of
-    Just (Array items) -> [choice | Object choice <- Vector.toList items]
-    _ -> []
+choices = lookupObjectArray "choices"
 
 -- | The non-empty delta objects of a streaming response.
 deltas :: KeyMap.KeyMap Value -> [KeyMap.KeyMap Value]
@@ -280,19 +276,8 @@ deltas = mapMaybe delta . choices
         Just (Object fields) -> Just fields
         _ -> Nothing
 
-lookupString :: Key -> KeyMap.KeyMap Value -> Maybe Text.Text
-lookupString key fields =
-  case KeyMap.lookup key fields of
-    Just (String text) -> Just text
-    _ -> Nothing
-
-firstString :: [Key] -> KeyMap.KeyMap Value -> Maybe Text.Text
-firstString keys fields =
-  listToMaybe
-    [ text
-    | key <- keys
-    , Just (String text) <- [KeyMap.lookup key fields]
-    ]
+firstString :: [Text.Text] -> KeyMap.KeyMap Value -> Maybe Text.Text
+firstString keys fields = listToMaybe (mapMaybe (`lookupTextField` fields) keys)
 
 decode :: BS.ByteString -> Text.Text
-decode = TextEncoding.decodeUtf8With TextEncodingError.lenientDecode
+decode = decodeUtf8LenientText

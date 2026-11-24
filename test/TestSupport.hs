@@ -18,10 +18,8 @@ import Control.Concurrent.MVar (MVar, newMVar, takeMVar, withMVar)
 import Control.Exception (IOException, finally, try)
 import qualified Data.ByteString as BS
 import Data.Maybe (fromMaybe)
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as TextEncoding
-import qualified Data.Text.Encoding.Error as TextEncodingError
 import Hutian.Jobs (JobId, jobIdFromInt)
+import Hutian.Json (decodeUtf8Lenient)
 import Hutian.Llm (LlmOutput (..))
 import Hutian.Context (TurnContext (MainContext))
 import Hutian.Verbosity (Verbosity (..))
@@ -136,13 +134,7 @@ readPipe readFd = do
   handle <- fdToHandle readFd
   contents <- BS.hGetContents handle
   hClose handle
-  pure (decodeUtf8Bytes contents)
-
--- | Decode captured terminal bytes as UTF-8. Reading them byte by byte would
--- corrupt every non-ASCII character.
-decodeUtf8Bytes :: BS.ByteString -> String
-decodeUtf8Bytes =
-  Text.unpack . TextEncoding.decodeUtf8With TextEncodingError.lenientDecode
+  pure (decodeUtf8Lenient contents)
 
 -- | Run an action with stdout and stderr attached to one pseudo-terminal, so
 -- terminal-only presentation paths can be observed. The callback reads
@@ -175,7 +167,7 @@ withPseudoTerminalOutput action = withCaptureLock $ do
           chunk <- try (PosixBS.fdRead master 4096) :: IO (Either IOException BS.ByteString)
           case chunk of
             Right bytes | not (BS.null bytes) -> go (bytes : chunks)
-            _ -> pure (decodeUtf8Bytes (BS.concat (reverse chunks)))
+            _ -> pure (decodeUtf8Lenient (BS.concat (reverse chunks)))
 
 -- | Take a value, failing the test instead of hanging if it never arrives.
 awaitMVar :: String -> MVar a -> IO a

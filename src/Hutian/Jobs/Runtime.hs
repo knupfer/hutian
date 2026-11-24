@@ -25,10 +25,9 @@ import Control.Monad (forM_)
 import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as TextEncoding
-import qualified Data.Text.Encoding.Error as TextEncodingError
 import Hutian.Jobs
+import Hutian.Json (decodeUtf8Lenient)
+import Hutian.Shell (shellProcess)
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>), (<.>))
 import System.IO
@@ -49,7 +48,6 @@ import System.Process
   , StdStream (..)
   , createProcess_
   , getPid
-  , proc
   , terminateProcess
   , waitForProcess
   )
@@ -201,9 +199,8 @@ spawnJob runtime nextId command = do
 -- open file description and the interleaving stays in process order.
 processSpec :: FilePath -> Handle -> String -> CreateProcess
 processSpec workingDirectory logHandle command =
-  (proc "/bin/sh" ["-c", command])
-    { cwd = Just workingDirectory
-    , std_in = NoStream
+  (shellProcess workingDirectory command)
+    { std_in = NoStream
     , std_out = UseHandle logHandle
     , std_err = UseHandle logHandle
     , create_group = True
@@ -288,7 +285,7 @@ readLogTail path lineLimit = do
           start = max 0 (size - window)
       hSeek handle AbsoluteSeek start
       bytes <- BS.hGet handle (fromIntegral (size - start))
-      let text = Text.unpack (TextEncoding.decodeUtf8With TextEncodingError.lenientDecode bytes)
+      let text = decodeUtf8Lenient bytes
           withoutPartial = if start > 0 then dropFirstLine text else text
           allLines = lines withoutPartial
           selected = drop (max 0 (length allLines - limit)) allLines

@@ -148,10 +148,7 @@ runModelTurn
   -> String
   -> IO (Conversation, LlmResult)
 runModelTurn env settings runtime conversation prompt = do
-  let output =
-        consoleLlmOutputFor
-          (toolRuntimeVerbosity runtime)
-          (toolRuntimeContext runtime)
+  let output = llmOutputFor runtime
   result <-
     runLlmWithTools output (envInterrupt env) settings conversation prompt
   runToolLoopWithResult
@@ -167,10 +164,7 @@ llmLoop env settings runtime =
     { loopRunTools = runToolCallsWith runtime (settingTools settings)
     , loopContinue =
         runLlmContinuation
-          ( consoleLlmOutputFor
-              (toolRuntimeVerbosity runtime)
-              (toolRuntimeContext runtime)
-          )
+          (llmOutputFor runtime)
           (envInterrupt env)
           settings
     }
@@ -269,6 +263,14 @@ runAgent env parent presentation agentName agent prompt = do
     case llmResponseText finalResult of
       Just answer -> Right answer
       Nothing -> Left "tool error: the subagent returned no answer"
+
+-- | The output sink for one runtime, so the initial request and every
+-- continuation use the same palette and verbosity.
+llmOutputFor :: ToolRuntime -> LlmOutput
+llmOutputFor runtime =
+  consoleLlmOutputFor
+    (toolRuntimeVerbosity runtime)
+    (toolRuntimeContext runtime)
 
 -- | Stream LLM output through the terminal boundary, flushing each piece so a
 -- response appears as it arrives.

@@ -14,6 +14,7 @@ import Data.List (intercalate, sort)
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
+import Hutian.Json (objectField, stringField)
 
 -- | One entry per tool: a @# name(params)@ line followed by the complete
 -- description on its own lines. Each description line is trimmed and has its
@@ -33,18 +34,6 @@ summaryLines definition =
            in ("# " ++ signature) : descriptionLines description
         Nothing -> []
     Nothing -> []
-
-objectField :: Text.Text -> Value -> Maybe Value
-objectField key value =
-  case value of
-    Object fields -> KeyMap.lookup (AesonKey.fromText key) fields
-    _ -> Nothing
-
-stringField :: Text.Text -> Value -> Maybe String
-stringField key value =
-  case objectField key value of
-    Just (String text) -> Just (Text.unpack text)
-    _ -> Nothing
 
 parameterList :: Value -> [String]
 parameterList parameters =

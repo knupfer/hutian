@@ -28,7 +28,6 @@ import Data.Aeson
   , (.=)
   )
 import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
@@ -36,8 +35,8 @@ import Data.Char (isAlphaNum, isAscii, isSpace)
 import Data.List (intercalate)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
+import Hutian.Json (jsonInt, lookupTextField, textField)
 import Hutian.Tool.Catalog (McpTool (..))
-import Hutian.Json (jsonInt)
 
 -- | The protocol revision used for Streamable HTTP servers.
 mcpProtocolVersion :: String
@@ -181,8 +180,8 @@ responseId _ = Nothing
 
 errorText :: Value -> String
 errorText (Object fields) =
-  case KeyMap.lookup "message" fields of
-    Just (String message) -> Text.unpack message
+  case lookupTextField "message" fields of
+    Just message -> Text.unpack message
     _ -> show (Object fields)
 errorText value = show value
 
@@ -238,22 +237,16 @@ mcpToolResultText value =
 contentText :: Value -> String
 contentText (Object fields) =
   case KeyMap.lookup "type" fields of
-    Just (String "text") -> maybe "" Text.unpack (lookupText "text" fields)
+    Just (String "text") -> maybe "" Text.unpack (lookupTextField "text" fields)
     Just (String "resource") ->
       case KeyMap.lookup "resource" fields of
-        Just (Object resource) ->
-          maybe (show (Object resource)) Text.unpack (lookupText "text" resource)
+        Just resource@(Object _) ->
+          maybe (show resource) Text.unpack (textField "text" resource)
         _ -> show (Object fields)
     Just (String contentType) ->
       "[MCP " ++ Text.unpack contentType ++ " content]"
     _ -> show (Object fields)
 contentText value = show value
-
-lookupText :: String -> KeyMap.KeyMap Value -> Maybe Text.Text
-lookupText key fields =
-  case KeyMap.lookup (AesonKey.fromString key) fields of
-    Just (String text) -> Just text
-    _ -> Nothing
 
 -- | Extract every non-empty @data:@ payload from a server-sent event body.
 -- MCP responses are one JSON document per event; multi-line data fields are

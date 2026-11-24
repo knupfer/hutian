@@ -15,10 +15,8 @@ import Hutian.Llm.Stream (StreamEvent (..))
 import Hutian.Markdown
   ( MarkdownFlavor (..)
   , MarkdownState
-  , finishMarkdown
   , finishMarkdownWith
   , initialMarkdownState
-  , renderMarkdown
   , renderMarkdownWith
   )
 import Hutian.Render
@@ -153,14 +151,15 @@ finishPresentation presenter =
     answerOutput = trailing ++ if null trailing then "" else "\n"
 
 renderAnswer :: RenderMode -> MarkdownState -> Text.Text -> (MarkdownState, String)
-renderAnswer mode
-  | modeAnswerStyle mode == AnswerDim = renderMarkdownWith (DimMarkdown thinkingGrey)
-  | otherwise = renderMarkdown
+renderAnswer mode = renderMarkdownWith (answerFlavor mode)
 
 finishAnswer :: RenderMode -> MarkdownState -> String
-finishAnswer mode
-  | modeAnswerStyle mode == AnswerDim = finishMarkdownWith (DimMarkdown thinkingGrey)
-  | otherwise = finishMarkdown
+finishAnswer mode = finishMarkdownWith (answerFlavor mode)
+
+answerFlavor :: RenderMode -> MarkdownFlavor
+answerFlavor mode
+  | modeAnswerStyle mode == AnswerDim = DimMarkdown thinkingGrey
+  | otherwise = NormalMarkdown
 
 -- | Thinking text uses the same grey as command output.
 thinkingGrey :: String

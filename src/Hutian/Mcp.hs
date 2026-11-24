@@ -16,11 +16,9 @@ import qualified Data.ByteString.Char8 as BS8
 import Data.List (intercalate, isInfixOf)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as TextEncoding
-import qualified Data.Text.Encoding.Error as TextEncodingError
 import Hutian.Http.Body (readBodyAtMost)
 import Hutian.Http.Error (trySync)
+import Hutian.Json (decodeUtf8Lenient)
 import Hutian.Mcp.Protocol
   ( McpError (..)
   , decodeSsePayloads
@@ -244,7 +242,7 @@ postMcpRaw manager config session message = do
               ( Left
                   ( McpHttpError
                       (statusCode (responseStatus response))
-                      (decodeBodyText (BS.take 1024 body))
+                      (decodeUtf8Lenient (BS.take 1024 body))
                   )
               )
           else
@@ -291,9 +289,3 @@ mcpTimeoutMicros = 60 * 1000 * 1000
 
 hMcpSessionId :: HeaderName
 hMcpSessionId = "Mcp-Session-Id"
-
--- | Decode an HTTP error body as UTF-8 text. Header values are ASCII tokens,
--- but an error body can contain any text the server chose to send.
-decodeBodyText :: BS.ByteString -> String
-decodeBodyText =
-  Text.unpack . TextEncoding.decodeUtf8With TextEncodingError.lenientDecode

@@ -396,10 +396,10 @@ pinkStyle = Ansi.bold <> Ansi.foreground pinkColour
 tealStyle = Ansi.bold <> Ansi.foreground tealColour
 blueStyle = Ansi.bold <> Ansi.foreground blueColour
 redStyle = Ansi.bold <> Ansi.foreground redColour
-dimPinkStyle = Ansi.darkenStyle 0.6 pinkStyle
-dimTealStyle = Ansi.darkenStyle 0.6 tealStyle
-dimBlueStyle = Ansi.darkenStyle 0.6 blueStyle
-grayStyle = Ansi.darkenStyle 0.6 $ Ansi.foreground (Ansi.rgb 255 255 255)
+dimPinkStyle = Ansi.darkenStyle Ansi.dimFactor pinkStyle
+dimTealStyle = Ansi.darkenStyle Ansi.dimFactor tealStyle
+dimBlueStyle = Ansi.darkenStyle Ansi.dimFactor blueStyle
+grayStyle = Ansi.darkenStyle Ansi.dimFactor $ Ansi.foreground (Ansi.rgb 255 255 255)
 
 boldVibrantPink = Ansi.styleCode pinkStyle
 boldTeal = Ansi.styleCode tealStyle

@@ -10,11 +10,9 @@ module Hutian.Web
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as TextEncoding
-import qualified Data.Text.Encoding.Error as TextEncodingError
 import Hutian.Http.Body (readBodyAtMost)
 import Hutian.Http.Error (trySync)
+import Hutian.Json (decodeUtf8Lenient)
 import Hutian.Render (trailingNewline)
 import Network.HTTP.Client
   ( Request (..)
@@ -77,7 +75,7 @@ fetchUrl url = do
           FetchResult
             { fetchStatus = statusCode (responseStatus response)
             , fetchContentType = maybe "" decodeHeader (lookup hContentType (responseHeaders response))
-            , fetchBody = decodeBody body
+            , fetchBody = decodeUtf8Lenient body
             }
 
 -- | Fetches should answer quickly; a stuck fetch must not hold an LLM turn
@@ -89,11 +87,6 @@ webTimeoutMicros = 30 * 1000 * 1000
 -- useful prefix instead of an arbitrarily large page.
 maxWebBody :: Int
 maxWebBody = 256 * 1024
-
-decodeBody :: BS.ByteString -> String
-decodeBody =
-  Text.unpack
-    . TextEncoding.decodeUtf8With TextEncodingError.lenientDecode
 
 decodeHeader :: BS.ByteString -> String
 decodeHeader = BS8.unpack
