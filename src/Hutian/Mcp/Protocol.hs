@@ -139,15 +139,10 @@ mcpToolDefinition serverName tool =
     , "function"
         .= object
           [ "name" .= mcpToolFunctionName serverName (mcpToolName tool)
-          , "description" .= description
+          , "description" .= mcpToolDescription tool
           , "parameters" .= mcpToolInputSchema tool
           ]
     ]
-  where
-    serverLine = "MCP server: " ++ serverName ++ "."
-    description
-      | null (mcpToolDescription tool) = serverLine
-      | otherwise = mcpToolDescription tool ++ "\n\n" ++ serverLine
 
 -- | Decode a JSON-RPC response and return its @result@.
 parseJsonRpcResult :: Int -> Value -> Either McpError Value

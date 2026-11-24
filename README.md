@@ -440,8 +440,9 @@ The value has the same shape as a subagent: `model`, `description`,
 `mcp.<server>.handlers.<tool>`, for example `mcp.szmcp.handlers.zim_get`.
 
 The handler is automatic. When the agent calls `mcp__szmcp__zim_get`, shown as
-`mcp.szmcp.zim_get`, the raw article goes to the handler, and only the handler's
-answer is appended as the tool result. Because the raw result is the handler's
+`mcp.szmcp.zim_get`, the raw article goes to the handler as its entire prompt;
+the tool name and arguments are not included. Only the handler's answer is
+appended as the tool result. Because the raw result is the handler's
 input, there is no separate `mcp.szmcp.zim_get.output` block: the result is the
 body of the handler's prompt, shown under its label, for example
 `mcp.szmcp.handlers.zim_get`. That block looks like tool output: the label is
@@ -454,15 +455,12 @@ The handler's prompts use its dotted path: reasoning is
 `mcp.szmcp.handlers.zim_get.answer`, and its tools are
 `mcp.szmcp.handlers.zim_get.<tool>`.
 
-The handler's `description` is appended to the tool description so the caller
-knows the result is processed:
+The handler's `description` is appended to the tool description after a
+newline, so the caller knows the result is processed:
 
 ```text
 <original tool description>
-
-Results from this tool are processed by the `mcp.szmcp.handlers.zim_get`
-subagent:
-Summarize the article; preserve paths and citations.
+<handler description>
 ```
 
 Use `tools.mcp.<server>.handlers.<tool>` for a concrete MCP tool, keyed by the

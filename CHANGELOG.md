@@ -26,6 +26,9 @@ All notable changes to Hutian are documented here. The format follows
 - MCP prompt labels keep the server's real names, while the model-facing
   function name stays API-safe. Tools that collide after sanitizing are
   reported, and only the first is advertised.
+- MCP tool descriptions no longer add an `MCP server: <name>.` line. A result
+  handler's description is appended after a single newline, without wrapper
+  text, and the handler receives only the raw tool result as its prompt.
 
 ### Fixed
 

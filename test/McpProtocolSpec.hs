@@ -121,7 +121,7 @@ tests =
               "data: \nid: 0\nretry: 3000\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"
           )
           @?= [BS8.pack "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"]
-    , testCase "the tool definition carries the server description" $
+    , testCase "the tool definition carries the description" $
         mcpToolDefinition
           "demo"
           McpTool
@@ -134,7 +134,7 @@ tests =
             , "function"
                 .= object
                   [ "name" .= ("mcp__demo__search" :: String)
-                  , "description" .= ("Search the web.\n\nMCP server: demo." :: String)
+                  , "description" .= ("Search the web." :: String)
                   , "parameters" .= object ["type" .= ("object" :: String)]
                   ]
             ]

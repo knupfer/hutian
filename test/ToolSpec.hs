@@ -177,10 +177,9 @@ tests =
     , testCase "tool summaries keep description line breaks" $ do
         let summaries = toolSummaryLines (toolDefinitionsFor mcpToolsConfig)
         assertBool
-          "the server line stays on its own line"
+          "the description keeps its own line"
           ( [ "# mcp__demo__search(query?: str)"
             , "Search the web."
-            , "MCP server: demo."
             ]
               `isInfixOf` summaries
           )
@@ -235,15 +234,15 @@ tests =
     , testCase "MCP arguments keep non-ASCII text when displayed" $
         jsonText (object ["path" .= ("R\225quira" :: String)])
           @?= "{\"path\":\"R\225quira\"}"
-    , testCase "MCP tool definitions carry the server name" $ do
+    , testCase "MCP tool definitions use only the tool description" $ do
         let definitions =
               LBS8.unpack (Aeson.encode (toolDefinitionsFor mcpToolsConfig))
         assertBool
           "namespaced tool"
           ("\"name\":\"mcp__demo__search\"" `isInfixOf` definitions)
         assertBool
-          "server description"
-          ("MCP server: demo." `isInfixOf` definitions)
+          "no separate server line"
+          (not ("MCP server:" `isInfixOf` definitions))
     , testCase "the subagent tool advertises its selectors and descriptions" $ do
         let definitions =
               LBS8.unpack (Aeson.encode (toolDefinitionsFor configuredTools))
@@ -289,7 +288,7 @@ tests =
                       , toolRuntimeContext = MainContext
                       , toolRuntimeVerbosity = VerbosityNormal
                       , toolRuntimeSubagent = \_ _ -> pure (Right "final answer\n")
-                      , toolRuntimeHandler = \_ _ _ _ _ -> pure (Left "not configured")
+                      , toolRuntimeHandler = \_ _ _ _ -> pure (Left "not configured")
                       }
                   catalog =
                     toolCatalog
@@ -322,10 +321,15 @@ tests =
                 (toolCatalog (defaultToolConfig {toolMcp = [serverConfig]}))
             definitions =
               LBS8.unpack (Aeson.encode (toolDefinitionsFor catalog))
-        assertBool "handler label" ("mcp.demo.handlers.search" `isInfixOf` definitions)
         assertBool
           "handler description"
           ("Summarize the search results." `isInfixOf` definitions)
+        assertBool
+          "the description follows the tool description"
+          ("Search the web.\\nSummarize the search results." `isInfixOf` definitions)
+        assertBool
+          "no handler wrapper text"
+          (not ("Results from this tool" `isInfixOf` definitions))
     ]
 
 shellCall :: ToolCall

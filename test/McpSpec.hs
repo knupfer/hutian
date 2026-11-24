@@ -176,7 +176,7 @@ tests =
                         , toolRuntimeVerbosity = VerbosityNormal
                         , toolRuntimeSubagent = \_ _ -> pure (Left "not configured")
                         , toolRuntimeHandler =
-                            \_ _ _ _ raw -> do
+                            \_ _ _ raw -> do
                               writeIORef received (Just raw)
                               pure (Right "handled\n")
                         }

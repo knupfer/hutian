@@ -105,7 +105,7 @@ data ToolRuntime = ToolRuntime
   , toolRuntimeContext :: TurnContext
   , toolRuntimeVerbosity :: Verbosity
   , toolRuntimeSubagent :: SubagentConfig -> String -> IO (Either String String)
-  , toolRuntimeHandler :: String -> String -> ToolCall -> HandlerConfig -> String -> IO (Either String String)
+  , toolRuntimeHandler :: String -> String -> HandlerConfig -> String -> IO (Either String String)
   }
 
 -- | Run each requested call in order with a shell-only policy. This preserves
@@ -121,7 +121,7 @@ runToolCalls jobs workingDirectory policy =
       , toolRuntimeVerbosity = VerbosityHigh
       , toolRuntimeSubagent = \_ _ ->
           pure (Left "tool error: the model subagent tool is disabled")
-      , toolRuntimeHandler = \_ _ _ _ _ ->
+      , toolRuntimeHandler = \_ _ _ _ ->
           pure (Left "tool error: the model result handler is disabled")
       }
 
@@ -195,7 +195,7 @@ runToolCall planner runtime conversation call =
         Just config -> do
           result <-
             withSubagentCursor
-              (toolRuntimeHandler runtime serverName toolName call config raw)
+              (toolRuntimeHandler runtime serverName toolName config raw)
           case result of
             Left message -> finishError message
             Right answer ->

@@ -40,7 +40,7 @@ import Hutian.Jobs
   , lineCountValue
   , maxJobOutputLines
   )
-import Hutian.Mcp.Protocol (mcpHandlerName, mcpToolDefinition, mcpToolFunctionName)
+import Hutian.Mcp.Protocol (mcpToolDefinition, mcpToolFunctionName)
 import Hutian.Policy (ToolPolicy (..), toolPolicyAdvertised)
 import Hutian.Tool.Catalog
   ( McpServer (..)
@@ -152,7 +152,6 @@ toolDefinitionsFor catalog =
     serverTools server
       | toolPolicyAdvertised (mcpServerPolicyOf server) =
           [ appendHandlerDescription
-              (mcpServerNameOf server)
               (mcpToolName tool)
               (mcpServerHandlersOf server)
               (mcpToolDefinition (mcpServerNameOf server) tool)
@@ -160,19 +159,15 @@ toolDefinitionsFor catalog =
           ]
       | otherwise = []
 
--- | Append the result handler's description to a tool definition. The suffix
--- tells the main model that the raw result is processed before it sees it.
-appendHandlerDescription :: String -> String -> HandlerConfigs -> Value -> Value
-appendHandlerDescription serverName toolName handlers definition =
+-- | Append the result handler's description to a tool definition. The extra
+-- line tells the main model that the raw result is processed before it sees it.
+appendHandlerDescription :: String -> HandlerConfigs -> Value -> Value
+appendHandlerDescription toolName handlers definition =
   case handlerConfigFor toolName handlers of
     Nothing -> definition
     Just config -> mapFunctionDescription (\description -> description ++ suffix config) definition
   where
-    suffix config =
-      "\n\nResults from this tool are processed by the `"
-        ++ mcpHandlerName serverName toolName
-        ++ "` subagent: "
-        ++ agentDescription config
+    suffix config = "\n" ++ agentDescription config
 
 mapFunctionDescription :: (String -> String) -> Value -> Value
 mapFunctionDescription f (Object fields) =

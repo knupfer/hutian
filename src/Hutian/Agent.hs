@@ -39,7 +39,6 @@ import Hutian.Console
 import Hutian.Context (TurnContext (MainContext), pathLabel, subagentContext)
 import Hutian.Conversation
   ( Conversation
-  , ToolCall (..)
   , appendResult
   , appendTerminal
   , emptyConversation
@@ -59,7 +58,7 @@ import Hutian.Llm
   )
 import Hutian.Llm.Loop (LlmLoop (..), runToolLoopWithResult)
 import Hutian.Mcp (discoverMcpServers)
-import Hutian.Mcp.Protocol (mcpHandlerName, mcpToolDisplayName)
+import Hutian.Mcp.Protocol (mcpHandlerName)
 import Hutian.Render (OutputKind (..))
 import Hutian.Shell
   ( runShellCommand
@@ -205,32 +204,23 @@ runSubagent env context config =
     (subagentName config)
     (subagentAgent config)
 
--- | Run a tool-result handler. The handler gets the raw result as its prompt,
--- but only its final answer is returned. Its own tool results use its own
--- handlers, never the caller's.
+-- | Run a tool-result handler. The handler receives only the tool result as its
+-- prompt, and only its final answer is returned. Its own tool results use its
+-- own handlers, never the caller's.
 runResultHandler
   :: RuntimeEnv
   -> TurnContext
   -> String
   -> String
-  -> ToolCall
   -> AgentConfig
   -> String
   -> IO (Either String String)
-runResultHandler env parent serverName localName call config raw =
+runResultHandler env parent serverName localName =
   runAgent
     env
     parent
     (HandlerPromptPresentation displayedOutput)
     (mcpHandlerName serverName localName)
-    config
-    ( "Tool: "
-        ++ mcpToolDisplayName serverName localName
-        ++ "\nArguments: "
-        ++ toolCallArguments call
-        ++ "\n\nResult:\n"
-        ++ raw
-    )
   where
     displayedOutput =
       outputBodyVisible
