@@ -52,8 +52,10 @@
     #   its final answer.
     # - `mcp` maps names to MCP servers. Hutian discovers each server's tools at
     #   startup and advertises them with the API-safe name
-    #   `mcp__<server>__<tool>`; prompts display `mcp.<server>.<tool>`. The Exa server
-    #   works without a key for search and fetch; add an explicit API key
+    #   `mcp__<server>__<tool>`; prompts display `mcp.<server>.<tool>`. Each
+    #   server requires a `url`, a `policy`, and a `handlers` map; use
+    #   `handlers = { };` when none of its tools needs a result handler. The Exa
+    #   server works without a key for search and fetch; add an explicit API key
     #   through a local MCP proxy if you need higher limits. MCP runs in the
     #   sandbox, so `sandbox.network = true` is required.
     #

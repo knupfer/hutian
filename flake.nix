@@ -268,8 +268,10 @@
               "policy"
               "handlers"
             ];
-            present = allowedKeys path names (requiredKeys path [ "url" ] value);
-            policy = if present ? policy then toolPolicy "${path}.policy" present.policy else "ask";
+            # Every server key is required, including an empty `handlers = { }`.
+            # An explicit map keeps discovery, policy, and result handling
+            # visible at the configuration site.
+            present = allowedKeys path names (requiredKeys path names value);
           in
           {
             url =
@@ -277,8 +279,8 @@
                 present.url
               else
                 throw "hutian: option `${path}.url` must be a non-empty string";
-            inherit policy;
-            handlers = checkedHandlers "${path}.handlers" (present.handlers or { });
+            policy = toolPolicy "${path}.policy" present.policy;
+            handlers = checkedHandlers "${path}.handlers" present.handlers;
           };
 
       # Normalize and validate the options shared by every helper. The result
@@ -495,6 +497,7 @@
                 demo = {
                   url = "https://mcp.example.test/mcp";
                   policy = "ask";
+                  handlers = { };
                 };
               };
             };
@@ -744,7 +747,32 @@
             (contains "\"mcp\":{\"demo\":{" (configFile mcpLauncher "hutian-tools"))
             (contains "\"url\":\"https://mcp.example.test/mcp\"" (configFile mcpLauncher "hutian-tools"))
             (contains "\"policy\":\"ask\"" (configFile mcpLauncher "hutian-tools"))
+            (contains "\"handlers\":{}" (configFile mcpLauncher "hutian-tools"))
           ];
+
+          # An MCP server must state its policy and handler map. Neither is
+          # inferred, so a server cannot silently get a default policy.
+          mcp-required-rejected =
+            checkRejected "mcp-required" "hutian: an MCP server must specify policy and handlers"
+              [
+                (withAgent {
+                  tools.mcp.demo = {
+                    url = "https://mcp.example.test/mcp";
+                  };
+                })
+                (withAgent {
+                  tools.mcp.demo = {
+                    url = "https://mcp.example.test/mcp";
+                    policy = "ask";
+                  };
+                })
+                (withAgent {
+                  tools.mcp.demo = {
+                    url = "https://mcp.example.test/mcp";
+                    handlers = { };
+                  };
+                })
+              ];
 
           launcher-volumes = check "launcher-volumes" [
             (omits "the launcher must not pass one gVisor volume per store path" "volumes+=(-volume"

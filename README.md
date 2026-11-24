@@ -35,9 +35,10 @@ advertises it but needs approval, and `"allow"` runs it automatically.
   conversation loop, and return only their final answer to the caller.
 - `tools.mcp` maps names to MCP servers. At startup Hutian initializes each
   server, lists its tools, and advertises them with the API-safe name
-  `mcp__<server>__<tool>`; prompts display them as `mcp.<server>.<tool>`. The
-  server policy applies to every tool it exposes. A concrete tool can route its
-  result through a subagent configuration; see “Tool result handlers” below.
+  `mcp__<server>__<tool>`; prompts display them as `mcp.<server>.<tool>`. Each
+  server states its `url`, a `policy` for every tool it exposes, and a
+  `handlers` map. A concrete tool can route its result through a subagent
+  configuration; see “Tool result handlers” below.
 
 MCP tool calls show their JSON arguments under the tool label with dim JSON
 syntax highlighting. Error lines are bold red when standard error is a terminal.
@@ -199,22 +200,57 @@ start therefore shows `job <id> started` as tool output. A start notice shows
 only the job id because the command is already visible on the request line. Job
 completion is not announced; the model checks with `jobs` or `job_output`.
 
+## API reference
+
+The flake exports three helpers under `hutian.lib`:
+
+| Helper | Takes | Returns | Use it when |
+| --- | --- | --- | --- |
+| `lib.mkFlake` | a nixpkgs flake input and one option set | `packages.<system>.hutian` and `apps.<system>.hutian` for every supported system | the flake exists to run Hutian |
+| `lib.mkApp` | a `pkgs` instance and one option set | one app attribute for an `apps.<system>` entry | you add Hutian to a flake that keeps its own `default` |
+| `lib.mkPackage` | a `pkgs` instance and one option set | the `hutian` derivation | you want the package without an app entry |
+
+```text
+lib.mkFlake   nixpkgsInput options -> { packages, apps }
+lib.mkApp     pkgs options         -> app
+lib.mkPackage pkgs options         -> derivation
+```
+
+All three accept the same option set and run the same validation. `mkFlake`
+returns outputs for `x86_64-linux` and `aarch64-linux`; other systems are not
+included. Use `mkApp` or `mkPackage` for a single system or a custom `pkgs`
+instance.
+
+`mkFlake` evaluates `sandbox.packages` against the nixpkgs input you pass, so
+package versions come from your lock file. `mkApp` and `mkPackage` use the
+`pkgs` instance you pass, which lets them share it with the rest of your flake.
+
+None of the helpers replaces `default`; they only add a `hutian` entry. A
+dedicated flake can return the helper's outputs directly and run with
+`nix run .#hutian`:
+
+```nix
+outputs = { nixpkgs, hutian, ... }:
+  hutian.lib.mkFlake nixpkgs (import ./hutian.nix);
+```
+
+`lib` exports nothing else. Validation runs whenever the result is evaluated,
+so `nix flake check` on a consumer flake reports a bad configuration without
+building the sandbox.
+
 ## Configuration
 
-`lib.mkFlake` builds Hutian for every supported system from one package
-selector. It exposes `apps.<system>.hutian` and `packages.<system>.hutian`, so a
-dedicated flake can return its outputs directly and run with `nix run .#hutian`.
-Each selected package's runtime closure is mounted under `/nix/store`, and its
-`bin` directory is added to `PATH`. Closures of any size work, because Hutian
-bind-mounts the closure into the root filesystem instead of passing one sandbox
-volume per store path. Hutian's own executables are linked statically against
-their Haskell libraries, so the GHC library and documentation closure is not
-part of the sandbox store.
+The same options apply to all three helpers. Each selected package's runtime
+closure is mounted under `/nix/store`, and its `bin` directory is added to
+`PATH`. Closures of any size work, because Hutian bind-mounts the closure into
+the root filesystem instead of passing one sandbox volume per store path.
+Hutian's own executables are linked statically against their Haskell libraries,
+so the GHC library and documentation closure is not part of the sandbox store.
 
 The `sandbox`, `endpoint`, `output`, and `agent` groups are required. `sandbox`
 configures the package closure, whether the host working directory is writable,
 whether Nix is available, and whether the sandbox may use the network;
-`endpoint` selects the llama.cpp URL and the optional key command; `output`
+`endpoint` selects the llama.cpp URL and the host relay's key command; `output`
 controls model and tool output detail; `agent` configures the model name, system
 message, and tool permissions:
 
@@ -231,9 +267,11 @@ message, and tool permissions:
 | `agent.systemPrompt` | agent | System message for every LLM request. |
 | `agent.tools` | agent | Tool policies and configuration: `shell`, `webfetch`, `subagent`, and `mcp`, including per-MCP-tool result handlers. |
 
-Every option above is mandatory and has no default. Omitting one fails with an
-error that lists the missing option paths, and unknown options are rejected, so
-a misspelled key such as `agent.foo` cannot be ignored silently.
+Every option and every nested key is mandatory. Omitting one fails with an
+error that names the missing path, and unknown keys are rejected, so a
+misspelled key such as `agent.foo` cannot be ignored silently. There are no
+inferred defaults: write `null` for `endpoint.apiKeyCommand` when the upstream
+needs no key, and `{ }` for an empty `subagent`, `mcp`, or `handlers` map.
 
 Hutian expects an OpenAI-compatible llama.cpp chat endpoint; a native
 `/completion` URL is also supported. HTTPS endpoints are verified against the CA
@@ -346,10 +384,15 @@ tools = {
     search = {
       url = "https://mcp.example.test/mcp";
       policy = "ask";
+      handlers = { };
     };
   };
 };
 ```
+
+Each server requires `url`, `policy`, and `handlers`. Set `handlers = { };`
+when no tool needs a result handler. See “Tool result handlers” below for the
+handler shape.
 
 MCP discovery and calls run in the sandbox, so `sandbox.network = true` is
 required for normal internet access. Use a local MCP proxy when the server
@@ -599,13 +642,15 @@ endpoint.apiKeyCommand = "cat /run/secrets/hutian-key";
 ```
 
 The launcher starts `hutian-llm-relay` on the host. With a command configured,
-the relay reads the key from standard input; the launcher runs the command and
-pipes its output into the relay. `endpoint.apiKeyCommand` runs in the foreground
-before the sandbox starts, so commands that prompt for a password (for example
-`passage`) work normally and can be cancelled with `Ctrl+C`. Without a key the
-relay starts with `--no-auth` and forwards requests without an `Authorization`
-header. This works with local llama.cpp servers that do not require a key, and
-the sandbox still needs no direct network access to the model endpoint.
+the relay reads the key from standard input; the launcher evaluates the command
+with the host shell and pipes its output into the relay. The value must be a
+complete shell command, and it is trusted configuration. The command runs in the
+foreground before the sandbox starts, so commands that prompt for a password
+(for example `passage`) work normally and can be cancelled with `Ctrl+C`.
+Without a key the relay starts with `--no-auth` and forwards requests without an
+`Authorization` header. This works with local llama.cpp servers that do not
+require a key, and the sandbox still needs no direct network access to the model
+endpoint.
 
 The relay listens on a per-session Unix socket under `$XDG_RUNTIME_DIR` (falling
 back to `/tmp`). The socket directory is mode `0700` and is bind-mounted
