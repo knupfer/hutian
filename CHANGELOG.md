@@ -5,6 +5,34 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0.0] - 2026-11-24
+
+### Added
+
+- An API reference for `hutian.lib` (`mkFlake`, `mkApp`, and `mkPackage`) and a
+  documented, mandatory configuration schema.
+
+### Changed
+
+- **Breaking:** every MCP server must state `url`, `policy`, and `handlers`.
+  Missing keys fail at evaluation time instead of silently defaulting.
+- Tool documents are validated as strictly as the flake schema. A hand-written
+  `--tools-file`, subagent document, or handler document now rejects missing
+  fields and unknown keys instead of ignoring them.
+- `job_kill` now asks for approval in `"ask"` mode. Listing jobs and reading a
+  log stay unapproved.
+- A model endpoint with one trailing slash is still treated as the chat
+  completion API.
+- MCP prompt labels keep the server's real names, while the model-facing
+  function name stays API-safe. Tools that collide after sanitizing are
+  reported, and only the first is advertised.
+
+### Fixed
+
+- An unreadable job log is reported as an error instead of appearing empty.
+- JSON tool-call indices and MCP response ids reject fractional and
+  out-of-range numbers.
+
 ## [0.10.0.0] - 2026-11-23
 
 ### Added
