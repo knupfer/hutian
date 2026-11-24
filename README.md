@@ -244,12 +244,13 @@ tools.mcp.szmcp = {
 };
 ```
 
-The handler has no `name`; its label is `mcp.<server>.handlers.<tool>`. When the
-agent calls `mcp__szmcp__zim_get` (shown as `mcp.szmcp.zim_get`), the raw result
-becomes the handler's entire prompt and only its answer is appended as the tool
-result. There is no separate `<tool>.output` block: the prompt body is shown
-under the handler label and follows tool-output visibility. Handlers can use real
-tools and their own MCP handlers; they never inherit the caller's.
+The handler has no `name`; its label is `mcp.<server>.<tool>.handler`, nested
+under the tool call. When the agent calls `mcp__szmcp__zim_get` (shown as
+`mcp.szmcp.zim_get`), the raw result becomes the handler's entire prompt and
+only its answer is appended as the tool result. There is no separate
+`<tool>.output` block: the prompt body is shown under the handler label and
+follows tool-output visibility. Handlers can use real tools and their own MCP
+handlers; they never inherit the caller's.
 
 The handler's `description` is appended to the tool description after a newline.
 An unknown handler is reported after discovery and ignored. Built-in tools and

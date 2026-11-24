@@ -115,10 +115,12 @@ mcpToolDisplayName :: String -> String -> String
 mcpToolDisplayName serverName toolName =
   "mcp." ++ serverName ++ "." ++ toolName
 
--- | The path of the result handler for one concrete MCP tool.
+-- | The path of the result handler for one concrete MCP tool. The handler is a
+-- child of the tool call, so its prompts nest under the tool instead of a
+-- sibling @handlers@ namespace.
 mcpHandlerName :: String -> String -> String
 mcpHandlerName serverName toolName =
-  "mcp." ++ serverName ++ ".handlers." ++ toolName
+  "mcp." ++ serverName ++ "." ++ toolName ++ ".handler"
 
 sanitizeName :: String -> String
 sanitizeName text =

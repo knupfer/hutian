@@ -110,17 +110,17 @@ tests =
         withPseudoTerminalOutput $ \readOutput -> do
           consoleWriteHandlerPromptIn
             MainContext
-            "mcp.demo.handlers.search"
+            "mcp.demo.search.handler"
             True
             "Tool: mcp.demo.search\nResult:\nFound results\n"
           output <- readOutput
           let plain = filter (/= '\r') (stripAnsi output)
           assertBool
             "the label sits above the prompt"
-            ("mcp.demo.handlers.search\nTool: mcp.demo.search" `isInfixOf` plain)
+            ("mcp.demo.search.handler\nTool: mcp.demo.search" `isInfixOf` plain)
           assertBool
             "the label uses the dim tool-output colour"
-            ((dimTealForeground ++ "mcp.demo.handlers.search" ++ reset) `isInfixOf` output)
+            ((dimTealForeground ++ "mcp.demo.search.handler" ++ reset) `isInfixOf` output)
           assertBool
             "the prompt body is gray"
             ((grayForeground ++ "Tool: mcp.demo.search") `isInfixOf` output)
@@ -128,11 +128,11 @@ tests =
         withPseudoTerminalOutput $ \readOutput -> do
           consoleWriteHandlerPromptIn
             MainContext
-            "mcp.demo.handlers.search"
+            "mcp.demo.search.handler"
             False
             "Tool: mcp.demo.search\nResult:\nFound results\n"
           output <- readOutput
-          filter (/= '\r') (stripAnsi output) @?= "mcp.demo.handlers.search\n"
+          filter (/= '\r') (stripAnsi output) @?= "mcp.demo.search.handler\n"
     , testCase "an empty tool catalog prints no tools block" $
         withPseudoTerminalOutput $ \readOutput -> do
           consoleWriteToolDefinitions MainContext []

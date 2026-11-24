@@ -23,6 +23,9 @@ All notable changes to Hutian are documented here. The format follows
 - Captured shell output stays as bytes for display and is decoded to text once
   for the model, with no `String` round trip. A 1 MiB tool result takes about
   7 ms instead of about 100 ms, and output is still not capped.
+- MCP result handlers now nest under the tool that produced the result: the
+  block is labeled `mcp.<server>.<tool>.handler` and its prompts extend that
+  path, instead of `mcp.<server>.handlers.<tool>`.
 
 ## [0.11.0.0] - 2026-11-24
 

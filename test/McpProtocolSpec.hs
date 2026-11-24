@@ -24,9 +24,9 @@ tests =
           @?= "mcp.a.b.x y"
     , testCase "result handler paths use the real tool names" $ do
         mcpHandlerName "demo" "search"
-          @?= "mcp.demo.handlers.search"
+          @?= "mcp.demo.search.handler"
         mcpHandlerName "a.b" "x y"
-          @?= "mcp.a.b.handlers.x y"
+          @?= "mcp.a.b.x y.handler"
     , testCase "tools/list decodes descriptions and schemas" $
         parseTools
           ( object
