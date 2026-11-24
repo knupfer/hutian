@@ -1,356 +1,203 @@
 # Hutian
 
-Hutian is a Nix flake that drops you into a rootless
-[gVisor](https://gvisor.dev/) sandbox with a small Haskell shell.
+Hutian is an AI coding shell. You describe a task, and a model works on your
+project with shell, web-fetch, subagent, and MCP tools — while every command runs
+inside a rootless [gVisor](https://gvisor.dev/) sandbox.
 
-The sandbox sees only:
+It is packaged as a Nix flake. The sandbox sees only your working directory at
+`/source` (read-only unless `sandbox.writable = true`), the runtime closures of
+`sandbox.packages` under `/nix/store`, and — with `sandbox.nixDaemon = true` —
+the host Nix store and daemon socket. Everything else on the host is hidden.
 
-- the current working directory, mounted at `/source` read-only, or read-write
-  when `sandbox.writable = true`;
-- the runtime closures of the configured packages under `/nix/store`;
-- optionally, with `sandbox.nixDaemon = true`, the host Nix store and Nix daemon
-  socket.
+The shell has two input modes:
 
-Everything else on the host is hidden. The root filesystem is built from Nix's
-static BusyBox sandbox shell and the `hutian-shell` binary.
+- **LLM mode** (default): a bold pink `ask` line precedes input sent to the
+  model.
+- **Term mode** (`Ctrl+X`): a bold pink `shell` line precedes input run through
+  BusyBox `ash`.
 
-The prompt is a multiline editor with two modes. It starts in LLM mode, where
-input is preceded by a bold pink `ask` line and sent to the model. `Ctrl+X`
-switches to term mode, where a bold pink `shell` line precedes input that runs
-through BusyBox `ash`, so shell builtins and redirection work as expected.
-
-The model's tools are controlled by the mandatory `agent.tools` option. Each
-tool has a three-way policy: `"deny"` hides it and refuses any call, `"ask"`
-advertises it but needs approval, and `"allow"` runs it automatically.
-
-- `tools.shell` covers `shell`, `shell_background`, `jobs`, `job_output`, and
-  `job_kill`. Listing jobs and reading a log do not need approval in `"ask"`
-  mode; starting a command and stopping a job do.
-- `tools.webfetch` covers the `webfetch` tool, which fetches an http or https URL
-  from inside the sandbox.
-- `tools.subagent` maps selector names to subagents. Each has an upstream
-  `model`, a `description`, a `systemPrompt`, and its own `tools`. The main
-  model sees the names and descriptions and calls one by selector through the
-  `subagent` tool. Subagents run serially, use the same model API and
-  conversation loop, and return only their final answer to the caller.
-- `tools.mcp` maps names to MCP servers. At startup Hutian initializes each
-  server, lists its tools, and advertises them with the API-safe name
-  `mcp__<server>__<tool>`; prompts display them as `mcp.<server>.<tool>`. Each
-  server states its `url`, a `policy` for every tool it exposes, and a
-  `handlers` map. A concrete tool can route its result through a subagent
-  configuration; see “Tool result handlers” below.
-
-MCP tool calls show their JSON arguments under the tool label with dim JSON
-syntax highlighting. Error lines are bold red when standard error is a terminal.
-
-Prompt labels are dotted paths. The main agent prints `think`, `answer`,
-`output`, and the tool name. A subagent `foo` prefixes every prompt with `foo.`,
-so its reasoning is `foo.think`, its answer `foo.answer`, its tool input
-`foo.shell`, and its tool output `foo.shell.output`. Nested agents extend the
-path: `foo.bar.think`.
-
-The mandatory `output.verbosity` option controls model and tool output:
-
-- `"low"` prints tool calls with their arguments and main-turn answers. Other
-  blocks, including a subagent's answer, show only their prompt, such as
-  `think`, `answer`, or `shell.output`.
-- `"normal"` shows thinking blocks for the main agent. A subagent is presented
-  like low, but its final answer streams in dim colors, using the same styling
-  as a thinking block.
-- `"high"` prints everything, including full reasoning and every subagent block.
-  Subagent answers still use the dim styling. It also prints the exact system
-  message and, per tool, a `# name(...)` heading followed by its complete
-  description, rendered as dim Markdown, with dim labels and text: `system`
-  then `tools` before the first main `ask`, and `foo.system` then `foo.tools`
-  before every `foo` subagent block.
-
-Term mode is always available. Model commands run through the same `/bin/sh -c`
-path as term mode and are shown with a bold teal `shell` line. In `"ask"`
-mode Hutian shows an `approve` prompt in the user's pink prompt colour while
-the cursor is hidden, with `[y] Yes` and `[n] No` on their own lines. The choice
-collapses into a single `Yes` or `No` line; only `y` or `n` decides, other keys
-are ignored, and `Ctrl+C` aborts the current LLM turn. Shell output is preceded
-by a dimmed pink `shell.output` line and tool output by a dimmed teal
-`<tool>.output` line, for example `mcp.<server>.<tool>.output`.
-In every mode, subagent work starts under a blue `<name>` line, followed by the
-task it was given. Low and normal abbreviate the internal blocks to their
-prompts; normal additionally prints the final answer in dim colors. Every
-subagent tool prompt, answer, and output label uses the dim
-subagent blue; the input text under a tool prompt is dim gray.
+Every model tool has a mandatory three-way policy: `"deny"` hides it and refuses
+calls, `"ask"` advertises it but requires approval, and `"allow"` runs it
+automatically.
 
 ## Quick start
+
+Run the published flake directly:
 
 ```console
 $ cd /some/project
 $ nix run github:knupfer/hutian#hutian
-<Ctrl+X>          # switch from llm mode to term mode
-pwd
-<Enter>
-/source
 ```
 
-Run a single command without starting the interactive shell:
+Run a single command without the interactive shell:
 
 ```console
 $ nix run github:knupfer/hutian#hutian -- echo hello
 $ nix run github:knupfer/hutian#hutian -- /bin/sh -c 'echo hello > /tmp/result.txt'
 ```
 
-With `sandbox.writable = true`, files written under `/source` appear directly in
-the host working directory. `/tmp` is private to the sandbox, and the sandbox
-root is read-only.
+With `sandbox.writable = true`, writes under `/source` appear in the host working
+directory. `/tmp` is private to the sandbox and the sandbox root is read-only.
 
-## Input modes
+## Use it in your project
 
-The prompt starts in LLM mode. `Ctrl+X` switches between LLM and term mode
-regardless of `agent.tools.shell`. Each mode keeps its own input buffer:
-switching saves the current text and restores the text of the mode being
-entered. Submitted text goes to llama.cpp in LLM mode and to `/bin/sh -c` in
-term mode.
+The [`examples/`](./examples) directory contains a ready-to-run configuration:
+
+- [`hutian.nix`](./examples/hutian.nix) — the annotated option set.
+- [`dedicated.nix`](./examples/dedicated.nix) — a flake that exposes Hutian as
+  its only app.
+- [`existing-project.nix`](./examples/existing-project.nix) — a flake that adds
+  Hutian beside an existing `default`.
+
+For a project that only needs Hutian, copy both files and rename the flake:
+
+```console
+$ cp /path/to/hutian/examples/hutian.nix .
+$ cp /path/to/hutian/examples/dedicated.nix flake.nix
+$ $EDITOR hutian.nix      # set endpoint.url, agent.model, and tools
+$ nix run .#hutian
+```
+
+`nix run .#hutian` builds and starts the `hutian` app from the local flake;
+`nix build .#hutian` builds the package instead.
+
+To keep an existing flake's `default`, copy `existing-project.nix` as `flake.nix`
+(or merge its `outputs` into yours), keep `hutian.nix` beside it, and run
+`nix run .#hutian`. That example uses `mkApp` and `mkPackage`, so the project's
+own `default` stays in place.
+
+The flake exports `hutian.lib.mkFlake`, `mkApp`, and `mkPackage`. All take the
+same option set:
+
+- `mkFlake nixpkgs options` returns `packages.<system>.hutian` and
+  `apps.<system>.hutian` for `x86_64-linux` and `aarch64-linux`.
+- `mkApp pkgs options` returns one app; `mkPackage pkgs options` returns the
+  derivation. Use them for a single system or an existing `pkgs` instance.
+
+None replaces `default`, and `lib` exports nothing else. Validation runs when the
+result is evaluated, so `nix flake check` reports a bad configuration without
+building.
+
+## Tools
+
+`agent.tools` has four groups:
+
+- `shell`: `shell`, `shell_background`, `jobs`, `job_output`, and `job_kill`. In
+  `"ask"` mode, listing jobs and reading logs are free; starting and stopping
+  jobs need approval.
+- `webfetch`: fetches an http or https URL from inside the sandbox.
+- `subagent`: selector names mapped to subagents, each with a `model`, a
+  `description`, a `systemPrompt`, and its own `tools`. The main model calls one
+  by selector; subagents run serially and return only their final answer.
+- `mcp`: names mapped to MCP servers. Hutian discovers each server's tools and
+  advertises them as `mcp__<server>__<tool>` (prompts show
+  `mcp.<server>.<tool>`). Each server has a `url`, a `policy`, and a `handlers`
+  map; see [Tool result handlers](#tool-result-handlers).
+
+MCP tool calls show their JSON arguments with dim JSON highlighting. Error lines
+are bold red when standard error is a terminal.
+
+## Modes and output
+
+The prompt starts in LLM mode; `Ctrl+X` switches to term mode. Each mode keeps
+its own input buffer. LLM input is Markdown-highlighted and sent to the model;
+term input is shell-highlighted and run with `/bin/sh -c`. Each term command is a
+fresh shell, so `cd` and exported variables do not persist.
 
 | Key | Effect |
 | --- | --- |
-| `Enter` | Start a new line in LLM mode; execute in term mode. In term mode a trailing `\` or an unclosed single/double quote continues the command on the next line, like bash. |
-| `Up`/`Down` | Recall input history. In LLM mode these first move through the current lines, then browse earlier prompts at the first or last line. |
-| `Backspace`/`Delete` | Edit the text at the cursor; deleting a newline joins the two lines. |
-| Arrow keys, `Home`/`End` | Move the cursor within the message, including between lines, and jump to the start or end of the current line. |
-| `Tab` | Complete command names from `PATH` and filesystem paths in term mode. Ambiguous matches are listed below the input. |
-| `Ctrl+D` | Exit on empty input in either mode. In LLM mode it also submits non-empty input. |
-| `Ctrl+C` | Clear the current input and keep editing. |
+| `Enter` | New line in LLM mode; execute in term mode. A trailing `\` or unclosed quote continues the command. |
+| `Up`/`Down` | Recall history; in LLM mode, move through lines first. |
+| `Backspace`/`Delete` | Edit text; deleting a newline joins lines. |
+| Arrow keys, `Home`/`End` | Move the cursor; jump to line start or end. |
+| `Tab` | Complete command names and paths in term mode. |
+| `Ctrl+D` | Exit on empty input; in LLM mode, submit non-empty input. |
+| `Ctrl+C` | Clear the current input; in term mode, cancel the running command. |
 
-### LLM mode
+Prompt labels are dotted paths: the main agent prints `think`, `answer`,
+`output`, and the tool name; a subagent `foo` prefixes them with `foo.`
+(`foo.think`, `foo.answer`, `foo.shell`, `foo.shell.output`); nesting extends the
+path (`foo.bar.think`).
 
-LLM mode is the initial mode. Input is preceded by a bold pink `ask` line and
-is syntax-highlighted as Markdown while you type, including headings, emphasis,
-links, lists, and fenced code blocks. Replies use the same highlighting, and
-fenced blocks tagged with a language use that language's syntax highlighter.
-Reasoning/thinking tokens are shown in grey under a dimmed teal `think` line,
-with dimmed Markdown and code highlighting; the reply follows under a bold teal
-`answer` line.
+`output.verbosity` controls detail:
 
-Every LLM request includes the session's prior conversation: earlier prompts,
-assistant replies, commands submitted in term mode, and tool calls with their
-results.
+- `"low"`: tool calls with arguments and main-turn answers; other blocks show
+  only their prompt.
+- `"normal"`: adds main-agent thinking; a subagent's final answer streams dim.
+- `"high"`: everything, including full reasoning and every subagent block, plus
+  the exact system message and a `# name(...)` description per tool.
 
-The model can call the `shell` tool according to `agent.tools.shell`. Each
-command runs with `/bin/sh -c` in the sandbox working directory, its output is
-streamed to the terminal in gray under a dimmed teal `shell.output` line, and
-the output is sent back to the model. Every call runs in a fresh shell, so `cd`,
-exported variables, and other shell state do not persist between calls. The
-requested command is shown under a bold teal `shell` line,
-syntax-highlighted as shell, which distinguishes it from commands typed by the
-user. In `"ask"` mode, non-interactive runs deny tool calls automatically.
+In `"ask"` mode an `approve` prompt appears with `[y] Yes` and `[n] No`; only
+`y`/`n` decide, and `Ctrl+C` aborts the turn. Shell output appears under a dimmed
+`shell.output` line and tool output under `<tool>.output`.
 
-For servers, watchers, and long builds, the model can call `shell_background`
-instead of `shell`. It receives a job id immediately and uses `jobs`,
-`job_output`, and `job_kill` to inspect and control the job. The requested
-command is shown under a bold teal `shell_background` line, and the start
-result follows under `shell_background.output` in gray.
-
-The model can also fetch pages with `webfetch` and delegate a self-contained
-task to a configured subagent. Web tools run in the sandbox and need direct
-networking (`sandbox.network = true`) unless the URL is reachable another way. A
-subagent gets its own system prompt and tools and runs
-synchronously inside the tool call; only its final answer becomes the tool
-result in the main conversation. In every mode its work appears under a blue
-`<name>` line followed by the task prompt. Low abbreviates internal
-blocks to prompts and hides subagent answer content. Normal streams the final
-answer in dim colors. High streams everything, with subagent answers using the
-same dim styling.
-
-```console
-Explain what a syscall is.
-<Ctrl+D>
-```
-
-### Term mode
-
-Term mode shows a bold pink `shell` line above the input and prints command
-output in gray under a dimmed pink `shell.output` line. Input is
-syntax-highlighted as shell while you type. Every line is executed with
-`/bin/sh -c` in the sandbox working directory.
-
-Each command runs in a fresh shell, so `cd`, exported variables, and other shell
-state do not carry over. Use absolute paths or combine steps in one command, for
-example `cd sub && make`.
-
-`Ctrl+C` cancels the current input or command without terminating the shell.
-Term command history and LLM prompt history are kept in memory for the lifetime
-of the shell and are not written to disk.
-
-## Background jobs
-
-Long-running commands can run as background jobs so they do not hold the prompt
-or an LLM turn open. The model starts one with `shell_background`. A started
-command runs with `/bin/sh -c` in a new process group with stdin closed. Its
-stdout and stderr are appended to `/tmp/hutian-jobs/<id>.log` inside the
-sandbox; each job gets a fresh shell and starts in the sandbox working
-directory.
-
-The model lists every job in the session with `jobs`, including its status, pid
-while running, and command. `job_output` prints the end of a log (50 lines by
-default, at most 500, with an explicit truncation note). `job_kill` sends
-SIGTERM to the process group and then SIGKILL if it has not exited.
-
-Up to eight jobs can run at once. Finished jobs stay listed until the shell
-exits, and exiting the shell stops any that are still running. Model job tool
-calls use the same layout as the foreground shell tool: a bold teal
-`<tool>` line, then `<tool>.output` with the result in gray. A background
-start therefore shows `job <id> started` as tool output. A start notice shows
-only the job id because the command is already visible on the request line. Job
-completion is not announced; the model checks with `jobs` or `job_output`.
-
-## API reference
-
-The flake exports three helpers under `hutian.lib`:
-
-| Helper | Takes | Returns | Use it when |
-| --- | --- | --- | --- |
-| `lib.mkFlake` | a nixpkgs flake input and one option set | `packages.<system>.hutian` and `apps.<system>.hutian` for every supported system | the flake exists to run Hutian |
-| `lib.mkApp` | a `pkgs` instance and one option set | one app attribute for an `apps.<system>` entry | you add Hutian to a flake that keeps its own `default` |
-| `lib.mkPackage` | a `pkgs` instance and one option set | the `hutian` derivation | you want the package without an app entry |
-
-```text
-lib.mkFlake   nixpkgsInput options -> { packages, apps }
-lib.mkApp     pkgs options         -> app
-lib.mkPackage pkgs options         -> derivation
-```
-
-All three accept the same option set and run the same validation. `mkFlake`
-returns outputs for `x86_64-linux` and `aarch64-linux`; other systems are not
-included. Use `mkApp` or `mkPackage` for a single system or a custom `pkgs`
-instance.
-
-`mkFlake` evaluates `sandbox.packages` against the nixpkgs input you pass, so
-package versions come from your lock file. `mkApp` and `mkPackage` use the
-`pkgs` instance you pass, which lets them share it with the rest of your flake.
-
-None of the helpers replaces `default`; they only add a `hutian` entry. A
-dedicated flake can return the helper's outputs directly and run with
-`nix run .#hutian`:
-
-```nix
-outputs = { nixpkgs, hutian, ... }:
-  hutian.lib.mkFlake nixpkgs (import ./hutian.nix);
-```
-
-`lib` exports nothing else. Validation runs whenever the result is evaluated,
-so `nix flake check` on a consumer flake reports a bad configuration without
-building the sandbox.
+Background jobs (`shell_background`) return a job id immediately. `jobs` lists
+them, `job_output` prints the end of a log (50 lines by default, at most 500),
+and `job_kill` stops the process group. Up to eight run at once; exiting the
+shell stops any still running. Job output uses the same `<tool>.output` layout.
 
 ## Configuration
 
-The same options apply to all three helpers. Each selected package's runtime
-closure is mounted under `/nix/store`, and its `bin` directory is added to
-`PATH`. Closures of any size work, because Hutian bind-mounts the closure into
-the root filesystem instead of passing one sandbox volume per store path.
-Hutian's own executables are linked statically against their Haskell libraries,
-so the GHC library and documentation closure is not part of the sandbox store.
+The same options apply to all three helpers. The `sandbox`, `endpoint`, `output`,
+and `agent` groups are required, and every nested key is mandatory. Omitting one
+fails with an error naming the path; unknown keys are rejected. Write `null` for
+`endpoint.apiKeyCommand` and `{ }` for an empty `subagent`, `mcp`, or `handlers`
+map.
 
-The `sandbox`, `endpoint`, `output`, and `agent` groups are required. `sandbox`
-configures the package closure, whether the host working directory is writable,
-whether Nix is available, and whether the sandbox may use the network;
-`endpoint` selects the llama.cpp URL and the host relay's key command; `output`
-controls model and tool output detail; `agent` configures the model name, system
-message, and tool permissions:
+| Option | Description |
+| --- | --- |
+| `sandbox.packages` | `pkgs` selector for closures mounted under `/nix/store` and added to `PATH`. |
+| `sandbox.writable` | Allow writes to `/source`; `false` mounts it read-only. |
+| `sandbox.nixDaemon` | Expose the host `/nix/store` and Nix daemon socket. |
+| `sandbox.network` | Direct gVisor networking; `true` is `host`, `false` is `none`. |
+| `endpoint.url` | OpenAI-compatible chat or native `/completion` URL. |
+| `endpoint.apiKeyCommand` | Command that prints the upstream key, or `null`. |
+| `output.verbosity` | `"low"`, `"normal"`, or `"high"`. |
+| `agent.model` | Model name sent to the endpoint. |
+| `agent.systemPrompt` | System message for every request. |
+| `agent.tools` | `shell`, `webfetch`, `subagent`, and `mcp` policies. |
 
-| Option | Applies to | Description |
-| --- | --- | --- |
-| `sandbox.packages` | sandbox | `pkgs` selector for the package closures mounted under `/nix/store` and added to `PATH`. |
-| `sandbox.writable` | sandbox | Allows writes to `/source`; `false` mounts it read-only. It protects integrity, not confidentiality. |
-| `sandbox.nixDaemon` | sandbox | Exposes the host `/nix/store` and Nix daemon socket. |
-| `sandbox.network` | sandbox | Controls direct gVisor networking. `true` uses `host` mode; `false` forces `none`. |
-| `endpoint.url` | relay | OpenAI-compatible chat or native `/completion` URL. `http://` and `https://` are supported. |
-| `endpoint.apiKeyCommand` | host relay | Command that prints the upstream key, or `null` for unauthenticated forwarding. |
-| `output.verbosity` | output | `"low"`, `"normal"`, or `"high"` model/tool output detail. |
-| `agent.model` | agent | Model name sent to the endpoint. |
-| `agent.systemPrompt` | agent | System message for every LLM request. |
-| `agent.tools` | agent | Tool policies and configuration: `shell`, `webfetch`, `subagent`, and `mcp`, including per-MCP-tool result handlers. |
-
-Every option and every nested key is mandatory. Omitting one fails with an
-error that names the missing path, and unknown keys are rejected, so a
-misspelled key such as `agent.foo` cannot be ignored silently. There are no
-inferred defaults: write `null` for `endpoint.apiKeyCommand` when the upstream
-needs no key, and `{ }` for an empty `subagent`, `mcp`, or `handlers` map.
-
-Hutian expects an OpenAI-compatible llama.cpp chat endpoint; a native
-`/completion` URL is also supported. HTTPS endpoints are verified against the CA
-bundle from nixpkgs:
-
-```text
-https://llama.example.test/v1/chat/completions
-```
-
-A complete configuration:
+A minimal configuration:
 
 ```nix
 {
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
-    hutian = {
-      url = "github:knupfer/hutian";
-      inputs.nixpkgs.follows = "nixpkgs";
+  sandbox = {
+    packages = pkgs: [ pkgs.coreutils pkgs.git ];
+    writable = true;
+    nixDaemon = false;
+    network = false;
+  };
+  endpoint = {
+    url = "http://127.0.0.1:8080/v1/chat/completions";
+    apiKeyCommand = null;
+  };
+  output = { verbosity = "normal"; };
+  agent = {
+    model = "your-model";
+    systemPrompt = "You are a careful coding assistant.";
+    tools = {
+      shell = "ask";
+      webfetch = "deny";
+      subagent = { };
+      mcp = { };
     };
   };
-
-  outputs = { nixpkgs, hutian, ... }:
-    hutian.lib.mkFlake nixpkgs {
-      sandbox = {
-        packages = pkgs: [ pkgs.coreutils pkgs.git ];
-        writable = true;
-        nixDaemon = false;
-        network = true;
-      };
-      endpoint = {
-        url = "http://127.0.0.1:8080/v1/chat/completions";
-        apiKeyCommand = null;
-      };
-      output = {
-        verbosity = "high";
-      };
-      agent = {
-        model = "your-model";
-        systemPrompt = ''
-          You are a careful coding assistant working in a sandboxed shell.
-        '';
-        tools = {
-          shell = "allow";
-          webfetch = "deny";
-          subagent = { };
-          mcp = { };
-        };
-      };
-    };
 }
 ```
 
-`/source` is read-only unless `sandbox.writable = true`. The sandbox can still
-read the working directory, but any attempt to write to it fails with a
-read-only filesystem error. Set `sandbox.writable = true` when the model should
-be able to modify the project.
+See [`examples/hutian.nix`](./examples/hutian.nix) for the annotated version,
+including commented subagent, MCP, and handler examples.
 
-Set `sandbox.network = false` to give the sandbox gVisor's `none` network mode.
-This is a hard gate: `GVISOR_NETWORK` cannot re-enable networking. The host
-relay still provides model traffic over its Unix socket.
+`/source` is read-only unless `sandbox.writable = true`. `sandbox.network = false`
+is a hard gate: `GVISOR_NETWORK` cannot re-enable networking, but the host relay
+still carries model traffic.
 
-Set `agent.tools.shell = "deny"` to disable the model's shell tools. Term mode
-remains available for your own commands. Hutian omits the tools from every LLM
-request and also refuses to execute any tool call that arrives anyway. Use
-`"ask"` to keep the tools available with per-command approval (job listing and
-log reads stay free), or `"allow"` to run model-requested commands
-automatically.
-`agent.tools.webfetch` uses the same three values for the `webfetch` tool.
+`agent.tools.shell = "deny"` removes the shell tools from requests and refuses
+calls; term mode still works. `"ask"` requires approval per command (job listing
+and log reads are free), and `"allow"` runs automatically. `webfetch` uses the
+same values.
 
-`agent.tools.subagent` maps selector names to subagents. Each selector has an
-upstream `model` name, a `description`, a `systemPrompt`, and its own `tools`
-with the same shape. The description and selector list appear in the
-`subagent` tool schema, so the main model knows when each subagent is useful.
-The model calls a selector with a self-contained prompt; the subagent cannot
-see the main conversation. A subagent runs serially with the same API and tool
-loop, never in parallel or in the background, and the caller receives only the
-final answer. For example, a cheap summarization model can be given only
-`webfetch` while the main model keeps the shell.
+Subagents and MCP servers are configured under `agent.tools`:
 
 ```nix
 tools = {
@@ -359,28 +206,11 @@ tools = {
   subagent = {
     summarize = {
       model = "cheap-summary-model";
-      description = "Fetch and summarize web pages when current information is needed.";
+      description = "Fetch and summarize web pages when needed.";
       systemPrompt = "Fetch pages and summarize them concisely.";
-      tools = {
-        shell = "deny";
-        webfetch = "allow";
-        subagent = { };
-        mcp = { };
-      };
+      tools = { shell = "deny"; webfetch = "allow"; subagent = { }; mcp = { }; };
     };
   };
-};
-```
-
-`agent.tools.mcp` maps names to remote MCP servers. Hutian performs the
-Streamable HTTP handshake at startup, listens to `tools/list`, and advertises
-each tool with the API-safe name `mcp__<server>__<tool>`; prompts display it as
-`mcp.<server>.<tool>`. Tool calls use the session id returned by the server.
-The policy applies to every tool on that server.
-
-```nix
-tools = {
-  # ...
   mcp = {
     search = {
       url = "https://mcp.example.test/mcp";
@@ -391,174 +221,43 @@ tools = {
 };
 ```
 
-Each server requires `url`, `policy`, and `handlers`. Set `handlers = { };`
-when no tool needs a result handler. See “Tool result handlers” below for the
-handler shape.
+MCP discovery and calls run in the sandbox, so `sandbox.network = true` is needed
+for normal internet access. Use a local proxy when the server needs credentials
+or a fixed network path.
 
-MCP discovery and calls run in the sandbox, so `sandbox.network = true` is
-required for normal internet access. Use a local MCP proxy when the server
-needs credentials or a fixed network path.
+### Tool result handlers
 
-#### Tool result handlers
-
-A result handler is a subagent configuration attached to a concrete MCP tool.
-It receives the raw tool result and returns only its final answer to the agent.
-The handler runs in its own context with its own model and tools, so raw output,
-tool calls, and reasoning stay out of the caller's conversation. The caller then
-continues and decides whether to fetch more.
+A handler is a subagent configuration attached to one MCP tool. It receives the
+raw result and returns only its final answer, in its own context with its own
+model and tools:
 
 ```nix
-tools = {
-  shell = "deny";
-  webfetch = "deny";
-  subagent = { };
-
-  mcp.szmcp = {
-    url = "http://localhost:3001";
-    policy = "allow";
-
-    handlers.zim_get = {
-      model = "tiny";
-      description = "Summarize the article; preserve paths and citations.";
-      systemPrompt = ''
-        You summarize tool output for another LLM. Be terse and preserve facts,
-        names, numbers, paths, and citations.
-      '';
-      tools = {
-        shell = "deny";
-        webfetch = "deny";
-        subagent = { };
-        mcp = { };
-      };
-    };
+tools.mcp.szmcp = {
+  url = "http://localhost:3001";
+  policy = "allow";
+  handlers.zim_get = {
+    model = "tiny";
+    description = "Summarize the article; preserve paths and citations.";
+    systemPrompt = "Summarize tool output tersely; preserve facts and citations.";
+    tools = { shell = "deny"; webfetch = "deny"; subagent = { }; mcp = { }; };
   };
 };
 ```
 
-The value has the same shape as a subagent: `model`, `description`,
-`systemPrompt`, and `tools`. It has no `name`; the terminal label is derived as
-`mcp.<server>.handlers.<tool>`, for example `mcp.szmcp.handlers.zim_get`.
+The handler has no `name`; its label is `mcp.<server>.handlers.<tool>`. When the
+agent calls `mcp__szmcp__zim_get` (shown as `mcp.szmcp.zim_get`), the raw result
+becomes the handler's entire prompt and only its answer is appended as the tool
+result. There is no separate `<tool>.output` block: the prompt body is shown
+under the handler label and follows tool-output visibility. Handlers can use real
+tools and their own MCP handlers; they never inherit the caller's.
 
-The handler is automatic. When the agent calls `mcp__szmcp__zim_get`, shown as
-`mcp.szmcp.zim_get`, the raw article goes to the handler as its entire prompt;
-the tool name and arguments are not included. Only the handler's answer is
-appended as the tool result. Because the raw result is the handler's
-input, there is no separate `mcp.szmcp.zim_get.output` block: the result is the
-body of the handler's prompt, shown under its label, for example
-`mcp.szmcp.handlers.zim_get`. That block looks like tool output: the label is
-dim, the prompt body is gray, and the body follows tool-output visibility, so
-low verbosity hides it. The handler's `tools` are real tools: it
-can search, fetch, run commands, or call its own subagents. Its MCP tool results
-can have their own `handlers`; it never inherits the caller's handlers.
-The handler's prompts use its dotted path: reasoning is
-`mcp.szmcp.handlers.zim_get.think`, the answer is
-`mcp.szmcp.handlers.zim_get.answer`, and its tools are
-`mcp.szmcp.handlers.zim_get.<tool>`.
+The handler's `description` is appended to the tool description after a newline.
+An unknown handler is reported after discovery and ignored. Built-in tools and
+error results bypass handlers.
 
-The handler's `description` is appended to the tool description after a
-newline, so the caller knows the result is processed:
+### Nix inside the sandbox
 
-```text
-<original tool description>
-<handler description>
-```
-
-Use `tools.mcp.<server>.handlers.<tool>` for a concrete MCP tool, keyed by the
-server's local tool name. Built-in tools return their results directly. The
-map applies only to successful results; errors are returned directly. If the
-server does not expose `<tool>`, Hutian reports the unknown handler after
-discovery and ignores it.
-
-Then run `nix run .#hutian` from that project. Package versions come from the
-consumer flake's lock file.
-
-For a single system or an existing `pkgs` instance, use the lower-level builder:
-
-```nix
-hutian.lib.mkPackage pkgs {
-  sandbox = {
-    packages = pkgs: [ pkgs.git pkgs.jq ];
-    writable = true;
-    nixDaemon = false;
-    network = true;
-  };
-  endpoint = {
-    url = "http://127.0.0.1:8080/v1/chat/completions";
-    apiKeyCommand = null;
-  };
-  output = {
-    verbosity = "high";
-  };
-  agent = {
-    model = "your-model";
-    systemPrompt = "You are a careful coding assistant working in a sandboxed shell.";
-    tools = {
-      shell = "allow";
-      webfetch = "deny";
-      subagent = { };
-      mcp = { };
-    };
-  };
-}
-```
-
-To add Hutian to a flake that already has its own `default` app or package, use
-`lib.mkApp` and `lib.mkPackage`. They add one output each and leave everything
-else untouched:
-
-```nix
-outputs = { nixpkgs, hutian, ... }:
-  let
-    inherit (nixpkgs) lib;
-
-    systems = [ "x86_64-linux" ];
-    forAllSystems = lib.genAttrs systems;
-    pkgsFor = system: nixpkgs.legacyPackages.${system};
-
-    hutianConfig = {
-      sandbox = {
-        packages = pkgs: [ pkgs.coreutils ];
-        writable = false;
-        nixDaemon = false;
-        network = false;
-      };
-      endpoint = { ... };
-      output = { ... };
-      agent = { ... };
-    };
-  in
-  {
-    # Keep your existing packages and apps, and add Hutian next to them.
-    packages = forAllSystems (system: existingPackages.${system} // {
-      hutian = hutian.lib.mkPackage (pkgsFor system) hutianConfig;
-    });
-
-    apps = forAllSystems (system: existingApps.${system} // {
-      hutian = hutian.lib.mkApp (pkgsFor system) hutianConfig;
-    });
-  };
-```
-
-Here `existingPackages` and `existingApps` are the flake's existing per-system
-attrsets. Complete examples are available in
-[`examples/dedicated.nix`](./examples/dedicated.nix) for a dedicated Hutian
-flake and [`examples/existing-project.nix`](./examples/existing-project.nix)
-for adding Hutian to an existing project flake. Both import the shared
-configuration in [`examples/hutian.nix`](./examples/hutian.nix).
-
-The launcher passes `endpoint.url` to the shell as `--llama-url`, keeping only
-the path so the query and fragment stay on the host. It writes `agent.model` and
-`agent.systemPrompt` to short-lived files passed as `--model-file` and
-`--system-prompt-file`; the shell removes those files before it accepts input,
-so they do not appear in the process listing. The shell reads no Hutian-specific
-environment variables. The sandbox receives the CA bundle path as
-`SYSTEM_CERTIFICATE_PATH` so the Haskell HTTP client can verify TLS
-certificates.
-
-### Using Nix inside the sandbox
-
-Pass `sandbox.nixDaemon = true` to expose the host Nix store and connect the
-sandbox to the host's Nix daemon:
+Set `sandbox.nixDaemon = true` to expose the host Nix store and daemon socket:
 
 ```nix
 sandbox = {
@@ -569,406 +268,132 @@ sandbox = {
 };
 ```
 
-The rest of the configuration is unchanged, and the lower-level
-`lib.mkPackage` builder accepts the same options and package selector.
+`nix build`, `nix shell`, `nix run`, and `nix develop` then act as clients of the
+host daemon, so builds run on the host. Flakes and the `nix` command are enabled,
+and a CA bundle is provided for HTTPS fetches. The launcher supplies a local
+registry mapping `nixpkgs` to the configuring flake's nixpkgs input; host
+registries are hidden, so other indirect names are unavailable unless the
+project defines them. Locked local builds work offline when their inputs are in
+the store.
 
-In this mode the host's Nix store and Nix daemon socket are exposed to the
-sandbox. Commands such as `nix build`, `nix shell`, `nix run`, and `nix develop`
-act as clients of the host daemon, so builds and substitutions run on the host.
-Flakes and the `nix` command are enabled automatically, and a CA bundle is
-provided for client-side HTTPS fetches.
-
-The launcher supplies a local flake registry instead of downloading the global
-one. It contains a single entry, mapping `nixpkgs` to the nixpkgs input of the
-flake that configured Hutian, so `nix run nixpkgs#...` uses the same package set
-as `sandbox.packages`. The host's system and user registries are not exposed, so
-other indirect names are not available unless the project defines them itself.
-
-Consequently, `nix run nixpkgs#...` resolves and starts an already-built package
-without fetching the registry or the nixpkgs flake. Locked local builds work
-offline as long as their inputs are already in the store; pass `--offline` if
-you want Nix to fail instead of trying a substituter for a missing path.
-
-gVisor normally caches directory entries for the life of the sandbox. That hides
-changes made on the host after startup: a file added to the working directory
-stays invisible and writes to its name fail with `ENOENT`, and a store path the
-host daemon creates after `/nix/store` was listed cannot be executed. The
-launcher therefore disables the gVisor dentry cache (`--dcache=0`) in every
-mode, so lookups go back to the host.
-
-The interactive shell also avoids keeping its own working directory inside the
-shared working directory, because gVisor keeps a directory listing cached while
-a process is in it. Each command enters the working directory for its own
-lifetime, so files created or changed outside the sandbox appear in the next
-command. A long-running process that stays in the working directory keeps the
-view it had when it started.
-
-The host Nix store is visible in full while `sandbox.nixDaemon = true`. Set it to
-`false` when you only need the configured package closures.
+gVisor normally caches directory entries; the launcher disables that cache
+(`--dcache=0`) so host changes appear. The interactive shell also avoids keeping
+its working directory inside the shared directory, so each command sees the
+current host state.
 
 ### Environment
 
-The sandbox receives a fixed `TERM=xterm-256color` and `LANG=C.UTF-8`. Only the
-gVisor runtime settings can be overridden from the host:
+The sandbox gets `TERM=xterm-256color` and `LANG=C.UTF-8`. Only these can be
+overridden:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `GVISOR_PLATFORM` | `systrap` | gVisor platform. Use `ptrace` if your host requires it. |
-| `GVISOR_NETWORK` | `host` | gVisor network mode: `host` or `none`. `sandbox` is not supported with `--rootless` and falls back to `host`. Ignored when `sandbox.network = false`, where the mode is always `none`. |
+| `GVISOR_PLATFORM` | `systrap` | Use `ptrace` if your host requires it. |
+| `GVISOR_NETWORK` | `host` | `host` or `none`; ignored when `sandbox.network = false`. |
 
 ## Relay and API keys
 
-Hutian always routes model traffic through a host-side relay. The shell is
-launched with `--llama-socket /run/hutian/llm.sock` and the logical URL
-`http://hutian-relay/...`, which preserves the chat or completion API shape
-without exposing the real upstream host, credentials, query, or fragment
-embedded in `endpoint.url`.
+Model traffic always goes through a host-side relay. The shell uses
+`--llama-socket /run/hutian/llm.sock` and the logical URL
+`http://hutian-relay/...`, so the real upstream host, credentials, query, and
+fragment never enter the sandbox.
 
-`endpoint.apiKeyCommand` is mandatory: set it to `null` when no key is used, or
-to a command that prints the key when the upstream requires one:
-
-```nix
-hutian.lib.mkFlake nixpkgs {
-  # ...
-  endpoint.apiKeyCommand = "pass show llama/api-key";
-}
-```
-
-To read a key from a file, use `cat`:
+`endpoint.apiKeyCommand` is mandatory: set it to `null` or to a command that
+prints the key:
 
 ```nix
-endpoint.apiKeyCommand = "cat /run/secrets/hutian-key";
+endpoint.apiKeyCommand = "pass show llama/api-key";
 ```
 
-The launcher starts `hutian-llm-relay` on the host. With a command configured,
-the relay reads the key from standard input; the launcher evaluates the command
-with the host shell and pipes its output into the relay. The value must be a
-complete shell command, and it is trusted configuration. The command runs in the
-foreground before the sandbox starts, so commands that prompt for a password
-(for example `passage`) work normally and can be cancelled with `Ctrl+C`.
-Without a key the relay starts with `--no-auth` and forwards requests without an
-`Authorization` header. This works with local llama.cpp servers that do not
-require a key, and the sandbox still needs no direct network access to the model
-endpoint.
+The launcher starts `hutian-llm-relay` on the host, evaluates the command with
+the host shell, and pipes its output to the relay. The command is trusted and
+runs in the foreground before the sandbox, so password prompts work. Without a
+key the relay uses `--no-auth` and sends no `Authorization` header.
 
-The relay listens on a per-session Unix socket under `$XDG_RUNTIME_DIR` (falling
-back to `/tmp`). The socket directory is mode `0700` and is bind-mounted
-read-only at `/run/hutian`, so the sandbox can connect to `/run/hutian/llm.sock`
-but cannot unlink or replace the socket; the directory holds no key material.
+The relay listens on a per-session Unix socket under `$XDG_RUNTIME_DIR` (or
+`/tmp`), in a `0700` directory bind-mounted read-only at `/run/hutian`. The
+sandbox can connect but cannot unlink or replace the socket, and the directory
+holds no key material.
 
-The relay uses a private framing protocol over the socket instead of HTTP. The
-sandbox sends only the request body and closes its write half. The relay sends
-that body to the fixed path and query of `endpoint.url` with `Content-Type:
-application/json`, `Accept: text/event-stream`, `Connection: close`, and, when
-a key is configured, `Authorization: Bearer <key>`. A fresh upstream connection
-is used for every request, so an idle keep-alive close cannot surface as a
-stale-connection failure. It returns a four-byte status code followed by
-the upstream body, including streaming SSE. Because the client never supplies a
-request line or header block, the sandbox cannot choose the upstream host, path,
-or headers, cannot redirect the key, and cannot use the relay as a general
-authenticated proxy. The relay does not follow upstream redirects, and the key
-never appears in argv, environment variables, files, or the Nix store.
+The relay uses a private framing protocol: the sandbox sends only a request body
+and closes its write half. The relay forwards it to the fixed path and query of
+`endpoint.url` with `Content-Type: application/json`,
+`Accept: text/event-stream`, `Connection: close`, and `Authorization: Bearer
+<key>` when configured. It uses a fresh upstream connection per request, returns
+a four-byte status followed by the body (including SSE), and does not follow
+redirects. Because the client never supplies a request line or headers, the
+sandbox cannot choose the upstream, redirect the key, or use the relay as a
+general proxy.
 
-Keep `endpoint.apiKeyCommand` as a command that fetches the key, for example
-from `pass` or `sops`, rather than embedding the key in the command string,
-because option values live in the Nix store. The command runs on the host, but
-do not read the key from `/source` or the Nix store: the sandbox can read both.
-Use `endpoint.apiKeyCommand = null` when the upstream does not need a key.
-
-## Permission model
-
-Hutian separates sandbox capabilities from model-tool permissions. The
-`sandbox.*` options apply to everything running in the sandbox; `agent.tools`
-restricts only the model, and `endpoint.apiKeyCommand` only affects the host
-relay.
-
-- `sandbox.network = false` removes direct sandbox networking only. The relay
-  socket can still reach the fixed model upstream, and `sandbox.nixDaemon = true`
-  still lets the host Nix daemon fetch and build. Because the daemon runs on the
-  host, a fixed-output derivation can also send anything the sandbox can read to
-  any URL the host network reaches; treat `network = false` as advisory in that
-  mode.
-- `sandbox.writable = true` writes through to the host working directory. Files
-  created or changed on the host appear in the next sandbox command; a command
-  that keeps its own working directory there sees the view from when it started.
-- `sandbox.writable = false` does not prevent the model from reading `/source`
-  and sending what it reads upstream. Set `agent.tools.shell = "deny"`,
-  `agent.tools.webfetch = "deny"`, and disable subagents or use a local model
-  endpoint if confidentiality matters.
-- `sandbox.network = true` defaults to gVisor's `host` mode, so the sandbox
-  shares the host network namespace: loopback, LAN, and the Internet.
-  `GVISOR_NETWORK` can narrow it to `none` but cannot widen
-  `sandbox.network = false`.
-- `agent.tools.shell = "deny"` restricts only the model. Term mode can always
-  run commands in the sandbox, including background jobs. The same applies to
-  `webfetch`, and subagents; subagents can use only the tools in
-  their own `tools` attribute.
-- Every process in the sandbox can connect to the relay socket. Shell commands
-  can therefore use the configured model endpoint, but cannot choose a
-  different upstream or read the key.
+Keep `apiKeyCommand` as a fetcher (`pass`, `sops`, `cat`) rather than embedding
+the key, because option values live in the Nix store. Do not read the key from
+`/source` or the Nix store, which the sandbox can read.
 
 ## Security model
 
-- `runsc --rootless` runs the sandbox as your unprivileged host user inside a
-  user namespace. The sandbox process is UID 0 inside that namespace, mapped to
-  your host UID; it gains no host privileges.
-- With `sandbox.network = true`, the default network mode is gVisor's `host`,
-  which shares the host network namespace (loopback, LAN, and the Internet). Set
-  `GVISOR_NETWORK=none` to disable networking for other tools. With
-  `sandbox.network = false`, the mode is always `none`; model traffic uses the
-  host relay socket instead.
-- Model traffic always uses the relay socket at `/run/hutian/llm.sock`, which
-  accepts only a request body and forwards it to one fixed target, so it cannot
-  be used as a general proxy. With `endpoint.apiKeyCommand`, the key stays on
-  the host and is never visible to the sandbox. Without a key
-  (`endpoint.apiKeyCommand = null`), the relay forwards unauthenticated.
-- With `agent.tools.shell = "deny"`, the model cannot run commands: the shell
-  tool is omitted from LLM requests and tool calls are refused. `"ask"` requires
-  approval before each command, while `"allow"` runs model commands
-  automatically. `webfetch` has its own policy, and a
-  subagent can use only its configured tools. Term mode still lets you run
-  commands yourself.
-- A static `dumb-init` runs as PID 1 so background jobs that outlive their shell
-  are reaped rather than left as zombies. It runs in single-child mode so the
-  sandbox keeps its controlling terminal and interactive programs can open
-  `/dev/tty`; the user shell runs as its child.
+`sandbox.*` applies to everything in the sandbox; `agent.tools` restricts only
+the model; `endpoint.apiKeyCommand` affects only the host relay.
+
+- `runsc --rootless` runs the sandbox as your unprivileged host user in a user
+  namespace; UID 0 inside maps to your host UID and gains no host privileges.
+- `sandbox.network = false` removes direct networking only. The relay still
+  reaches the fixed model upstream, and `sandbox.nixDaemon = true` still lets the
+  host daemon fetch and build. A fixed-output derivation can send anything the
+  sandbox can read to any URL the host reaches, so treat `network = false` as
+  advisory in that mode.
+- `sandbox.network = true` shares the host network namespace. `GVISOR_NETWORK`
+  can narrow it to `none` but cannot widen `false`.
+- `sandbox.writable = true` writes through to the host working directory. `false`
+  still lets the model read `/source` and send it upstream; set `shell = "deny"`,
+  `webfetch = "deny"`, and disable subagents (or use a local model) if
+  confidentiality matters.
+- The relay socket accepts only a request body for one fixed target. The key
+  stays on the host, and every sandbox process can use the endpoint but cannot
+  choose another upstream or read the key.
+- `agent.tools.shell = "deny"` omits the shell tools and refuses calls. `"ask"`
+  requires approval; `"allow"` runs automatically. Term mode still works.
+- A static `dumb-init` runs as PID 1 to reap orphaned background jobs while
+  keeping the controlling terminal and `/dev/tty` available.
 - Writes outside `/source`, `/tmp`, and the mounted package store are refused.
-  `sandbox.writable = false` refuses writes to `/source` as well.
-- With `sandbox.nixDaemon = true`, the full host `/nix/store` and the Nix daemon
-  socket are visible. Other host paths remain hidden, including the host's flake
-  registries; `nixpkgs` comes from the configured flake instead.
-- The sandbox uses the `systrap` platform by default. Set
-  `GVISOR_PLATFORM=ptrace` if your host needs the `ptrace` platform.
+- With `sandbox.nixDaemon = true`, the full host `/nix/store` and daemon socket
+  are visible; other host paths, including flake registries, stay hidden.
+- The sandbox uses `systrap` by default; set `GVISOR_PLATFORM=ptrace` if needed.
 
-## Architecture
-
-The code keeps pure logic separate from IO:
-
-- `Hutian.Command` classifies submitted term-mode text as blank, single-line,
-  or multi-line.
-- `Hutian.Policy` defines the shared three-way tool policy (`deny`, `ask`, or
-  `allow`) used by the LLM protocol and the tool loop. `Hutian.Tool.Config`
-  holds the pure tool policies, subagent and result-handler configuration, and
-  the MCP server list; `Hutian.Tool.Catalog` is the runtime catalog, with one
-  entry per policy plus the discovered MCP servers, each carrying its immutable
-  configuration. That keeps configuration and discovery state in one place.
-- `Hutian.Tool` resolves a tool name, decodes its arguments into a `ToolAction`,
-  and combines the policy with the action into a pure `ToolPlan` (`RunNow` or
-  `AskUser`). `Hutian.Tool.Exec` performs only the terminal, shell, web, MCP,
-  subagent, or result-handler IO that the plan requests, so refusals, approvals,
-  commands, and job actions can be tested without a terminal. `Hutian.Web`
-  performs bounded HTTP fetches.
-- `Hutian.Agent` owns the model turn, tool loop, subagent and result-handler
-  wiring, and terminal input, all over one `RuntimeEnv` rather than a long
-  parameter list.
-- `Hutian.Mcp.Protocol` builds pure MCP JSON-RPC messages and decodes tools and
-  results. `Hutian.Mcp` performs the Streamable HTTP handshake, discovery, and
-  tool calls.
-- `Hutian.Jobs` is the pure job model: ids, status, log paths, and the text
-  used by the model tools. `Hutian.Jobs.Runtime` owns the process handles,
-  bounded log tails, and process-group signalling.
-- `Hutian.Cli` is the shared strict option parser for the shell and relay. It
-  rejects duplicate options, unknown options, bare positional arguments, and
-  missing values instead of silently letting argument order decide.
-- `Hutian.Editor` owns prompt state, key semantics, and layout.
-- `Hutian.Prompt` is the pure prompt reducer: it turns a key and the current
-  state into a step such as redraw, move cursor, complete, or finish.
-- `Hutian.Completion` selects command and path completions.
-- `Hutian.Ansi` represents RGB colours and text styles as data and encodes them
-  with `ansi-terminal`.
-- `Hutian.Render` turns prompts and output labels into ANSI output, and holds
-  the pure approval decisions shared with the console.
-- `Hutian.Verbosity` decides which reasoning, tool, and subagent blocks are
-  visible for low, normal, and high output. `Hutian.Context` keeps the main or
-  subagent palette choice independent of the rendering layer.
-- `Hutian.History` owns pure in-memory history navigation and input routing.
-- `Hutian.Conversation` is a pure model of chat messages, tool calls, and tool
-  results, including the abort results recorded when an interrupt stops a
-  turn; `Hutian.Paths` holds the pure path-completion helpers.
-- `Hutian.Markdown` is a pure streaming renderer for Markdown and ANSI styles.
-- `Hutian.Highlight` wraps Skylighting for fenced code and shell input, used by
-  both term-mode input and model-requested commands.
-- `Hutian.Llm` keeps SSE parsing, tool-call accumulation, request building, and
-  settings parsing pure, with IO limited to HTTP, bounded error bodies, and a
-  caller-supplied output sink. `Hutian.Json` provides the strict integer
-  decoding shared by the stream and MCP protocols.
-- `Hutian.Http.Wire` contains the shared socket framing helpers used by both
-  the relay and the sandbox-side client.
-- `Hutian.Llm.UnixSocket` is the sandbox-side client for the host relay socket.
-- `Hutian.Relay` is the host-side relay: it owns any configured key, accepts
-  only a request body, builds the single fixed upstream request, and streams the
-  response. `Hutian.Relay.Protocol` holds the four-byte status framing shared by
-  both sides.
-- `Hutian.Console` is the single terminal IO boundary: writes, terminal
-  attributes, cursor styling, size, and stream colouring.
-- `Hutian.Key` decodes terminal input, and `Hutian.Session` owns the interactive
-  prompt, history, and command loop.
-- `Hutian.Terminal` is the prompt driver over `Hutian.Prompt` and
-  `Hutian.Console`.
-- `Hutian.Shell` returns captured command output as `CommandResult` data instead
-  of printing it.
-- `Hutian.Interrupt` is the signal boundary.
-- `Hutian.Agent` wires the boundaries together and drives the tool-call loop;
-  `Main` only parses settings, discovers MCP tools, and starts the session.
-
-The package uses `GHC2021` and compiles with strict warnings and `-Werror`.
-
-## Project layout
-
-```text
-flake.nix                       Flake outputs and consumer helpers
-nix/hutian.nix                  Sandbox rootfs, launcher, and wrapper
-nix/hutian-shell.nix            Haskell package definition
-nix/sandbox.nix                 Rootfs mounts, working directory, and relay mount
-nix/lint.nix                    Shared lint and LiquidHaskell checks
-src/                            Haskell library source
-src/Hutian/Agent.hs             Model turns, tool loop, subagents, and input
-src/Hutian/Ansi.hs              Typed terminal colours and styles
-src/Hutian/Cli.hs               Strict shared command-line option parser
-src/Hutian/Command.hs           Term-mode input classification
-src/Hutian/Completion.hs        Pure completion selection
-src/Hutian/Console.hs           Single terminal IO boundary
-src/Hutian/Context.hs           Shared main/subagent turn context
-src/Hutian/Conversation.hs      Conversation entries, tool results, and aborts
-src/Hutian/Editor.hs            Prompt text, cursor, and layout state
-src/Hutian/Highlight.hs         Skylighting for fenced code and shell input
-src/Hutian/History.hs           Pure in-memory history navigation
-src/Hutian/Http/Body.hs         Bounded HTTP response body reads
-src/Hutian/Http/Wire.hs         Shared socket framing helpers
-src/Hutian/Interrupt.hs         Interrupt flag and signal handling
-src/Hutian/Jobs.hs              Pure background-job model and text
-src/Hutian/Jobs/Runtime.hs      Job processes, logs, and signals
-src/Hutian/Json.hs              Strict JSON integer decoding
-src/Hutian/Key.hs               Pure terminal key classification
-src/Hutian/Llm.hs               HTTP, relay, and streamed-response IO
-src/Hutian/Llm/Loop.hs          Model and tool exchange loop
-src/Hutian/Llm/Presentation.hs  Stream labels, colours, and Markdown flushing
-src/Hutian/Llm/Request.hs       Chat and completion request bodies
-src/Hutian/Llm/Settings.hs      Launcher settings parsing
-src/Hutian/Llm/Stream.hs        Stream parsing, tool-call assembly, and result
-src/Hutian/Llm/UnixSocket.hs    Relay client over a Unix socket
-src/Hutian/Markdown.hs          Pure streaming Markdown renderer
-src/Hutian/Mcp.hs               MCP discovery and tool-call client
-src/Hutian/Mcp/Protocol.hs      Pure MCP JSON-RPC and SSE helpers
-src/Hutian/Paths.hs             Pure path completion helpers
-src/Hutian/Policy.hs            Shared model tool policy
-src/Hutian/Prompt.hs            Pure prompt reducer
-src/Hutian/Relay.hs             Host-side LLM relay
-src/Hutian/Relay/Protocol.hs    Relay status framing
-src/Hutian/Render.hs            Pure ANSI rendering and approval decisions
-src/Hutian/Session.hs           Interactive prompt/history/session loop
-src/Hutian/Shell.hs             Captured shell command execution
-src/Hutian/Terminal.hs          Prompt driver over Prompt and Console
-src/Hutian/Tool.hs              Pure tool schemas, decoding, and planning
-src/Hutian/Tool/Catalog.hs      Runtime tool catalog and MCP state
-src/Hutian/Tool/Config.hs       Tool policies, subagents, MCP, handlers config
-src/Hutian/Tool/Exec.hs         Execution of tool-call plans and result handlers
-src/Hutian/Verbosity.hs         Pure output-visibility decisions
-src/Hutian/Web.hs               Bounded HTTP fetches
-app/Main.hs                     Shell executable entry point
-app/RelayMain.hs                Relay executable entry point
-test/                           Unit and property tests
-test/TestReporter.hs            Deferred, single-threaded Tasty report
-test/TestSupport.hs             Shared test helpers
-hutian-shell.cabal              Haskell package manifest
-examples/                       Example flakes
-  hutian.nix                    Shared Hutian configuration
-  dedicated.nix                 Dedicated Hutian flake
-  existing-project.nix          Project flake that also exposes Hutian
-LICENSE                         MIT license
-CHANGELOG.md                    Release notes
-```
-
-## Testing
-
-The test suite combines HUnit tests with QuickCheck properties for the editor
-state machine, the pure prompt reducer, prompt layout and rendering, command
-parsing, completion selection, history codecs, conversation history, LLM
-requests, streaming tool calls, Markdown rendering, code highlighting, path and
-shell helpers, strict option parsing, tool-call plans, tool, subagent, and MCP
-configuration, web fetches, MCP protocol messages, stream presentation, the
-background-job model, socket framing, and interrupt handling. It also includes
-integration tests for:
-
-- streaming LLM responses through a local HTTP server, including bounded
-  non-success error reporting
-- streaming LLM responses through the host relay over a Unix socket, including
-  key injection, no-auth forwarding, fixed upstream and headers, body limits,
-  and response streaming
-- MCP discovery and tool calls against a local Streamable HTTP server, including
-  session ids, SSE messages, and JSON-RPC errors
-- in-memory history recording and recall
-- shell command execution and command discovery
-- background jobs: output capture, status, bounded log tails, and stopping a
-  process group
-
-Run it through Nix:
+## Development
 
 ```console
-$ nix build .#packages.x86_64-linux.hutian
-```
-
-The package build runs the suite as part of the standard build. With a local
-Cabal setup, `cabal test` runs the same tests directly.
-
-Tests run one at a time and the Tasty report is buffered until the last test
-finishes. Several suites redirect the process-wide stdout and stderr or install
-signal handlers, so a live report would leak into their captures and make
-otherwise deterministic tests flaky.
-
-The flake also exposes a check that verifies the Nix options are passed to the
-launcher as command-line arguments:
-
-```console
+$ nix build .#packages.x86_64-linux.hutian   # builds and runs the test suite
 $ nix build .#checks.x86_64-linux.configuration
-```
-
-## Linting
-
-Haskell and Nix lint checks are available through the flake:
-
-```console
 $ nix build .#checks.x86_64-linux.haskell-lint
 $ nix build .#checks.x86_64-linux.nix-lint
-```
-
-`haskell-lint` runs HLint over `src/`, `app/`, and `test/`. `nix-lint` runs
-Statix and DeadNix over the flake and Nix files. These linters also run
-automatically in the package check phase, so a normal `nix build` fails on lint
-errors. `nix flake check` runs the explicit checks along with the package build.
-
-LiquidHaskell verifies the pure modules of the shell and relay: `Hutian.Ansi`,
-`Hutian.Cli`, `Hutian.Command`, `Hutian.Completion`, `Hutian.Conversation`,
-`Hutian.Editor`, `Hutian.History`, `Hutian.Jobs`, `Hutian.Key`,
-`Hutian.Llm.Request`, `Hutian.Llm.Settings`, `Hutian.Llm.Stream`,
-`Hutian.Paths`, `Hutian.Policy`, `Hutian.Prompt`, `Hutian.Relay.Protocol`, and
-`Hutian.Tool`.
-
-```console
 $ nix build .#checks.x86_64-linux.liquid
-```
-
-The check disables DEFAULT case expansion (`--max-case-expand=0`). Expanding
-those cases does not change the verification result, but the default depth
-makes LiquidHaskell warn about every unexpanded match, so the check keeps the
-output clean instead.
-
-This verification also runs automatically as a package-build dependency, so a
-normal `nix build` fails if the LiquidHaskell check fails.
-
-Format all Nix files with the configured `nixfmt-tree` formatter:
-
-```console
 $ nix fmt
 ```
+
+The test suite combines HUnit and QuickCheck for the editor, prompt reducer,
+rendering, completion, history, conversation, LLM requests and streaming, tool
+plans and configuration, MCP, web fetches, jobs, framing, and interrupts, plus
+integration tests for HTTP and relay streaming, MCP discovery and calls, shell
+execution, and background jobs. Tests run one at a time with a buffered Tasty
+report because some suites redirect stdout/stderr or install signal handlers.
+
+`haskell-lint` runs HLint; `nix-lint` runs Statix and DeadNix. LiquidHaskell
+verifies the pure modules `Hutian.Ansi`, `Hutian.Cli`, `Hutian.Command`,
+`Hutian.Completion`, `Hutian.Conversation`, `Hutian.Editor`, `Hutian.History`,
+`Hutian.Jobs`, `Hutian.Key`, `Hutian.Llm.Request`, `Hutian.Llm.Settings`,
+`Hutian.Llm.Stream`, `Hutian.Paths`, `Hutian.Policy`, `Hutian.Prompt`,
+`Hutian.Relay.Protocol`, and `Hutian.Tool`. All checks also run during
+`nix build`, and `nix flake check` runs them with the package build.
+
+The package uses `GHC2021` and compiles with strict warnings and `-Werror`.
 
 ## Requirements
 
 - Linux with unprivileged user namespaces enabled.
 - x86_64 or aarch64.
 
-If user namespaces are disabled, `runsc` reports an error. On systems with the
-Debian-style sysctl this is enabled with:
+If user namespaces are disabled, `runsc` reports an error. On Debian-style
+systems:
 
 ```console
 $ sudo sysctl kernel.unprivileged_userns_clone=1
