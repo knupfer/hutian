@@ -37,7 +37,6 @@ import Hutian.Highlight
   , highlightJsonText
   , highlightLines
   , highlightShellLine
-  , sanitizeOutput
   , sanitizeOutputBytes
   )
 import Hutian.History (History (History))
@@ -66,12 +65,12 @@ import Hutian.Prompt
   , promptBuffers
   , stepPrompt
   )
-import Hutian.Render (grayOutputText, trailingNewline)
+import Hutian.Render (grayOutputBytes, trailingNewlineBytes)
 import Hutian.Shell
-  ( CommandResult (..)
-  , commandResultText
+  ( CapturedOutput (..)
+  , capturedOutputText
   , executableCommands
-  , runShellCommandOutput
+  , runShellCommandCaptured
   , runShellCommandStreaming
   )
 import Hutian.Tool.Catalog (toolCatalog)
@@ -238,14 +237,16 @@ shellBenchmarks sink =
 -- for display when output is visible.
 captureToolOutput :: Handle -> Int -> IO ()
 captureToolOutput sink bytes = do
-  result <- runShellCommandOutput "/" (largeOutputCommand bytes)
+  result <- runShellCommandCaptured "/" (largeOutputCommand bytes)
   case result of
     Left message -> hPutStrLn stderr message
-    Right output -> do
-      hPutStr sink (commandResultText output)
-      hPutStr
-        sink
-        (grayOutputText True (trailingNewline (sanitizeOutput (commandStdout output))))
+    Right captured -> do
+      hPutStr sink (capturedOutputText captured)
+      BS.hPut sink (displayBytes (capturedStdout captured))
+      BS.hPut sink (displayBytes (capturedStderr captured))
+
+displayBytes :: BS.ByteString -> BS.ByteString
+displayBytes = grayOutputBytes True . trailingNewlineBytes . sanitizeOutputBytes
 
 -- | Term mode streams output through the sanitizer to the terminal.
 streamToolOutput :: Handle -> Int -> IO ()

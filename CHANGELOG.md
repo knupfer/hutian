@@ -18,6 +18,12 @@ All notable changes to Hutian are documented here. The format follows
 - The executables now accept RTS options, so `+RTS -s` prints allocation and GC
   statistics.
 
+### Changed
+
+- Captured shell output stays as bytes for display and is decoded to text once
+  for the model, with no `String` round trip. A 1 MiB tool result takes about
+  7 ms instead of about 100 ms, and output is still not capped.
+
 ## [0.11.0.0] - 2026-11-24
 
 ### Added

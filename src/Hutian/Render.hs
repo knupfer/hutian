@@ -20,7 +20,9 @@ module Hutian.Render
   , outputBlockLabelTextIn
   , outputLabelTextIn
   , grayOutputText
+  , grayOutputBytes
   , trailingNewline
+  , trailingNewlineBytes
   , ToolApproval (..)
   , approvalForKey
   , approvalDecisionText
@@ -44,6 +46,8 @@ module Hutian.Render
   , reset
   ) where
 
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 import Data.Char (toUpper)
 import Data.List (isSuffixOf)
 import Numeric (showHex)
@@ -323,6 +327,15 @@ grayOutputText interactive text
   | interactive && not (null text) = grayForeground ++ text ++ reset
   | otherwise = text
 
+-- | Byte-level 'grayOutputText'. Captured shell output is sanitized and
+-- written as bytes, so a multi-megabyte result never becomes a 'String' just
+-- to be encoded again.
+grayOutputBytes :: Bool -> BS.ByteString -> BS.ByteString
+grayOutputBytes interactive bytes
+  | interactive && not (BS.null bytes) =
+      BS8.pack grayForeground <> bytes <> BS8.pack reset
+  | otherwise = bytes
+
 -- | Terminate non-empty output with a newline, so a following label, prompt,
 -- or the other output stream starts on its own line.
 trailingNewline :: String -> String
@@ -330,6 +343,13 @@ trailingNewline [] = []
 trailingNewline text
   | "\n" `isSuffixOf` text = text
   | otherwise = text ++ "\n"
+
+-- | Byte-level 'trailingNewline' for captured output.
+trailingNewlineBytes :: BS.ByteString -> BS.ByteString
+trailingNewlineBytes bytes
+  | BS.null bytes = bytes
+  | BS.last bytes == 10 = bytes
+  | otherwise = bytes <> BS.singleton 10
 
 -- | How the terminal cursor should look for a given activity.
 data CursorStyle

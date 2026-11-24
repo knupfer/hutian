@@ -12,7 +12,9 @@ module Hutian.Console
   , consoleIsInteractive
   , consoleWidth
   , consoleWrite
+  , consoleWriteBytes
   , consoleWriteError
+  , consoleWriteErrorBytes
   , consoleWriteErrorLine
   , consoleWriteGrayLine
   , consoleWriteLine
@@ -37,6 +39,7 @@ import Control.Concurrent (ThreadId, forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar, withMVar)
 import Control.Exception (IOException, catch, finally, mask)
 import Control.Monad (when)
+import qualified Data.ByteString as BS
 import Data.Foldable (for_)
 import Data.List (intercalate)
 import qualified Data.Text as Text
@@ -121,11 +124,19 @@ configureConsole = do
 consoleWrite :: String -> IO ()
 consoleWrite = putStr
 
+-- | Write already-encoded UTF-8 bytes. Captured shell output uses this so a
+-- large result is not decoded to 'String' just to be encoded again.
+consoleWriteBytes :: BS.ByteString -> IO ()
+consoleWriteBytes = BS.hPut stdout
+
 consoleWriteLine :: String -> IO ()
 consoleWriteLine = putStrLn
 
 consoleWriteError :: String -> IO ()
 consoleWriteError = hPutStr stderr
+
+consoleWriteErrorBytes :: BS.ByteString -> IO ()
+consoleWriteErrorBytes = BS.hPut stderr
 
 consoleWriteErrorLine :: String -> IO ()
 consoleWriteErrorLine message = do

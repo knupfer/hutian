@@ -5,10 +5,13 @@ import qualified Data.ByteString.Char8 as BS8
 import Data.List (isInfixOf)
 import Hutian.Highlight (sanitizeOutputBytes)
 import Hutian.Shell
-  ( CommandResult (..)
+  ( CapturedOutput (..)
+  , CommandResult (..)
+  , capturedOutputText
   , commandResultText
   , executableCommands
   , runShellCommand
+  , runShellCommandCaptured
   , runShellCommandOutput
   , runShellCommandStreaming
   , shellExitSuffix
@@ -54,6 +57,20 @@ tests =
           Right output -> do
             assertBool "stderr should be captured" ("bad" `isInfixOf` commandResultText output)
             assertBool "exit status should be reported" ("[exit 3]" `isInfixOf` commandResultText output)
+    , testCase "runShellCommandCaptured keeps bytes and decodes them once" $ do
+        result <- runShellCommandCaptured "/" "printf out; printf err >&2; exit 3"
+        case result of
+          Left message -> assertFailure message
+          Right captured -> do
+            capturedStdout captured @?= BS8.pack "out"
+            capturedStderr captured @?= BS8.pack "err"
+            capturedExitCode captured @?= ExitFailure 3
+            capturedOutputText captured @?= "outerr\n[exit 3]\n"
+    , testCase "runShellCommandCaptured decodes invalid UTF-8 leniently" $ do
+        result <- runShellCommandCaptured "/" "printf '\\377'"
+        case result of
+          Left message -> assertFailure message
+          Right captured -> capturedOutputText captured @?= "\65533"
     , testCase "commands run in the requested working directory" $
         withTemporaryDirectory "hutian-shell-cwd" $ \directory -> do
           path <- temporaryFilePath "hutian-shell-pwd"

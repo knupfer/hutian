@@ -3,10 +3,13 @@
 -- | Shell command execution and command discovery. Display decisions are left
 -- to the caller; captured output is returned as data.
 module Hutian.Shell
-  ( CommandResult (CommandResult, commandStdout, commandStderr)
+  ( CapturedOutput (..)
+  , CommandResult (CommandResult, commandStdout, commandStderr)
+  , capturedOutputText
   , commandResultText
   , executableCommands
   , runShellCommand
+  , runShellCommandCaptured
   , runShellCommandOutput
   , runShellCommandStreaming
   , shellExitSuffix
@@ -14,17 +17,19 @@ module Hutian.Shell
   ) where
 
 import Control.Concurrent
-  ( forkIO
+  ( MVar
+  , forkIO
   , newEmptyMVar
   , putMVar
   , takeMVar
   , threadDelay
   )
-import Control.Exception (IOException, catch, finally)
+import Control.Exception (IOException, catch, finally, throwIO, try)
 import Control.Monad (void)
 import qualified Data.ByteString as BS
 import Data.List (nub)
 import Data.Maybe (catMaybes, isJust)
+import Hutian.Json (decodeUtf8Lenient)
 import System.Directory
   ( doesDirectoryExist
   , emptyPermissions
@@ -43,7 +48,6 @@ import System.Process
   , delegate_ctlc
   , getProcessExitCode
   , proc
-  , readCreateProcessWithExitCode
   , waitForProcess
   )
 
@@ -54,6 +58,72 @@ data CommandResult = CommandResult
   , commandStderr :: String
   }
   deriving stock (Eq, Show)
+
+-- | Captured output before UTF-8 decoding. Keeping bytes lets a caller format
+-- large results for the terminal without a 'String' round trip, and decode only
+-- once for the model.
+data CapturedOutput = CapturedOutput
+  { capturedExitCode :: ExitCode
+  , capturedStdout :: BS.ByteString
+  , capturedStderr :: BS.ByteString
+  }
+  deriving stock (Eq, Show)
+
+-- | Run a command with captured stdio, returning raw bytes. Both pipes are
+-- drained concurrently so a command cannot stall on a full pipe.
+runShellCommandCaptured :: FilePath -> String -> IO (Either String CapturedOutput)
+runShellCommandCaptured workingDirectory line =
+  shellFailure $ do
+    (maybeInput, maybeOutput, maybeError, processHandle) <-
+      createProcess
+        ( (shellProcess workingDirectory line)
+            { std_in = CreatePipe
+            , std_out = CreatePipe
+            , std_err = CreatePipe
+            , delegate_ctlc = False
+            }
+        )
+    case (maybeInput, maybeOutput, maybeError) of
+      (Just inputHandle, Just outputHandle, Just errorHandle) -> do
+        -- The captured command gets an empty stdin, like
+        -- 'readCreateProcessWithExitCode' did.
+        hClose inputHandle
+        outputVar <- newEmptyMVar
+        errorVar <- newEmptyMVar
+        _ <- forkIO (readCapturedPipe outputHandle outputVar)
+        _ <- forkIO (readCapturedPipe errorHandle errorVar)
+        exitCode <- waitForProcess processHandle
+        output <- takeMVar outputVar
+        errors <- takeMVar errorVar
+        stdoutBytes <- either throwIO pure output
+        stderrBytes <- either throwIO pure errors
+        pure (Right (CapturedOutput exitCode stdoutBytes stderrBytes))
+      _ -> do
+        void (waitForProcess processHandle)
+        pure (Left "sh: could not capture output")
+
+-- | Read one captured pipe to EOF. End-of-file is required even after the
+-- command exits, so a background child that inherited the pipe cannot be
+-- mistaken for finished output.
+readCapturedPipe :: Handle -> MVar (Either IOException BS.ByteString) -> IO ()
+readCapturedPipe source resultVar =
+  (try (BS.hGetContents source) >>= putMVar resultVar)
+    `finally` hClose source
+
+-- | The text sent to the model for a captured command. The bytes are decoded
+-- once, and a successful command avoids copying the payload to append an empty
+-- suffix.
+capturedOutputText :: CapturedOutput -> String
+capturedOutputText captured =
+  case shellExitSuffix (capturedExitCode captured) of
+    "" -> decoded
+    suffix -> decoded ++ suffix
+  where
+    decoded = decodeUtf8Lenient outputBytes
+    outputBytes
+      | BS.null (capturedStderr captured) = capturedStdout captured
+      | BS.null (capturedStdout captured) = capturedStderr captured
+      | otherwise = capturedStdout captured <> capturedStderr captured
 
 -- | Run a command with inherited stdio. Returns an error message only when the
 -- process could not be started.
@@ -144,10 +214,14 @@ copyPollMicros = 20000
 -- | Run a command and capture its output for the model.
 runShellCommandOutput :: FilePath -> String -> IO (Either String CommandResult)
 runShellCommandOutput workingDirectory line =
-  shellFailure $ do
-    (exitCode, output, errors) <-
-      readCreateProcessWithExitCode (shellProcess workingDirectory line) ""
-    pure (Right (CommandResult exitCode output errors))
+  fmap (fmap toCommandResult) (runShellCommandCaptured workingDirectory line)
+  where
+    toCommandResult captured =
+      CommandResult
+        { commandExitCode = capturedExitCode captured
+        , commandStdout = decodeUtf8Lenient (capturedStdout captured)
+        , commandStderr = decodeUtf8Lenient (capturedStderr captured)
+        }
 
 -- | Run a shell action, turning a synchronous IO failure into a message for
 -- the model. Every shell entry point reports failures the same way.

@@ -16,7 +16,8 @@ import Hutian.Console
   , consoleIsErrorInteractive
   , consoleIsInteractive
   , consoleWrite
-  , consoleWriteError
+  , consoleWriteBytes
+  , consoleWriteErrorBytes
   , consoleWriteErrorLine
   , consoleWriteGrayLine
   , consoleWriteLine
@@ -35,7 +36,7 @@ import Hutian.Conversation
   )
 import Control.Monad (when)
 import Hutian.Context (TurnContext (MainContext))
-import Hutian.Highlight (sanitizeOutput)
+import Hutian.Highlight (sanitizeOutput, sanitizeOutputBytes)
 import Hutian.Json (jsonText)
 import Hutian.Jobs
   ( Job
@@ -59,13 +60,15 @@ import Hutian.Policy (ToolPolicy)
 import Hutian.Render
   ( OutputKind (..)
   , ToolApproval (..)
+  , grayOutputBytes
   , grayOutputText
   , trailingNewline
+  , trailingNewlineBytes
   )
 import Hutian.Shell
-  ( CommandResult (..)
-  , commandResultText
-  , runShellCommandOutput
+  ( CapturedOutput (..)
+  , capturedOutputText
+  , runShellCommandCaptured
   )
 import Hutian.Tool
   ( Approval (..)
@@ -332,23 +335,30 @@ runToolCall planner runtime conversation call =
 -- | Run a command the model is already allowed to execute and display it.
 executeShellTool :: Visibility -> FilePath -> String -> IO (Either String String)
 executeShellTool toolOutput workingDirectory command = do
-  result <- runShellCommandOutput workingDirectory command
+  result <- runShellCommandCaptured workingDirectory command
   case result of
     Left message -> pure (Left message)
-    Right commandOutput -> do
-      when (outputBodyVisible toolOutput) (displayCommandResult commandOutput)
-      pure (Right (commandResultText commandOutput))
+    Right captured -> do
+      when (outputBodyVisible toolOutput) (displayCapturedOutput captured)
+      pure (Right (capturedOutputText captured))
 
 -- | Display captured command output the same way it would appear if the command
--- had inherited the terminal.
-displayCommandResult :: CommandResult -> IO ()
-displayCommandResult result = do
+-- had inherited the terminal. Bytes are sanitized and written directly, so a
+-- large result is not copied through 'String'.
+displayCapturedOutput :: CapturedOutput -> IO ()
+displayCapturedOutput captured = do
   stdoutInteractive <- consoleIsInteractive
   stderrInteractive <- consoleIsErrorInteractive
-  let output = trailingNewline (sanitizeOutput (commandStdout result))
-      errors = trailingNewline (sanitizeOutput (commandStderr result))
-  consoleWrite (grayOutputText stdoutInteractive output)
-  consoleWriteError (grayOutputText stderrInteractive errors)
+  consoleWriteBytes
+    ( grayOutputBytes
+        stdoutInteractive
+        (trailingNewlineBytes (sanitizeOutputBytes (capturedStdout captured)))
+    )
+  consoleWriteErrorBytes
+    ( grayOutputBytes
+        stderrInteractive
+        (trailingNewlineBytes (sanitizeOutputBytes (capturedStderr captured)))
+    )
   consoleFlush
 
 -- | Print a web or MCP result in the same muted style as other tool output.
