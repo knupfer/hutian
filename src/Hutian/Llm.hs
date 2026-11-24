@@ -15,12 +15,13 @@ module Hutian.Llm
   , runLlmContinuation
   ) where
 
-import Control.Concurrent (forkIOWithUnmask, killThread, threadDelay)
-import Control.Concurrent.MVar
-  ( newEmptyMVar
-  , putMVar
-  , takeMVar
-  , tryTakeMVar
+import Control.Concurrent (forkIOWithUnmask, killThread)
+import Control.Concurrent.STM
+  ( atomically
+  , newEmptyTMVarIO
+  , orElse
+  , putTMVar
+  , takeTMVar
   )
 import Control.Exception
   ( SomeException
@@ -37,13 +38,12 @@ import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (isSpace)
-import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
 import Hutian.Conversation (Conversation)
 import Hutian.Http.Body (readBodyAtMost)
 import Hutian.Http.Error (trySync)
-import Hutian.Interrupt (InterruptFlag, isInterrupted)
+import Hutian.Interrupt (InterruptFlag, interruptPending, isInterrupted)
 import Hutian.Llm.Presentation
   ( StreamPresenter
   , finishPresentation
@@ -112,24 +112,13 @@ runLlmWithTools output interruptFlag settings conversation prompt
   | all isSpace prompt = pure emptyLlmResult
   | otherwise =
       runRequest output interruptFlag settings $
-        requestBodyFor
-          (settingTools settings)
-          (apiFor (settingUrl settings))
-          (settingModel settings)
-          (settingSystemPrompt settings)
-          conversation
-          prompt
+        requestBodyFor settings conversation prompt
 
 -- | Continue a conversation after tool results have been appended.
 runLlmContinuation :: LlmOutput -> InterruptFlag -> LlmSettings -> Conversation -> IO LlmResult
 runLlmContinuation output interruptFlag settings conversation =
   runRequest output interruptFlag settings $
-    continuationBodyFor
-      (settingTools settings)
-      (apiFor (settingUrl settings))
-      (settingModel settings)
-      (settingSystemPrompt settings)
-      conversation
+    continuationBodyFor settings conversation
 
 runRequest :: LlmOutput -> InterruptFlag -> LlmSettings -> Value -> IO LlmResult
 runRequest output interruptFlag settings body = do
@@ -153,41 +142,26 @@ runRequest output interruptFlag settings body = do
 -- network, and its bracket closes the connection. 'Nothing' means interrupted.
 raceInterrupt :: InterruptFlag -> IO a -> IO (Maybe (Either String a))
 raceInterrupt interruptFlag action = mask $ \restore -> do
-  outcome <- newEmptyMVar
-  finished <- newEmptyMVar
+  outcome <- newEmptyTMVarIO
+  finished <- newEmptyTMVarIO
   worker <-
     forkIOWithUnmask $ \unmask ->
-      (unmask (trySync action) >>= putMVar outcome)
-        `finally` putMVar finished ()
-  let wait = do
-        completed <- tryTakeMVar outcome
-        case completed of
-          Just result -> pure (Just result)
-          Nothing -> do
-            stopped <- tryTakeMVar finished
-            case stopped of
-              Just () -> do
-                finalResult <- tryTakeMVar outcome
-                pure
-                  ( Just
-                      ( fromMaybe
-                          (Left "request thread terminated unexpectedly")
-                          finalResult
-                      )
-                  )
-              Nothing -> do
-                interrupted <- isInterrupted interruptFlag
-                if interrupted
-                  then do
-                    killThread worker
-                    takeMVar finished
-                    pure Nothing
-                  else threadDelay interruptPollMicros >> wait
-  restore wait `onException` killThread worker
-
--- | How often a blocked request checks whether the user interrupted it.
-interruptPollMicros :: Int
-interruptPollMicros = 20000
+      (unmask (trySync action) >>= atomically . putTMVar outcome)
+        `finally` atomically (putTMVar finished ())
+  let wait =
+        atomically $
+          (Just <$> takeTMVar outcome)
+            `orElse` (interruptPending interruptFlag >> pure Nothing)
+            `orElse` (takeTMVar finished >> pure (Just (Left terminatedUnexpectedly)))
+  result <- restore wait `onException` killThread worker
+  case result of
+    Just value -> pure (Just value)
+    Nothing -> do
+      killThread worker
+      atomically (takeTMVar finished)
+      pure Nothing
+  where
+    terminatedUnexpectedly = "request thread terminated unexpectedly"
 
 streamCompletion :: LlmOutput -> InterruptFlag -> LlmSettings -> Value -> IO LlmResult
 streamCompletion output interruptFlag settings body =

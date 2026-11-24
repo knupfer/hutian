@@ -6,6 +6,7 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy.Char8 as LBS8
+import qualified Data.Map.Strict as Map
 import Data.List (isInfixOf, isSuffixOf)
 import qualified Data.Text as Text
 import Hutian.Conversation
@@ -16,8 +17,7 @@ import Hutian.Conversation
   , emptyConversation
   )
 import Hutian.Jobs
-  ( JobId (..)
-  , defaultJobOutputLines
+  ( defaultJobOutputLines
   , lineCount
   , maxJobOutputLines
   )
@@ -28,11 +28,12 @@ import Hutian.Tool
 import Hutian.Tool.Catalog
   ( McpServer (..)
   , McpTool (..)
-  , ToolCatalog (..)
+  , ToolCatalog
   , toolCatalog
+  , withMcpServers
   )
 import Hutian.Tool.Config
-  ( HandlerConfig (..)
+  ( AgentConfig (..)
   , HandlerConfigs (..)
   , McpServerConfig (..)
   , SubagentConfig (..)
@@ -44,22 +45,22 @@ import Hutian.Tool.Summary (toolSummaryLines)
 import Hutian.Verbosity (Verbosity (..))
 import Test.Tasty
 import Test.Tasty.HUnit
-import TestSupport (stripAnsi, withPseudoTerminalOutput, withTemporaryDirectory)
+import TestSupport (stripAnsi, testJobId, withPseudoTerminalOutput, withTemporaryDirectory)
 
 tests :: TestTree
 tests =
   testGroup
     "tool"
     [ testCase "allowed policies run a valid shell command" $
-        planTool ToolAllow shellCall @?= PlanRun Foreground "ls -la"
+        planTool ToolAllow shellCall @?= PlanExecute RunNow (RunShell Foreground "ls -la")
     , testCase "ask policies request approval for a valid command" $
-        planTool ToolAsk shellCall @?= PlanApprove Foreground "ls -la"
+        planTool ToolAsk shellCall @?= PlanExecute AskUser (RunShell Foreground "ls -la")
     , testCase "allowed policies start a background command" $
         planTool ToolAllow backgroundCall
-          @?= PlanRun Background "sleep 10"
+          @?= PlanExecute RunNow (RunShell Background "sleep 10")
     , testCase "ask policies request approval for a background command" $
         planTool ToolAsk backgroundCall
-          @?= PlanApprove Background "sleep 10"
+          @?= PlanExecute AskUser (RunShell Background "sleep 10")
     , testCase "deny policies refuse every shell tool without reaching the shell" $ do
         planTool ToolDeny shellCall
           @?= PlanRefuse "tool error: the model shell tools are disabled"
@@ -69,17 +70,17 @@ tests =
           @?= PlanRefuse "tool error: the model shell tools are disabled"
         planTool ToolDeny (ToolCall "call-1" "other" "not-json")
           @?= PlanRefuse "tool error: the model shell tools are disabled"
-    , testCase "job inspection runs without approval in ask mode" $ do
-        planTool ToolAsk jobsCall @?= PlanListJobs
+    , testCase "job reads run without approval and kill asks in ask mode" $ do
+        planTool ToolAsk jobsCall @?= PlanExecute RunNow ListJobs
         planTool ToolAsk (jobOutputCall 2 "{\"job_id\":2}")
-          @?= PlanJobOutput (JobId 2) defaultJobOutputLines
+          @?= PlanExecute RunNow (ReadJobOutput (testJobId 2) defaultJobOutputLines)
         planTool ToolAsk (jobKillCall 3 "{\"job_id\":3}")
-          @?= PlanJobKill (JobId 3)
+          @?= PlanExecute AskUser (KillJob (testJobId 3))
     , testCase "job output accepts an explicit line count" $
         planTool
           ToolAllow
           (jobOutputCall 2 "{\"job_id\":2,\"lines\":20}")
-          @?= PlanJobOutput (JobId 2) (lineCount 20)
+          @?= PlanExecute RunNow (ReadJobOutput (testJobId 2) (lineCount 20))
     , testCase "job ids must be positive integers" $ do
         planTool ToolAllow (jobOutputCall 0 "{\"job_id\":0}")
           @?= PlanRefuse "tool error: job_id must be a positive integer"
@@ -94,11 +95,11 @@ tests =
         planTool
           ToolAllow
           (jobOutputCall 1 "{\"job_id\":1,\"lines\":0}")
-          @?= PlanJobOutput (JobId 1) (lineCount 0)
+          @?= PlanExecute RunNow (ReadJobOutput (testJobId 1) (lineCount 0))
         planTool
           ToolAllow
           (jobOutputCall 1 ("{\"job_id\":1,\"lines\":" ++ show (maxJobOutputLines + 1) ++ "}"))
-          @?= PlanJobOutput (JobId 1) (lineCount maxJobOutputLines)
+          @?= PlanExecute RunNow (ReadJobOutput (testJobId 1) (lineCount maxJobOutputLines))
     , testCase "a non-integer line count is refused" $
         planTool
           ToolAllow
@@ -127,7 +128,7 @@ tests =
         planTool
           ToolAllow
           (ToolCall "call-1" "shell" "{\"command\":\"  printf 'hi'  \"}")
-          @?= PlanRun Foreground "  printf 'hi'  "
+          @?= PlanExecute RunNow (RunShell Foreground "  printf 'hi'  ")
     , testCase "tool definitions describe every advertised tool" $
         map toolNameOf toolDefinitions
           @?= ["shell", "shell_background", "jobs", "job_output", "job_kill"]
@@ -186,11 +187,11 @@ tests =
         planToolWith
           (toolCatalog (defaultToolConfig {toolWebfetch = ToolAllow}))
           webfetchCall
-          @?= PlanRunWebfetch "https://example.test/page"
+          @?= PlanExecute RunNow (FetchUrl "https://example.test/page")
         planToolWith
           (toolCatalog (defaultToolConfig {toolWebfetch = ToolAsk}))
           webfetchCall
-          @?= PlanApproveWebfetch "https://example.test/page"
+          @?= PlanExecute AskUser (FetchUrl "https://example.test/page")
         planToolWith (toolCatalog defaultToolConfig) webfetchCall
           @?= PlanRefuse "tool error: the model webfetch tool is disabled"
     , testCase "webfetch rejects non-http URLs" $
@@ -200,7 +201,7 @@ tests =
           @?= PlanRefuse "tool error: only http and https URLs are supported"
     , testCase "subagent plans select a configured selector" $ do
         planToolWith configuredTools subagentCall
-          @?= PlanSubagent cheapAgent "summarize this"
+          @?= PlanExecute RunNow (RunSubagent cheapAgent "summarize this")
         planToolWith
           configuredTools
           (ToolCall "call-1" "subagent" "{\"name\":\"missing\",\"prompt\":\"hi\"}")
@@ -215,14 +216,11 @@ tests =
         map toolNameOf (toolDefinitionsFor mcpToolsConfig)
           @?= ["mcp__demo__search"]
         planToolWith mcpToolsConfig mcpCall
-          @?= PlanRunMcp demoServer demoSearch (object ["query" .= ("haskell" :: String)])
+          @?= PlanExecute RunNow (CallMcp demoServer demoSearch (object ["query" .= ("haskell" :: String)]))
         planToolWith
           (mcpToolsWith ToolAsk)
           mcpCall
-          @?= PlanApproveMcp
-            (demoServer {mcpServerConfig = demoServerConfig {mcpServerPolicy = ToolAsk}})
-            demoSearch
-            (object ["query" .= ("haskell" :: String)])
+          @?= PlanExecute AskUser (CallMcp (demoServer {mcpServerConfig = demoServerConfig {mcpServerPolicy = ToolAsk}}) demoSearch (object ["query" .= ("haskell" :: String)]))
         planToolWith
           (mcpToolsWith ToolDeny)
           mcpCall
@@ -232,7 +230,7 @@ tests =
         planToolWith mcpToolsConfig (ToolCall "call-1" "mcp__demo__search" "[]")
           @?= PlanRefuse "tool error: the MCP tool arguments must be a JSON object"
         planToolWith mcpToolsConfig (ToolCall "call-1" "mcp__demo__search" "")
-          @?= PlanRunMcp demoServer demoSearch (object [])
+          @?= PlanExecute RunNow (CallMcp demoServer demoSearch (object []))
     , testCase "MCP tool definitions carry the server name" $ do
         let definitions =
               LBS8.unpack (Aeson.encode (toolDefinitionsFor mcpToolsConfig))
@@ -305,20 +303,19 @@ tests =
                 (not ("subagent" `isInfixOf` plain))
     , testCase "result handler descriptions are appended to MCP tool definitions" $ do
         let handlerConfig =
-              HandlerConfig
-                { handlerModel = "cheap"
-                , handlerDescription = "Summarize the search results."
-                , handlerSystemPrompt = "Summarize."
-                , handlerTools = defaultToolConfig
+              AgentConfig
+                { agentModel = "cheap"
+                , agentDescription = "Summarize the search results."
+                , agentSystemPrompt = "Summarize."
+                , agentTools = defaultToolConfig
                 }
             serverConfig =
               demoServerConfig
-                { mcpHandlers = HandlerConfigs [("search", handlerConfig)]
+                { mcpHandlers = HandlerConfigs (Map.fromList [("search", handlerConfig)])
                 }
             catalog =
-              ToolCatalog
-                (defaultToolConfig {toolMcp = [serverConfig]})
-                [demoServer {mcpServerConfig = serverConfig}]
+              withMcpServers [demoServer {mcpServerConfig = serverConfig}]
+                (toolCatalog (defaultToolConfig {toolMcp = [serverConfig]}))
             definitions =
               LBS8.unpack (Aeson.encode (toolDefinitionsFor catalog))
         assertBool "handler label" ("mcp.demo.handlers.search" `isInfixOf` definitions)
@@ -340,10 +337,13 @@ cheapAgent :: SubagentConfig
 cheapAgent =
   SubagentConfig
     { subagentName = "cheap"
-    , subagentModel = "cheap-upstream"
-    , subagentDescription = "Summarize pages when current information is needed."
-    , subagentSystemPrompt = "Summarize pages."
-    , subagentTools = defaultToolConfig
+    , subagentAgent =
+        AgentConfig
+          { agentModel = "cheap-upstream"
+          , agentDescription = "Summarize pages when current information is needed."
+          , agentSystemPrompt = "Summarize pages."
+          , agentTools = defaultToolConfig
+          }
     }
 
 demoServerConfig :: McpServerConfig
@@ -352,7 +352,7 @@ demoServerConfig =
     { mcpServerName = "demo"
     , mcpServerUrl = "https://mcp.example.test/mcp"
     , mcpServerPolicy = ToolAllow
-    , mcpHandlers = HandlerConfigs []
+    , mcpHandlers = HandlerConfigs Map.empty
     }
 
 demoServer :: McpServer
@@ -378,15 +378,13 @@ demoSearch =
 
 mcpToolsConfig :: ToolCatalog
 mcpToolsConfig =
-  ToolCatalog
-    (defaultToolConfig {toolMcp = [demoServerConfig]})
-    [demoServer]
+  withMcpServers [demoServer] (toolCatalog (defaultToolConfig {toolMcp = [demoServerConfig]}))
 
 mcpToolsWith :: ToolPolicy -> ToolCatalog
 mcpToolsWith policy =
-  ToolCatalog
-    (defaultToolConfig {toolMcp = [demoServerConfig {mcpServerPolicy = policy}]})
+  withMcpServers
     [demoServer {mcpServerConfig = demoServerConfig {mcpServerPolicy = policy}}]
+    (toolCatalog (defaultToolConfig {toolMcp = [demoServerConfig {mcpServerPolicy = policy}]}))
 
 mcpCall :: ToolCall
 mcpCall =

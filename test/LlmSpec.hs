@@ -15,7 +15,7 @@ import Hutian.Conversation (ConversationEntry (..), ToolCall (..), emptyConversa
 import Hutian.Llm
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Catalog (ToolCatalog, toolCatalog)
-import Hutian.Tool.Config (SubagentConfig (..), ToolConfig (..), defaultToolConfig)
+import Hutian.Tool.Config (AgentConfig (..), SubagentConfig (..), ToolConfig (..), defaultToolConfig)
 import Hutian.Verbosity (Verbosity (..))
 import System.Directory (doesFileExist, getTemporaryDirectory)
 import System.IO (hClose, hPutStr, openTempFile)
@@ -26,6 +26,23 @@ import Test.Tasty.QuickCheck (testProperty)
 
 shellTools :: ToolPolicy -> ToolCatalog
 shellTools policy = toolCatalog (defaultToolConfig {toolShell = policy})
+
+testSettings :: Api -> ToolCatalog -> String -> String -> LlmSettings
+testSettings api tools model systemPrompt =
+  LlmSettings
+    { settingUrl = LlmUrl url
+    , settingApi = api
+    , settingModel = ModelName model
+    , settingSystemPrompt = SystemPrompt systemPrompt
+    , settingSocket = Nothing
+    , settingVerbosity = VerbosityHigh
+    , settingTools = tools
+    }
+  where
+    url =
+      case api of
+        ChatApi -> "http://example.test/v1/chat/completions"
+        CompletionApi -> "http://example.test/completion"
 
 parseSettings :: [String] -> Either String LlmSettings
 parseSettings = parseSettingsWithVerbosity "--verbosity" "high"
@@ -58,6 +75,7 @@ unitTests =
           @?= Right
             ( LlmSettings
                 (LlmUrl "http://127.0.0.1:8080/v1/chat/completions")
+                (apiFor (LlmUrl "http://127.0.0.1:8080/v1/chat/completions"))
                 (ModelName "test-model")
                 (SystemPrompt "system rules")
                 Nothing
@@ -73,7 +91,7 @@ unitTests =
           , ""
           ]
           @?= Right
-            (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt "") Nothing VerbosityHigh (shellTools ToolDeny))
+            (LlmSettings (LlmUrl "http://example.test/completion") (apiFor (LlmUrl "http://example.test/completion")) (ModelName "m") (SystemPrompt "") Nothing VerbosityHigh (shellTools ToolDeny))
     , testCase "parseSettings accepts an optional relay socket" $ do
         parseSettings
           [ "--llama-url"
@@ -88,6 +106,7 @@ unitTests =
           @?= Right
             ( LlmSettings
                 (LlmUrl "http://example.test/v1/chat/completions")
+                (apiFor (LlmUrl "http://example.test/v1/chat/completions"))
                 (ModelName "m")
                 (SystemPrompt "system rules")
                 (Just "/run/hutian/llm.sock")
@@ -111,6 +130,7 @@ unitTests =
           @?= Right
             ( LlmSettings
                 (LlmUrl "http://example.test/v1/chat/completions")
+                (apiFor (LlmUrl "http://example.test/v1/chat/completions"))
                 (ModelName "file-model")
                 (SystemPrompt "file rules")
                 Nothing
@@ -140,6 +160,7 @@ unitTests =
           @?= Right
             ( LlmSettings
                 (LlmUrl "http://example.test/v1/chat/completions")
+                (apiFor (LlmUrl "http://example.test/v1/chat/completions"))
                 (ModelName "file-model")
                 (SystemPrompt "file rules")
                 Nothing
@@ -153,7 +174,7 @@ unitTests =
     , testCase "parseLlmSettingsWithFiles reads a standalone subagent object" $
         parseLlmSettingsWithFiles
           [ ( "/run/subagents"
-            , "{\"cheap\":{\"model\":\"cheap-upstream\",\"description\":\"Summarize pages.\",\"systemPrompt\":\"Summarize.\",\"tools\":{\"shell\":\"deny\",\"webfetch\":\"allow\",\"subagent\":{}}}}"
+            , "{\"cheap\":{\"model\":\"cheap-upstream\",\"description\":\"Summarize pages.\",\"systemPrompt\":\"Summarize.\",\"tools\":{\"shell\":\"deny\",\"webfetch\":\"allow\",\"subagent\":{},\"mcp\":{}}}}"
             )
           ]
           [ "--llama-url"
@@ -170,6 +191,7 @@ unitTests =
           @?= Right
             ( LlmSettings
                 (LlmUrl "http://example.test/v1/chat/completions")
+                (apiFor (LlmUrl "http://example.test/v1/chat/completions"))
                 (ModelName "m")
                 (SystemPrompt "")
                 Nothing
@@ -180,10 +202,13 @@ unitTests =
                         , toolSubagent =
                             [ SubagentConfig
                                 { subagentName = "cheap"
-                                , subagentModel = "cheap-upstream"
-                                , subagentDescription = "Summarize pages."
-                                , subagentSystemPrompt = "Summarize."
-                                , subagentTools = defaultToolConfig {toolWebfetch = ToolAllow}
+                                , subagentAgent =
+                                    AgentConfig
+                                      { agentModel = "cheap-upstream"
+                                      , agentDescription = "Summarize pages."
+                                      , agentSystemPrompt = "Summarize."
+                                      , agentTools = defaultToolConfig {toolWebfetch = ToolAllow}
+                                      }
                                 }
                             ]
                         }
@@ -231,6 +256,7 @@ unitTests =
               Right
                 ( LlmSettings
                     (LlmUrl "http://example.test/v1/chat/completions")
+                    (apiFor (LlmUrl "http://example.test/v1/chat/completions"))
                     (ModelName "m")
                     (SystemPrompt "")
                     Nothing
@@ -322,9 +348,9 @@ unitTests =
         apiFor (LlmUrl "https://example.test/v1/chat/completions?stream=true") @?= ChatApi
         apiFor (LlmUrl "https://example.test/api/v1/chat/completions") @?= ChatApi
         apiFor (LlmUrl "https://example.test/v1/chat/completions-extra") @?= CompletionApi
-        apiFor (LlmUrl "https://example.test/v1/chat/completions/") @?= CompletionApi
+        apiFor (LlmUrl "https://example.test/v1/chat/completions/") @?= ChatApi
     , testCase "chat request body has system and user messages" $
-        case requestBodyFor ToolDeny ChatApi (ModelName "test-model") (SystemPrompt "system rules") emptyConversation "hello" of
+        case requestBodyFor (testSettings ChatApi (shellTools ToolDeny) "test-model" "system rules") emptyConversation "hello" of
           Object body -> do
             KeyMap.lookup "model" body @?= Just (String "test-model")
             KeyMap.lookup "stream" body @?= Just (Bool True)
@@ -342,10 +368,7 @@ unitTests =
     , testCase "chat request includes prior conversation and terminal history" $
         case
             requestBodyFor
-              ToolDeny
-              ChatApi
-              (ModelName "test-model")
-              (SystemPrompt "system rules")
+              (testSettings ChatApi (shellTools ToolDeny) "test-model" "system rules")
               [UserEntry "previous question", AssistantEntry "previous answer", TerminalEntry "ls -la"]
               "new question"
           of
@@ -369,14 +392,14 @@ unitTests =
                 other -> assertFailure ("missing messages: " ++ show other)
             other -> assertFailure ("unexpected request body: " ++ show other)
     , testCase "chat request body omits an empty system message" $
-        case requestBodyFor ToolDeny ChatApi (ModelName "test-model") (SystemPrompt "") emptyConversation "hello" of
+        case requestBodyFor (testSettings ChatApi (shellTools ToolDeny) "test-model" "") emptyConversation "hello" of
           Object body ->
             case KeyMap.lookup "messages" body of
               Just (Array messages) -> Vector.length messages @?= 1
               other -> assertFailure ("missing messages: " ++ show other)
           other -> assertFailure ("unexpected request body: " ++ show other)
     , testCase "completion request body prepends the system prompt" $
-        case requestBodyFor ToolDeny CompletionApi (ModelName "test-model") (SystemPrompt "system rules") emptyConversation "hello" of
+        case requestBodyFor (testSettings CompletionApi (shellTools ToolDeny) "test-model" "system rules") emptyConversation "hello" of
           Object body -> do
             KeyMap.lookup "model" body @?= Just (String "test-model")
             KeyMap.lookup "prompt" body @?= Just (String "System: system rules\n\nUser: hello\n\nAssistant:")
@@ -384,7 +407,7 @@ unitTests =
             KeyMap.lookup "messages" body @?= Nothing
           other -> assertFailure ("unexpected request body: " ++ show other)
     , testCase "chat request body advertises the shell and job tools when allowed" $
-        case requestBodyFor ToolAllow ChatApi (ModelName "test-model") (SystemPrompt "") emptyConversation "hello" of
+        case requestBodyFor (testSettings ChatApi (shellTools ToolAllow) "test-model" "") emptyConversation "hello" of
           Object body ->
             case KeyMap.lookup "tools" body of
               Just (Array tools) ->
@@ -393,13 +416,13 @@ unitTests =
               other -> assertFailure ("missing tools: " ++ show other)
           other -> assertFailure ("unexpected request body: " ++ show other)
     , testCase "chat request body advertises the shell tool in ask mode" $
-        case requestBodyFor ToolAsk ChatApi (ModelName "test-model") (SystemPrompt "") emptyConversation "hello" of
+        case requestBodyFor (testSettings ChatApi (shellTools ToolAsk) "test-model" "") emptyConversation "hello" of
           Object body -> do
             assertBool "ask mode should advertise tools" (KeyMap.member "tools" body)
             KeyMap.lookup "tool_choice" body @?= Just (String "auto")
           other -> assertFailure ("unexpected request body: " ++ show other)
     , testCase "chat request body omits the shell tool when denied" $
-        case requestBodyFor ToolDeny ChatApi (ModelName "test-model") (SystemPrompt "") emptyConversation "hello" of
+        case requestBodyFor (testSettings ChatApi (shellTools ToolDeny) "test-model" "") emptyConversation "hello" of
           Object body -> do
             KeyMap.lookup "tools" body @?= Nothing
             KeyMap.lookup "tool_choice" body @?= Nothing
@@ -513,10 +536,14 @@ prop_apiFor url =
   apiFor (LlmUrl url) === expected
   where
     expected
-      | "/v1/chat/completions" `isSuffixOf` requestPath url = ChatApi
+      | "/v1/chat/completions" `isSuffixOf` dropTrailingSlash (requestPath url) = ChatApi
       | otherwise = CompletionApi
     requestPath =
       takeWhile (`notElem` ['?', '#']) . dropWhile (`notElem` ['/', '?', '#'])
+    dropTrailingSlash path =
+      case reverse path of
+        '/' : rest -> reverse rest
+        _ -> path
 
 prop_parseSettings :: NonEmptyList Char -> String -> Property
 prop_parseSettings model systemPrompt =
@@ -531,6 +558,7 @@ prop_parseSettings model systemPrompt =
     === Right
       ( LlmSettings
           (LlmUrl urlText)
+          (apiFor (LlmUrl urlText))
           (ModelName modelText)
           (SystemPrompt systemPrompt)
           Nothing
@@ -556,6 +584,7 @@ prop_parseSettingsWithSocket model systemPrompt socket =
     === Right
       ( LlmSettings
           (LlmUrl urlText)
+          (apiFor (LlmUrl urlText))
           (ModelName modelText)
           (SystemPrompt systemPrompt)
           (Just socketText)
@@ -591,7 +620,7 @@ prop_requestBody :: String -> String -> String -> Property
 prop_requestBody model systemPrompt text =
   forAll (elements [ChatApi, CompletionApi]) $ \api ->
     counterexample (show (api, model, systemPrompt, text)) $
-      case Aeson.decode (Aeson.encode (requestBodyFor ToolAllow api (ModelName model) (SystemPrompt systemPrompt) emptyConversation text)) of
+      case Aeson.decode (Aeson.encode (requestBodyFor (testSettings api (shellTools ToolAllow) model systemPrompt) emptyConversation text)) of
         Just (Object body) ->
           KeyMap.lookup "model" body === Just (String (Text.pack model))
             .&&. KeyMap.lookup "stream" body === Just (Bool True)

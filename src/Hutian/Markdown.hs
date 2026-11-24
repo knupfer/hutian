@@ -1,6 +1,7 @@
 -- | Lightweight streaming ANSI highlighter for Markdown replies.
 module Hutian.Markdown
-  ( MarkdownState
+  ( MarkdownFlavor (..)
+  , MarkdownState
   , initialMarkdownState
   , renderMarkdown
   , renderMarkdownWith
@@ -30,14 +31,21 @@ data Fence = Fence
 initialMarkdownState :: MarkdownState
 initialMarkdownState = MarkdownState Nothing "" [] ""
 
+-- | Whether output uses the normal palette or a dim base colour, as used by
+-- reasoning blocks and subagent answers.
+data MarkdownFlavor
+  = NormalMarkdown
+  | DimMarkdown String
+  deriving stock (Eq, Show)
+
 -- | Highlight a chunk of Markdown. Complete lines are emitted; an incomplete
 -- trailing line is kept until the next chunk or 'finishMarkdown'.
 renderMarkdown :: MarkdownState -> Text.Text -> (MarkdownState, String)
-renderMarkdown = renderMarkdownWith ""
+renderMarkdown = renderMarkdownWith NormalMarkdown
 
-renderMarkdownWith :: String -> MarkdownState -> Text.Text -> (MarkdownState, String)
-renderMarkdownWith base state chunk =
-  let context = contextFor base
+renderMarkdownWith :: MarkdownFlavor -> MarkdownState -> Text.Text -> (MarkdownState, String)
+renderMarkdownWith flavor state chunk =
+  let context = contextFor flavor
       (completeLines, partial) =
         splitCompleteLines (markdownPartial state ++ Text.unpack chunk)
       (state', renderedLines) =
@@ -53,7 +61,7 @@ renderMarkdownWith base state chunk =
 renderMarkdownRows :: [String] -> [String]
 renderMarkdownRows = go
   where
-    context = contextFor ""
+    context = contextFor NormalMarkdown
     colours = contextColours context
     go [] = []
     go (row : rest) =
@@ -77,11 +85,11 @@ renderMarkdownRows = go
             else map (styled (coloursCode colours)) body
 
 finishMarkdown :: MarkdownState -> String
-finishMarkdown = finishMarkdownWith ""
+finishMarkdown = finishMarkdownWith NormalMarkdown
 
-finishMarkdownWith :: String -> MarkdownState -> String
-finishMarkdownWith base state =
-  let context = contextFor base
+finishMarkdownWith :: MarkdownFlavor -> MarkdownState -> String
+finishMarkdownWith flavor state =
+  let context = contextFor flavor
       (afterPartial, partialLines) =
         case markdownPartial state of
           "" -> (state, [])
@@ -283,7 +291,7 @@ highlightInline context = go
     go ('_' : '_' : rest) =
       emphasis "__" boldColour (boldOff base) rest
     go ('~' : '~' : rest) =
-      emphasis "~~" strikeColour strikeOff rest
+      emphasis "~~" Ansi.strikeCode Ansi.noStrikeCode rest
     go ('*' : rest) =
       emphasis "*" italicColour (italicOff base) rest
     go ('_' : rest) =
@@ -332,15 +340,15 @@ restoreForeground base
   | otherwise = base
 
 -- | Rendering context: the base colour for subordinate text and the palette to
--- use. A non-empty base marks thinking output, whose accent colours are dimmed
--- so the base colour stays dominant.
+-- use. Dim output gets a base colour and a dimmed accent palette.
 data MarkdownContext = MarkdownContext
   { contextBase :: String
   , contextColours :: MarkdownColours
   }
 
-contextFor :: String -> MarkdownContext
-contextFor base = MarkdownContext base (if null base then normalColours else dimColours)
+contextFor :: MarkdownFlavor -> MarkdownContext
+contextFor NormalMarkdown = MarkdownContext "" normalColours
+contextFor (DimMarkdown base) = MarkdownContext base dimColours
 
 data MarkdownColours = MarkdownColours
   { coloursBold :: Ansi.Style
@@ -402,10 +410,6 @@ boldOff base = Ansi.styleCode Ansi.normalIntensity ++ restoreForeground base
 
 italicOff :: String -> String
 italicOff base = Ansi.styleCode Ansi.noItalic ++ restoreForeground base
-
-strikeColour, strikeOff :: String
-strikeColour = "\ESC[9m"
-strikeOff = "\ESC[29m"
 
 linkOff :: String -> String
 linkOff base = Ansi.styleCode Ansi.noUnderline ++ restoreForeground base

@@ -8,11 +8,14 @@ module Hutian.Mcp
   , callMcpTool
   ) where
 
+import Control.Applicative ((<|>))
 import Data.Aeson (Value (..))
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.List (isInfixOf)
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Hutian.Http.Body (readBodyAtMost)
 import Hutian.Http.Error (trySync)
 import Hutian.Mcp.Protocol
@@ -24,6 +27,7 @@ import Hutian.Mcp.Protocol
   , mcpInitializedNotification
   , mcpListToolsRequest
   , mcpProtocolVersion
+  , mcpToolFunctionName
   , mcpToolResultText
   , parseTools
   , protocolError
@@ -32,8 +36,10 @@ import Hutian.Mcp.Protocol
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Catalog
   ( McpServer (..)
-  , McpSessionId (..)
+  , McpSessionId
   , McpTool (..)
+  , mcpSessionIdFromString
+  , mcpSessionIdText
   )
 import Hutian.Tool.Config (HandlerConfigs (..), McpServerConfig (..))
 import Network.HTTP.Client
@@ -82,10 +88,12 @@ discoverServer report config
               case parseTools result of
                 Left failure -> do
                   reportFailure failure
-                  pure (McpServer config [] (session' `orElse` session))
+                  pure (McpServer config [] (session' <|> session))
                 Right tools -> do
-                  reportUnknownHandlers report config tools
-                  pure (McpServer config tools (session' `orElse` session))
+                  let (uniqueTools, duplicates) = uniqueMcpTools config tools
+                  mapM_ (reportDuplicate report config) duplicates
+                  reportUnknownHandlers report config uniqueTools
+                  pure (McpServer config uniqueTools (session' <|> session))
   where
     reportFailure failure =
       report ("mcp " ++ mcpServerName config ++ ": " ++ mcpErrorText failure)
@@ -97,7 +105,7 @@ emptyServer config = McpServer config [] Nothing
 -- The handler stays in the configuration but never runs.
 reportUnknownHandlers :: (String -> IO ()) -> McpServerConfig -> [McpTool] -> IO ()
 reportUnknownHandlers report config tools =
-  mapM_ reportMissing (unHandlerConfigs (mcpHandlers config))
+  mapM_ reportMissing (Map.toList (unHandlerConfigs (mcpHandlers config)))
   where
     known = map mcpToolName tools
     reportMissing (name, _)
@@ -112,6 +120,33 @@ reportUnknownHandlers report config tools =
                 ++ show name
                 ++ "; the result handler is ignored"
             )
+
+-- | Keep the first tool for every API-facing name. Two remote tools can
+-- sanitize to the same function name, and advertising both would make the
+-- model's call ambiguous.
+uniqueMcpTools :: McpServerConfig -> [McpTool] -> ([McpTool], [McpTool])
+uniqueMcpTools config = go Set.empty
+  where
+    go _ [] = ([], [])
+    go seen (tool : rest)
+      | Set.member key seen =
+          let (unique, duplicates) = go seen rest
+           in (unique, tool : duplicates)
+      | otherwise =
+          let (unique, duplicates) = go (Set.insert key seen) rest
+           in (tool : unique, duplicates)
+      where
+        key = mcpToolFunctionName (mcpServerName config) (mcpToolName tool)
+
+reportDuplicate :: (String -> IO ()) -> McpServerConfig -> McpTool -> IO ()
+reportDuplicate report config tool =
+  report
+    ( "mcp "
+        ++ mcpServerName config
+        ++ ": tool "
+        ++ show (mcpToolName tool)
+        ++ " has the same API name as an earlier tool; only the first is advertised"
+    )
 
 -- | Call one discovered MCP tool and format its content as tool output.
 callMcpTool :: McpServer -> McpTool -> Value -> IO (Either McpError String)
@@ -209,7 +244,7 @@ postMcpRaw manager config session message = do
               ( Right
                   McpHttpReply
                     { mcpHttpSession =
-                        McpSessionId . BS8.unpack
+                        mcpSessionIdFromString . BS8.unpack
                           <$> lookup hMcpSessionId (responseHeaders response)
                     , mcpHttpContentType =
                         maybe "" BS8.unpack (lookup hContentType (responseHeaders response))
@@ -220,7 +255,7 @@ postMcpRaw manager config session message = do
     sessionHeaders =
       case session of
         Nothing -> []
-        Just value -> [("Mcp-Session-Id", BS8.pack (unMcpSessionId value))]
+        Just value -> [("Mcp-Session-Id", BS8.pack (mcpSessionIdText value))]
 
 -- | Decode either an SSE stream or a plain JSON response into JSON-RPC values.
 responseValues :: McpHttpReply -> Either McpError [Value]
@@ -248,7 +283,3 @@ mcpTimeoutMicros = 60 * 1000 * 1000
 
 hMcpSessionId :: HeaderName
 hMcpSessionId = "Mcp-Session-Id"
-
-orElse :: Maybe a -> Maybe a -> Maybe a
-orElse (Just value) _ = Just value
-orElse Nothing fallback = fallback

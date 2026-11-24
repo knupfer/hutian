@@ -4,6 +4,7 @@
 -- "Hutian.Tool"; this module only carries out the resulting plan.
 module Hutian.Tool.Exec
   ( ToolRuntime (..)
+  , ToolRun (..)
   , runToolCalls
   , runToolCallsWith
   ) where
@@ -35,9 +36,11 @@ import Hutian.Conversation
 import Control.Monad (when)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy.Char8 as LBS8
+import Hutian.Context (TurnContext (MainContext))
 import Hutian.Highlight (sanitizeOutput)
 import Hutian.Jobs
   ( Job
+  , Truncation (..)
   , jobKillResult
   , jobListResult
   , jobOutputResult
@@ -57,7 +60,6 @@ import Hutian.Policy (ToolPolicy)
 import Hutian.Render
   ( OutputKind (..)
   , ToolApproval (..)
-  , TurnContext (..)
   , grayOutputText
   , trailingNewline
   )
@@ -67,15 +69,22 @@ import Hutian.Shell
   , runShellCommandOutput
   )
 import Hutian.Tool
-  ( CommandMode (..)
+  ( Approval (..)
+  , CommandMode (..)
+  , ToolAction (..)
   , ToolPlan (..)
+  , ToolRun (..)
   , planTool
   , planToolWith
   )
-import Hutian.Tool.Catalog (McpServer (..), McpTool (..), ToolCatalog)
+import Hutian.Tool.Catalog
+  ( McpTool (..)
+  , ToolCatalog
+  , mcpServerHandlersOf
+  , mcpServerNameOf
+  )
 import Hutian.Tool.Config
   ( HandlerConfig
-  , McpServerConfig (..)
   , SubagentConfig (..)
   , handlerConfigFor
   )
@@ -102,7 +111,7 @@ data ToolRuntime = ToolRuntime
 
 -- | Run each requested call in order with a shell-only policy. This preserves
 -- the shell tool entry point used by tests and direct callers.
-runToolCalls :: JobRuntime -> FilePath -> ToolPolicy -> Conversation -> [ToolCall] -> IO (Bool, Conversation)
+runToolCalls :: JobRuntime -> FilePath -> ToolPolicy -> Conversation -> [ToolCall] -> IO (ToolRun, Conversation)
 runToolCalls jobs workingDirectory policy =
   runToolCallsPlanned
     (planTool policy)
@@ -120,7 +129,7 @@ runToolCalls jobs workingDirectory policy =
 -- | Run each requested call in order using the full tool configuration. Once a
 -- call aborts the turn, the remaining calls get an error result instead of
 -- running.
-runToolCallsWith :: ToolRuntime -> ToolCatalog -> Conversation -> [ToolCall] -> IO (Bool, Conversation)
+runToolCallsWith :: ToolRuntime -> ToolCatalog -> Conversation -> [ToolCall] -> IO (ToolRun, Conversation)
 runToolCallsWith runtime catalog =
   runToolCallsPlanned (planToolWith catalog) runtime
 
@@ -129,57 +138,33 @@ runToolCallsPlanned
   -> ToolRuntime
   -> Conversation
   -> [ToolCall]
-  -> IO (Bool, Conversation)
-runToolCallsPlanned planner runtime = go False
+  -> IO (ToolRun, Conversation)
+runToolCallsPlanned planner runtime = go ToolsCompleted
   where
-    go aborted conversation [] = pure (aborted, conversation)
-    go True conversation (call : rest) =
-      go True (appendToolResult (toolCallId call) abortedToolMessage conversation) rest
-    go False conversation (call : rest) = do
-      (callAborted, conversation') <- runToolCall planner runtime conversation call
-      go callAborted conversation' rest
+    go status conversation [] = pure (status, conversation)
+    go ToolsAborted conversation (call : rest) =
+      go ToolsAborted (appendToolResult (toolCallId call) abortedToolMessage conversation) rest
+    go ToolsCompleted conversation (call : rest) = do
+      (status, conversation') <- runToolCall planner runtime conversation call
+      go status conversation' rest
 
 runToolCall
   :: (ToolCall -> ToolPlan)
   -> ToolRuntime
   -> Conversation
   -> ToolCall
-  -> IO (Bool, Conversation)
+  -> IO (ToolRun, Conversation)
 runToolCall planner runtime conversation call =
   case planner call of
     PlanRefuse message -> refuse message
-    PlanRun mode command -> do
-      consoleWriteToolCommandIn context (toolCallName call) command
-      runPlanned mode command
-    PlanApprove mode command -> do
-      approval <- confirmToolCommandIn context (toolCallName call) command
-      case approval of
-        ToolApproved -> runPlanned mode command
-        ToolDenied -> refuse "tool error: the user did not approve the shell command"
-        ToolAborted ->
-          pure (True, appendToolResult (toolCallId call) abortedToolMessage conversation)
-    PlanListJobs -> runJobsTool
-    PlanJobOutput target requestedLines -> runJobOutputTool target requestedLines
-    PlanJobKill target -> runJobKillTool target
-    PlanRunWebfetch url -> do
-      consoleWriteToolCommandIn context "webfetch" url
-      runWebfetchTool url
-    PlanApproveWebfetch url -> do
-      approval <- confirmToolCommandIn context "webfetch" url
-      case approval of
-        ToolApproved -> runWebfetchTool url
-        ToolDenied -> refuse "tool error: the user did not approve the webfetch"
-        ToolAborted -> aborted
-    PlanSubagent agent prompt -> runSubagentTool agent prompt
-    PlanRunMcp server tool arguments -> do
-      showMcpCall server tool arguments
-      runMcpTool server tool arguments
-    PlanApproveMcp server tool arguments -> do
-      showMcpCall server tool arguments
-      approval <- confirmToolApproval
-      case approval of
-        ToolApproved -> runMcpTool server tool arguments
-        ToolDenied -> refuse "tool error: the user did not approve the MCP tool call"
+    PlanExecute approval action -> do
+      decision <-
+        case approval of
+          RunNow -> describeAction action >> pure ToolApproved
+          AskUser -> confirmAction action
+      case decision of
+        ToolApproved -> executeAction action
+        ToolDenied -> refuse (deniedMessage action)
         ToolAborted -> aborted
   where
     jobs = toolRuntimeJobs runtime
@@ -190,17 +175,20 @@ runToolCall planner runtime conversation call =
     showOutputBody = outputBodyVisible toolOutput
 
     refuse message =
-      pure (False, appendToolResult (toolCallId call) message conversation)
+      pure (ToolsCompleted, appendToolResult (toolCallId call) message conversation)
 
     aborted =
-      pure (True, appendToolResult (toolCallId call) abortedToolMessage conversation)
+      pure (ToolsAborted, appendToolResult (toolCallId call) abortedToolMessage conversation)
+
+    finish :: Either String String -> IO (ToolRun, Conversation)
+    finish = either finishError finishRaw
 
     finishError message = do
       consoleWriteErrorLine message
-      pure (False, appendToolResult (toolCallId call) message conversation)
+      pure (ToolsCompleted, appendToolResult (toolCallId call) message conversation)
 
     finishRaw raw =
-      pure (False, appendToolResult (toolCallId call) raw conversation)
+      pure (ToolsCompleted, appendToolResult (toolCallId call) raw conversation)
 
     finishResult handlerConfig serverName toolName raw =
       case handlerConfig of
@@ -212,22 +200,69 @@ runToolCall planner runtime conversation call =
           case result of
             Left message -> finishError message
             Right answer ->
-              pure (False, appendToolResult (toolCallId call) answer conversation)
+              pure (ToolsCompleted, appendToolResult (toolCallId call) answer conversation)
+
+    -- Show a call before it runs. Approval-capable actions show their own label
+    -- inside 'confirmAction', so this only handles the immediate path.
+    describeAction action =
+      case action of
+        RunShell _ command ->
+          consoleWriteToolCommandIn context (toolCallName call) command
+        FetchUrl url ->
+          consoleWriteToolCommandIn context "webfetch" url
+        CallMcp server tool arguments ->
+          showMcpCall server tool arguments
+        ListJobs -> consoleWriteToolLabelIn context "jobs"
+        ReadJobOutput {} -> consoleWriteToolLabelIn context "job_output"
+        KillJob {} -> consoleWriteToolLabelIn context "job_kill"
+        RunSubagent {} -> pure ()
+
+    confirmAction action =
+      case action of
+        RunShell _ command ->
+          confirmToolCommandIn context (toolCallName call) command
+        FetchUrl url ->
+          confirmToolCommandIn context "webfetch" url
+        CallMcp server tool arguments -> do
+          showMcpCall server tool arguments
+          confirmToolApproval
+        KillJob {} -> do
+          consoleWriteToolLabelIn context "job_kill"
+          confirmToolApproval
+        _ -> pure ToolApproved
+
+    deniedMessage action =
+      case action of
+        RunShell {} -> "tool error: the user did not approve the shell command"
+        FetchUrl {} -> "tool error: the user did not approve the webfetch"
+        CallMcp {} -> "tool error: the user did not approve the MCP tool call"
+        KillJob {} -> "tool error: the user did not approve stopping the job"
+        _ -> "tool error: the user did not approve the tool call"
+
+    executeAction action =
+      case action of
+        RunShell mode command -> runPlanned mode command
+        ListJobs -> runJobsTool
+        ReadJobOutput target requestedLines -> runJobOutputTool target requestedLines
+        KillJob target -> runJobKillTool target
+        FetchUrl url -> runWebfetchTool url
+        RunSubagent agent prompt -> runSubagentTool agent prompt
+        CallMcp server tool arguments -> runMcpTool server tool arguments
 
     runPlanned mode command =
       case mode of
         Foreground -> do
           printOutputLabelIn context (toolCallName call) ToolOutput
-          result <- executeShellTool toolOutput workingDirectory command
-          case result of
-            Left message -> finishError message
-            Right output -> finishRaw output
+          finish =<< executeShellTool toolOutput workingDirectory command
         Background -> do
           printOutputLabelIn context (toolCallName call) ToolOutput
-          result <- executeBackgroundTool toolOutput jobs command
+          result <- startJob jobs command
           case result of
             Left message -> finishError message
-            Right output -> finishRaw output
+            Right job -> do
+              let message = jobStartedLine job
+              when showOutputBody (consoleWriteGrayLine message)
+              finishRaw message
 
     runJobsTool = do
       consoleWriteToolLabelIn context "jobs"
@@ -242,9 +277,9 @@ runToolCall planner runtime conversation call =
       result <- readJobOutput jobs target requestedLines
       case result of
         Left message -> finishError message
-        Right (job, output', truncated) -> do
-          when showOutputBody (displayJobOutput output' truncated)
-          finishRaw (jobOutputResult job output' truncated)
+        Right (job, output', truncation) -> do
+          when showOutputBody (displayJobOutput output' truncation)
+          finishRaw (jobOutputResult job output' truncation)
 
     runJobKillTool target = do
       consoleWriteToolLabelIn context "job_kill"
@@ -252,8 +287,8 @@ runToolCall planner runtime conversation call =
       result <- killJob jobs target
       case result of
         Left message -> finishError message
-        Right (job, wasRunning) -> do
-          let message = jobKillResult wasRunning job
+        Right (job, activity) -> do
+          let message = jobKillResult activity job
           when showOutputBody (consoleWriteGrayLine message)
           finishRaw message
 
@@ -269,22 +304,14 @@ runToolCall planner runtime conversation call =
 
     runSubagentTool agent prompt = do
       result <- withSubagentCursor (toolRuntimeSubagent runtime agent prompt)
-      case result of
-        Left message -> finishError message
-        Right answer -> finishRaw answer
-
-    showMcpCall server tool arguments =
-      consoleWriteToolTextIn
-        context
-        (mcpToolDisplayName (mcpServerName (mcpServerConfig server)) (mcpToolName tool))
-        (LBS8.unpack (Aeson.encode arguments))
+      finish result
 
     runMcpTool server tool arguments = do
       let localName = mcpToolName tool
-          serverName = mcpServerName (mcpServerConfig server)
+          serverName = mcpServerNameOf server
           displayName = mcpToolDisplayName serverName localName
           handlerConfig =
-            handlerConfigFor localName (mcpHandlers (mcpServerConfig server))
+            handlerConfigFor localName (mcpServerHandlersOf server)
       result <- callMcpTool server tool arguments
       case result of
         Left failure -> finishError (mcpErrorText failure)
@@ -297,8 +324,13 @@ runToolCall planner runtime conversation call =
             Just _ -> pure ()
           finishResult handlerConfig serverName localName formatted
 
--- | Run a command the model is already allowed to execute. The caller is
--- responsible for showing the command first. Returns the captured output.
+    showMcpCall server tool arguments =
+      consoleWriteToolTextIn
+        context
+        (mcpToolDisplayName (mcpServerNameOf server) (mcpToolName tool))
+        (LBS8.unpack (Aeson.encode arguments))
+
+-- | Run a command the model is already allowed to execute and display it.
 executeShellTool :: Visibility -> FilePath -> String -> IO (Either String String)
 executeShellTool toolOutput workingDirectory command = do
   result <- runShellCommandOutput workingDirectory command
@@ -307,18 +339,6 @@ executeShellTool toolOutput workingDirectory command = do
     Right commandOutput -> do
       when (outputBodyVisible toolOutput) (displayCommandResult commandOutput)
       pure (Right (commandResultText commandOutput))
-
--- | Start a command as a job and return its id to the model. The job's output
--- goes to its log, so the turn is not held open by a long-running process.
-executeBackgroundTool :: Visibility -> JobRuntime -> String -> IO (Either String String)
-executeBackgroundTool toolOutput jobs command = do
-  result <- startJob jobs command
-  case result of
-    Left message -> pure (Left message)
-    Right job -> do
-      let message = jobStartedLine job
-      when (outputBodyVisible toolOutput) (consoleWriteGrayLine message)
-      pure (Right message)
 
 -- | Display captured command output the same way it would appear if the command
 -- had inherited the terminal.
@@ -343,10 +363,13 @@ printJobRows current =
   withGrayOutput (mapM_ (consoleWriteLine . sanitizeOutput) (lines (jobListResult current)))
 
 -- | Print a job log tail, marking a truncated window at the top.
-displayJobOutput :: String -> Bool -> IO ()
-displayJobOutput output truncated = do
+displayJobOutput :: String -> Truncation -> IO ()
+displayJobOutput output truncation = do
   interactive <- consoleIsInteractive
-  let note = if truncated then jobOutputTruncationNote ++ "\n" else ""
+  let note =
+        case truncation of
+          OutputTruncated -> jobOutputTruncationNote ++ "\n"
+          OutputComplete -> ""
       body = if null output then "(no output)\n" else output
       text = trailingNewline (sanitizeOutput (note ++ body))
   consoleWrite (grayOutputText interactive text)

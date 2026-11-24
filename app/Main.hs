@@ -2,104 +2,48 @@
 module Main (main) where
 
 import Control.Exception (finally)
-import Control.Monad (unless, when)
-import Hutian.Command
-  ( TerminalInput (..)
-  , classifyTerminalInput
+import Control.Monad (when)
+import Hutian.Agent
+  ( RuntimeEnv (..)
+  , discoverMcpSettings
+  , runInput
   )
 import Hutian.Console
   ( configureConsole
-  , consoleFlush
-  , consoleIsInteractive
-  , consoleWrite
   , consoleWriteErrorLine
-  , consoleWriteHandlerPromptIn
-  , consoleWriteSubagentPrompt
   , consoleWriteSystemPrompt
   , consoleWriteToolDefinitions
-  , printOutputLabel
   , resetTerminal
-  , withGrayOutput
-  , withRespondingCursor
-  , withoutEcho
   )
-import Hutian.Context (pathLabel, subagentContext)
-import Hutian.Conversation
-  ( Conversation
-  , ToolCall (..)
-  , appendResult
-  , appendTerminal
-  , emptyConversation
-  )
-import Hutian.Editor
-  ( InputMode (..)
-  , initialPromptBuffers
-  )
-import Hutian.Highlight (sanitizeOutputBytes)
-import Hutian.History
-  ( History (..)
-  )
+import Hutian.Context (TurnContext (MainContext))
+import Hutian.Conversation (emptyConversation)
+import Hutian.Editor (InputMode (..), initialPromptBuffers)
+import Hutian.History (History (..))
 import Hutian.Interrupt
-  ( InterruptFlag
-  , clearInterrupt
+  ( clearInterrupt
   , installInterruptHandler
   , newInterruptFlag
   )
-import Hutian.Jobs.Runtime
-  ( JobRuntime
-  , withJobRuntime
-  )
+import Hutian.Jobs.Runtime (withJobRuntime)
 import Hutian.Llm
-  ( LlmOutput (..)
-  , LlmResult (..)
-  , LlmSettings (..)
-  , ModelName (..)
+  ( LlmSettings (..)
   , SystemPrompt (..)
   , loadLlmSettings
-  , runLlmContinuation
-  , runLlmWithTools
   )
-import Hutian.Llm.Loop (LlmLoop (..), runToolLoopWithResult)
-import Hutian.Mcp (discoverMcpServers)
-import Hutian.Mcp.Protocol (mcpHandlerName, mcpToolDisplayName)
-import Hutian.Render (OutputKind (..), TurnContext (..))
 import Hutian.Session
   ( Session (..)
   , SessionEffects (..)
   , runSession
   )
-import Hutian.Shell
-  ( executableCommands
-  , runShellCommand
-  , runShellCommandStreaming
-  )
+import Hutian.Shell (executableCommands)
 import Hutian.Terminal (promptForInput)
 import Hutian.Tool (toolDefinitionsFor)
-import Hutian.Tool.Catalog (ToolCatalog (..), toolCatalog)
-import Hutian.Tool.Config (HandlerConfig (..), SubagentConfig (..), ToolConfig (..))
-import Hutian.Tool.Exec (ToolRuntime (..), runToolCallsWith)
 import Hutian.Tool.Summary (toolSummaryLines)
-import Hutian.Verbosity
-  ( Verbosity (..)
-  , modeToolOutput
-  , outputBodyVisible
-  , renderMode
-  )
+import Hutian.Verbosity (Verbosity (..))
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
-import System.Environment (getArgs)
+import System.Environment (getArgs, lookupEnv)
 import System.Exit (ExitCode (..), exitWith)
-import System.IO (stderr, stdout)
-
--- | The interactive loop's effects, bound to the real terminal, job runtime,
--- and model client.
-sessionEffects :: FilePath -> [String] -> JobRuntime -> LlmSettings -> InterruptFlag -> SessionEffects
-sessionEffects workingDirectory commands jobs settings interruptFlag =
-  SessionEffects
-    { sessionPrompt = promptForInput workingDirectory commands
-    , sessionClearInterrupt = clearInterrupt interruptFlag
-    , sessionRunInput =
-        runInput workingDirectory jobs settings interruptFlag
-    }
+import System.FilePath ((</>))
 
 main :: IO ()
 main = do
@@ -120,8 +64,10 @@ main = do
       commands <- executableCommands
       interruptFlag <- newInterruptFlag
       installInterruptHandler interruptFlag
-      withJobRuntime jobDirectory workingDirectory $ \jobs -> do
-        let session =
+      directory <- jobDirectory
+      withJobRuntime directory workingDirectory $ \jobs -> do
+        let env = RuntimeEnv workingDirectory jobs settings interruptFlag
+            session =
               Session
                 { sessionMode = LlmInput
                 , sessionBuffers = initialPromptBuffers
@@ -136,250 +82,25 @@ main = do
             MainContext
             (toolSummaryLines (toolDefinitionsFor (settingTools settings)))
         runSession
-          (sessionEffects workingDirectory commands jobs settings interruptFlag)
+          (sessionEffects env commands)
           session
           `finally` resetTerminal
 
-discoverMcpSettings :: LlmSettings -> IO LlmSettings
-discoverMcpSettings settings = do
-  tools <- discoverTools (catalogConfig (settingTools settings))
-  pure settings {settingTools = tools}
-
--- | Discover the MCP tools configured by a tool configuration.
-discoverTools :: ToolConfig -> IO ToolCatalog
-discoverTools config = do
-  servers <- discoverMcpServers consoleWriteErrorLine (toolMcp config)
-  pure (toolCatalog config) {catalogMcp = servers}
-
-runInput :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> InputMode -> String -> Conversation -> IO Conversation
-runInput workingDirectory jobs settings interruptFlag mode text conversation =
-  case mode of
-    LlmInput ->
-      runLlmInput workingDirectory jobs settings interruptFlag conversation text
-    TermInput -> runTerminalInput workingDirectory conversation text
-
--- | Run a prompt through the model, executing any tools it requests and
--- feeding the results back until it produces a final answer.
-runLlmInput :: FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> Conversation -> String -> IO Conversation
-runLlmInput workingDirectory jobs settings interruptFlag conversation prompt =
-  withoutEcho $ withRespondingCursor $ do
-    let runtime =
-          toolRuntime
-            MainContext
-            (settingVerbosity settings)
-            workingDirectory
-            jobs
-            settings
-            interruptFlag
-    fst <$> runModelTurn interruptFlag settings runtime conversation prompt
-
--- | Send one prompt, then run the tool/continuation loop until the model
--- answers. Returns the updated conversation and the result that ended the turn.
--- The runtime context selects the output palette, so the initial request and
--- every continuation always agree.
-runModelTurn
-  :: InterruptFlag
-  -> LlmSettings
-  -> ToolRuntime
-  -> Conversation
-  -> String
-  -> IO (Conversation, LlmResult)
-runModelTurn interruptFlag settings runtime conversation prompt = do
-  let output =
-        consoleLlmOutputFor
-          (toolRuntimeVerbosity runtime)
-          (toolRuntimeContext runtime)
-  result <- runLlmWithTools output interruptFlag settings conversation prompt
-  runToolLoopWithResult
-    (llmLoop interruptFlag runtime settings)
-    interruptFlag
-    (appendResult (Just prompt) (llmResponseText result) (llmToolCalls result) conversation)
-    result
-
--- | Bind the loop's effects to the real executor and model client.
-llmLoop :: InterruptFlag -> ToolRuntime -> LlmSettings -> LlmLoop
-llmLoop interruptFlag runtime settings =
-  LlmLoop
-    { loopRunTools = runToolCallsWith runtime (settingTools settings)
-    , loopContinue =
-        runLlmContinuation
-          ( consoleLlmOutputFor
-              (toolRuntimeVerbosity runtime)
-              (toolRuntimeContext runtime)
-          )
-          interruptFlag
-          settings
+-- | The interactive loop's effects, bound to the real terminal, job runtime,
+-- and model client.
+sessionEffects :: RuntimeEnv -> [String] -> SessionEffects
+sessionEffects env commands =
+  SessionEffects
+    { sessionPrompt = promptForInput (envWorkingDirectory env) commands
+    , sessionClearInterrupt = clearInterrupt (envInterrupt env)
+    , sessionRunInput = runInput env
     }
 
--- | The runtime for one model turn. Subagents reuse the same API, settings,
--- job runtime, and interrupt flag, but substitute their own model, system
--- prompt, and tools. They run synchronously inside the tool call, so only the
--- final answer is appended to the caller's conversation.
-toolRuntime :: TurnContext -> Verbosity -> FilePath -> JobRuntime -> LlmSettings -> InterruptFlag -> ToolRuntime
-toolRuntime context verbosity workingDirectory jobs settings interruptFlag =
-  ToolRuntime
-    { toolRuntimeJobs = jobs
-    , toolRuntimeWorkingDirectory = workingDirectory
-    , toolRuntimeContext = context
-    , toolRuntimeVerbosity = verbosity
-    , toolRuntimeSubagent =
-        runSubagent context workingDirectory jobs settings interruptFlag
-    , toolRuntimeHandler =
-        runResultHandler context workingDirectory jobs settings interruptFlag
-    }
-
--- | How an agent's prompt is announced. Result handlers use tool-output
--- styling and visibility because their prompt is the raw tool result.
-data PromptPresentation
-  = SubagentPromptPresentation
-  | HandlerPromptPresentation Bool
-
-runSubagent
-  :: TurnContext
-  -> FilePath
-  -> JobRuntime
-  -> LlmSettings
-  -> InterruptFlag
-  -> SubagentConfig
-  -> String
-  -> IO (Either String String)
-runSubagent = runAgent SubagentPromptPresentation
-
--- | Run a tool-result handler. The handler gets the raw result as its prompt,
--- but only its final answer is returned. Its own tool results use its own
--- handlers, never the caller's.
-runResultHandler
-  :: TurnContext
-  -> FilePath
-  -> JobRuntime
-  -> LlmSettings
-  -> InterruptFlag
-  -> String
-  -> String
-  -> ToolCall
-  -> HandlerConfig
-  -> String
-  -> IO (Either String String)
-runResultHandler context workingDirectory jobs settings interruptFlag serverName localName call config raw =
-  runAgent
-    (HandlerPromptPresentation displayedOutput)
-    context
-    workingDirectory
-    jobs
-    settings
-    interruptFlag
-    SubagentConfig
-      { subagentName = mcpHandlerName serverName localName
-      , subagentModel = handlerModel config
-      , subagentDescription = handlerDescription config
-      , subagentSystemPrompt = handlerSystemPrompt config
-      , subagentTools = handlerTools config
-      }
-    ( "Tool: "
-        ++ mcpToolDisplayName serverName localName
-        ++ "\nArguments: "
-        ++ toolCallArguments call
-        ++ "\n\nResult:\n"
-        ++ raw
-    )
-  where
-    displayedOutput =
-      outputBodyVisible
-        (modeToolOutput (renderMode (settingVerbosity settings) context))
-
-runAgent
-  :: PromptPresentation
-  -> TurnContext
-  -> FilePath
-  -> JobRuntime
-  -> LlmSettings
-  -> InterruptFlag
-  -> SubagentConfig
-  -> String
-  -> IO (Either String String)
-runAgent presentation parent workingDirectory jobs settings interruptFlag agent prompt = do
-  tools <- discoverTools (subagentTools agent)
-  let childContext = subagentContext parent (subagentName agent)
-      childLabel = pathLabel childContext
-      subagentSettings =
-        settings
-          { settingModel = ModelName (subagentModel agent)
-          , settingSystemPrompt = SystemPrompt (subagentSystemPrompt agent)
-          , settingTools = tools
-          }
-      runtime =
-        toolRuntime
-          childContext
-          (settingVerbosity subagentSettings)
-          workingDirectory
-          jobs
-          subagentSettings
-          interruptFlag
-  when (settingVerbosity settings == VerbosityHigh) $ do
-    consoleWriteSystemPrompt
-      childContext
-      (subagentSystemPrompt agent)
-    consoleWriteToolDefinitions
-      childContext
-      (toolSummaryLines (toolDefinitionsFor (settingTools subagentSettings)))
-  case presentation of
-    SubagentPromptPresentation ->
-      consoleWriteSubagentPrompt childLabel prompt
-    HandlerPromptPresentation showBody ->
-      consoleWriteHandlerPromptIn parent childLabel showBody prompt
-  (_, finalResult) <-
-    runModelTurn
-      interruptFlag
-      subagentSettings
-      runtime
-      emptyConversation
-      prompt
-  pure $
-    case llmResponseText finalResult of
-      Just answer -> Right answer
-      Nothing -> Left "tool error: the subagent returned no answer"
-
--- | Stream LLM output through the terminal boundary, flushing each piece so a
--- response appears as it arrives.
-consoleLlmOutputFor :: Verbosity -> TurnContext -> LlmOutput
-consoleLlmOutputFor verbosity context =
-  LlmOutput
-    { llmOutputWrite = \text -> unless (null text) (consoleWrite text >> consoleFlush)
-    , llmOutputErrorLine = consoleWriteErrorLine
-    , llmOutputContext = context
-    , llmOutputVerbosity = verbosity
-    }
-
-runTerminalInput :: FilePath -> Conversation -> String -> IO Conversation
-runTerminalInput workingDirectory conversation text =
-  case classifyTerminalInput text of
-    NoTerminalInput -> pure conversation
-    SingleLineInput line -> runTerminalScript workingDirectory conversation line
-    MultiLineInput script -> runTerminalScript workingDirectory conversation script
-
-runTerminalScript :: FilePath -> Conversation -> String -> IO Conversation
-runTerminalScript workingDirectory conversation command = do
-  printOutputLabel "shell" TermOutput
-  withGrayOutput (runStreamingCommand workingDirectory command)
-  pure (appendTerminal command conversation)
-
--- | Run a command the user typed. A terminal gets inherited stdio so
--- full-screen programs work; otherwise output is streamed through the
--- sanitizer so escape sequences do not reach logs.
-runStreamingCommand :: FilePath -> String -> IO ()
-runStreamingCommand workingDirectory command = do
-  interactive <- consoleIsInteractive
-  result <-
-    if interactive
-      then runShellCommand workingDirectory command
-      else
-        runShellCommandStreaming
-          sanitizeOutputBytes
-          stdout
-          stderr
-          workingDirectory
-          command
-  either consoleWriteErrorLine pure result
-
-jobDirectory :: FilePath
-jobDirectory = "/tmp/hutian-jobs"
+-- | Keep job logs under the session's runtime directory when one is
+-- configured, matching the relay's socket convention.
+jobDirectory :: IO FilePath
+jobDirectory = do
+  runtimeDirectory <- lookupEnv "XDG_RUNTIME_DIR"
+  pure $ case runtimeDirectory of
+    Just directory | not (null directory) -> directory </> "hutian-jobs"
+    _ -> "/tmp/hutian-jobs"

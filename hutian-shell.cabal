@@ -56,6 +56,7 @@ library
   import:           defaults, dependencies
   hs-source-dirs:   src
   exposed-modules:
+      Hutian.Agent
       Hutian.Ansi
       Hutian.Cli
       Hutian.Command
@@ -72,6 +73,7 @@ library
       Hutian.Interrupt
       Hutian.Jobs
       Hutian.Jobs.Runtime
+      Hutian.Json
       Hutian.Key
       Hutian.Llm
       Hutian.Llm.Loop
@@ -101,6 +103,7 @@ library
       Hutian.Web
   build-depends:
       network
+    , stm
     , terminal-size
 
 executable hutian-shell
@@ -110,6 +113,7 @@ executable hutian-shell
   build-depends:
       base
     , directory
+    , filepath
     , hutian-shell
 
 executable hutian-llm-relay

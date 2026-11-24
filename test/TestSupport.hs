@@ -11,14 +11,17 @@ module TestSupport
   , awaitMVar
   , assertInfix
   , assertNotInfix
+  , testJobId
   ) where
 
 import Control.Concurrent.MVar (MVar, newMVar, takeMVar, withMVar)
 import Control.Exception (IOException, finally, try)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import Data.Maybe (fromMaybe)
+import Hutian.Jobs (JobId, jobIdFromInt)
 import Hutian.Llm (LlmOutput (..))
-import Hutian.Render (TurnContext (..))
+import Hutian.Context (TurnContext (MainContext))
 import Hutian.Verbosity (Verbosity (..))
 import System.Directory
   ( createDirectory
@@ -183,3 +186,7 @@ assertNotInfix needle haystack =
   assertBool
     ("did not expect " ++ show needle ++ " in " ++ show haystack)
     (not (needle `BS.isInfixOf` haystack))
+
+-- | A positive job id for tests that compare model or runtime output.
+testJobId :: Int -> JobId
+testJobId value = fromMaybe (error "test job id must be positive") (jobIdFromInt value)

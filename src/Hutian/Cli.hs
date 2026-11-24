@@ -5,6 +5,10 @@
 -- their own usage text to the returned error.
 module Hutian.Cli
   ( OptionKind (OptionValue, OptionFlag)
+  , OptionSpec (..)
+  , optionSpecPairs
+  , optionSpecText
+  , usageLine
   , Option
   , optionName
   , optionValue
@@ -26,6 +30,35 @@ data OptionKind
   = OptionValue
   | OptionFlag
   deriving stock (Eq, Show)
+
+-- | One known option: its name, whether it takes a value, the metavariable used
+-- in usage text, and whether it belongs in the optional part of the usage line.
+-- A single list drives both parsing and help, so a new option cannot be parsed
+-- but left out of the usage text.
+data OptionSpec = OptionSpec
+  { optionSpecName :: String
+  , optionSpecKind :: OptionKind
+  , optionSpecValue :: String
+  , optionSpecOptional :: Bool
+  }
+  deriving stock (Eq, Show)
+
+optionSpecPairs :: [OptionSpec] -> [(String, OptionKind)]
+optionSpecPairs = map (\spec -> (optionSpecName spec, optionSpecKind spec))
+
+-- | The option as it appears in a usage line.
+optionSpecText :: OptionSpec -> String
+optionSpecText spec =
+  case optionSpecKind spec of
+    OptionFlag -> optionSpecName spec
+    OptionValue -> optionSpecName spec ++ " " ++ optionSpecValue spec
+
+-- | Build a usage line from required fragments and optional specs.
+usageLine :: String -> [String] -> [OptionSpec] -> String
+usageLine program required optional =
+  unwords (("usage:" : program : required) ++ map bracketed optional)
+  where
+    bracketed spec = "[" ++ optionSpecText spec ++ "]"
 
 -- | One parsed option. A flag has no value.
 data Option = Option

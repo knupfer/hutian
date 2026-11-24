@@ -1,16 +1,22 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Pure tool protocol for the model: the advertised tool schemas, decoding a
--- call into a typed request, and turning policy plus request into a plan. The
--- terminal loop in "Main" performs the IO that the plan asks for, so policy
--- decisions stay testable without a terminal or a shell.
+-- call into a typed action, and turning policy plus action into a plan. The
+-- terminal loop in "Hutian.Tool.Exec" performs the IO that the plan asks for,
+-- so policy decisions stay testable without a terminal or a shell.
 module Hutian.Tool
   ( CommandMode (..)
+  , BuiltinTool (..)
+  , ToolRef (..)
+  , ToolAction (..)
+  , Approval (..)
   , ToolPlan (..)
+  , ToolRun (..)
   , toolDefinitions
   , toolDefinitionsFor
   , planTool
   , planToolWith
+  , resolveTool
   ) where
 
 import Data.Aeson (Value (..), object, (.=))
@@ -26,9 +32,10 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import Hutian.Conversation (ToolCall (..))
 import Hutian.Jobs
-  ( JobId (..)
+  ( JobId
   , LineCount
   , defaultJobOutputLines
+  , jobIdFromInt
   , lineCount
   , lineCountValue
   , maxJobOutputLines
@@ -38,16 +45,20 @@ import Hutian.Policy (ToolPolicy (..), toolPolicyAdvertised)
 import Hutian.Tool.Catalog
   ( McpServer (..)
   , McpTool (..)
-  , ToolCatalog (..)
-  , toolCatalog
+  , ToolCatalog
+  , catalogMcp
+  , catalogShell
+  , catalogSubagents
+  , catalogWebfetch
+  , mcpServerHandlersOf
+  , mcpServerNameOf
+  , mcpServerPolicyOf
+  , shellOnlyCatalog
   )
 import Hutian.Tool.Config
-  ( HandlerConfig (..)
-  , HandlerConfigs
-  , McpServerConfig (..)
+  ( HandlerConfigs
   , SubagentConfig (..)
-  , ToolConfig (..)
-  , defaultToolConfig
+  , agentDescription
   , handlerConfigFor
   )
 
@@ -57,49 +68,61 @@ data CommandMode
   | Background
   deriving stock (Eq, Show)
 
--- | A tool call after its arguments have been decoded. Reading job state needs
--- no command, so it is a request of its own rather than an empty command.
-data ToolRequest
-  = RequestShell String
-  | RequestShellBackground String
-  | RequestJobs
-  | RequestJobOutput JobId LineCount
-  | RequestJobKill JobId
-  | RequestWebfetch String
-  | RequestSubagent String String
+-- | The tools built into Hutian. MCP tools are resolved separately because
+-- they only exist after discovery.
+data BuiltinTool
+  = BuiltinShell
+  | BuiltinShellBackground
+  | BuiltinJobs
+  | BuiltinJobOutput
+  | BuiltinJobKill
+  | BuiltinWebfetch
+  | BuiltinSubagent
+  deriving stock (Eq, Show, Enum, Bounded)
+
+-- | A resolved tool name. An MCP tool carries the server that advertised it,
+-- so planning never has to match names a second time.
+data ToolRef
+  = BuiltinRef BuiltinTool
+  | McpRef McpServer McpTool
+  deriving stock (Eq, Show)
+
+-- | What a tool call asks to do, after its arguments have been decoded.
+data ToolAction
+  = RunShell CommandMode String
+  | ListJobs
+  | ReadJobOutput JobId LineCount
+  | KillJob JobId
+  | FetchUrl String
+  | RunSubagent SubagentConfig String
+  | CallMcp McpServer McpTool Value
+  deriving stock (Eq, Show)
+
+-- | Whether the action runs immediately or needs the user's approval.
+data Approval
+  = RunNow
+  | AskUser
   deriving stock (Eq, Show)
 
 -- | What the caller should do with one requested tool call.
 data ToolPlan
-  = -- | Run the command without asking.
-    PlanRun CommandMode String
-  | -- | Show the command and ask the user before running it.
-    PlanApprove CommandMode String
-  | -- | Send the message back to the model without running anything.
+  = -- | Send the message back to the model without running anything.
     PlanRefuse String
-  | -- | List the session's background jobs.
-    PlanListJobs
-  | -- | Read the end of a job log.
-    PlanJobOutput JobId LineCount
-  | -- | Stop a background job.
-    PlanJobKill JobId
-  | -- | Fetch a URL without asking.
-    PlanRunWebfetch String
-  | -- | Show a URL and ask the user before fetching it.
-    PlanApproveWebfetch String
-  | -- | Run one configured subagent serially and return its answer.
-    PlanSubagent SubagentConfig String
-  | -- | Call an MCP tool without asking.
-    PlanRunMcp McpServer McpTool Value
-  | -- | Show an MCP tool call and ask the user before running it.
-    PlanApproveMcp McpServer McpTool Value
+  | -- | Run, or ask first, the decoded action.
+    PlanExecute Approval ToolAction
+  deriving stock (Eq, Show)
+
+-- | Whether the turn can continue after a batch of tool calls. Kept in the pure
+-- protocol module so the model loop does not depend on the terminal executor.
+data ToolRun
+  = ToolsCompleted
+  | ToolsAborted
   deriving stock (Eq, Show)
 
 -- | The shell tools, advertised when a caller only supplies a shell policy.
 -- Request bodies use 'toolDefinitionsFor' with the full configuration.
 toolDefinitions :: [Value]
-toolDefinitions =
-  toolDefinitionsFor (toolCatalog (defaultToolConfig {toolShell = ToolAllow}))
+toolDefinitions = toolDefinitionsFor (shellOnlyCatalog ToolAllow)
 
 -- | The tools advertised to the model. They stay together in one module so the
 -- request body and the call planner cannot drift apart.
@@ -107,12 +130,11 @@ toolDefinitionsFor :: ToolCatalog -> [Value]
 toolDefinitionsFor catalog =
   shellTools
     ++ webfetchTools
-    ++ subagentTools
+    ++ subagentDefinitions
     ++ mcpTools
   where
-    config = catalogConfig catalog
     shellTools
-      | toolPolicyAdvertised (toolShell config) =
+      | toolPolicyAdvertised (catalogShell catalog) =
           [ commandTool "shell" shellDescription
           , commandTool "shell_background" backgroundDescription
           , jobsTool
@@ -121,16 +143,19 @@ toolDefinitionsFor catalog =
           ]
       | otherwise = []
     webfetchTools
-      | toolPolicyAdvertised (toolWebfetch config) = [webfetchTool]
+      | toolPolicyAdvertised (catalogWebfetch catalog) = [webfetchTool]
       | otherwise = []
-    subagentTools
-      | null (toolSubagent config) = []
-      | otherwise = [subagentTool (toolSubagent config)]
+    subagentDefinitions
+      | null (catalogSubagents catalog) = []
+      | otherwise = [subagentTool (catalogSubagents catalog)]
     mcpTools = concatMap serverTools (catalogMcp catalog)
     serverTools server
-      | toolPolicyAdvertised (mcpServerPolicy (mcpServerConfig server)) =
-          [ appendHandlerDescription (mcpServerName (mcpServerConfig server)) (mcpToolName tool) (mcpHandlers (mcpServerConfig server))
-              (mcpToolDefinition (mcpServerName (mcpServerConfig server)) tool)
+      | toolPolicyAdvertised (mcpServerPolicyOf server) =
+          [ appendHandlerDescription
+              (mcpServerNameOf server)
+              (mcpToolName tool)
+              (mcpServerHandlersOf server)
+              (mcpToolDefinition (mcpServerNameOf server) tool)
           | tool <- mcpServerTools server
           ]
       | otherwise = []
@@ -147,7 +172,7 @@ appendHandlerDescription serverName toolName handlers definition =
       "\n\nResults from this tool are processed by the `"
         ++ mcpHandlerName serverName toolName
         ++ "` subagent: "
-        ++ handlerDescription config
+        ++ agentDescription config
 
 mapFunctionDescription :: (String -> String) -> Value -> Value
 mapFunctionDescription f (Object fields) =
@@ -286,7 +311,7 @@ subagentTool agents =
 subagentCatalogue :: [SubagentConfig] -> String
 subagentCatalogue = intercalate "\n" . map entry
   where
-    entry agent = "- " ++ subagentName agent ++ ": " ++ subagentDescription agent
+    entry agent = "- " ++ subagentName agent ++ ": " ++ agentDescription (subagentAgent agent)
 
 enumProperty :: String -> [String] -> Value
 enumProperty description values =
@@ -336,148 +361,119 @@ integerProperty description =
     , "description" .= (description :: String)
     ]
 
--- | Decode a tool call into a typed request. Unknown tools and malformed
--- arguments become a message that is sent back to the model.
-toolRequest :: ToolCall -> Either String ToolRequest
-toolRequest call =
-  case toolCallName call of
-    "shell" -> RequestShell <$> commandArgument call
-    "shell_background" -> RequestShellBackground <$> commandArgument call
-    "jobs" -> Right RequestJobs
-    "job_output" -> do
-      arguments <- argumentsObject call
-      RequestJobOutput <$> jobIdFrom arguments <*> linesFrom arguments
-    "job_kill" -> RequestJobKill <$> (argumentsObject call >>= jobIdFrom)
-    "webfetch" -> RequestWebfetch <$> stringArgument "url" call
-    "subagent" -> do
-      arguments <- argumentsObject call
-      name <- stringFrom "name" arguments
-      prompt <- stringFrom "prompt" arguments
-      pure (RequestSubagent name prompt)
-    name -> Left ("unknown tool: " ++ name)
+-- | Resolve a model tool name against the catalog. Unknown names return
+-- 'Nothing'; MCP names are matched against every discovered server.
+resolveTool :: ToolCatalog -> String -> Maybe ToolRef
+resolveTool catalog name =
+  case builtinToolFromName name of
+    Just tool -> Just (BuiltinRef tool)
+    Nothing -> uncurry McpRef <$> findMcpTool (catalogMcp catalog) name
+
+builtinToolFromName :: String -> Maybe BuiltinTool
+builtinToolFromName name =
+  listToMaybe
+    [ tool
+    | tool <- [minBound .. maxBound]
+    , builtinToolName tool == name
+    ]
+
+builtinToolName :: BuiltinTool -> String
+builtinToolName BuiltinShell = "shell"
+builtinToolName BuiltinShellBackground = "shell_background"
+builtinToolName BuiltinJobs = "jobs"
+builtinToolName BuiltinJobOutput = "job_output"
+builtinToolName BuiltinJobKill = "job_kill"
+builtinToolName BuiltinWebfetch = "webfetch"
+builtinToolName BuiltinSubagent = "subagent"
+
+-- | Resolve the policy for a tool. 'Nothing' means the tool is not configured
+-- and must be refused before its arguments are inspected.
+policyFor :: ToolCatalog -> ToolRef -> Maybe ToolPolicy
+policyFor catalog (BuiltinRef tool) =
+  case tool of
+    BuiltinWebfetch -> Just (catalogWebfetch catalog)
+    BuiltinSubagent
+      | null (catalogSubagents catalog) -> Nothing
+      | otherwise -> Just ToolAllow
+    _ -> Just (catalogShell catalog)
+policyFor _ (McpRef server _) = Just (mcpServerPolicyOf server)
+
+disabledText :: ToolRef -> String
+disabledText (BuiltinRef tool) =
+  case tool of
+    BuiltinWebfetch -> "the model webfetch tool is disabled"
+    BuiltinSubagent -> "the model subagent tool is disabled"
+    _ -> "the model shell tools are disabled"
+disabledText (McpRef server _) =
+  "the MCP server " ++ mcpServerNameOf server ++ " is disabled"
 
 -- | Resolve every configured tool and the request into an action. Unknown
 -- tools, malformed arguments, empty values, and a denied policy all become a
 -- refusal message that is fed back to the model instead of reaching the tool.
--- In ask mode, only the action itself needs approval; checking job state and
--- running a configured subagent do not.
+-- The policy check comes first, so a denied tool cannot probe argument shapes.
 planToolWith :: ToolCatalog -> ToolCall -> ToolPlan
-planToolWith catalog call
-  | Just (server, tool) <- findMcpTool (catalogMcp catalog) (toolCallName call) =
-      mcpPlan server tool
-  | otherwise =
-      case toolCallName call of
-        "shell" -> shellPlan (toolShell config) Foreground
-        "shell_background" -> shellPlan (toolShell config) Background
-        "jobs" -> shellInspectionPlan (toolShell config)
-        "job_output" -> shellInspectionPlan (toolShell config)
-        "job_kill" -> shellInspectionPlan (toolShell config)
-        "webfetch" -> webfetchPlan (toolWebfetch config)
-        "subagent" -> subagentPlan (toolSubagent config)
-        name -> PlanRefuse ("tool error: unknown tool: " ++ name)
-  where
-    config = catalogConfig catalog
-    mcpPlan server tool =
-      case mcpServerPolicy (mcpServerConfig server) of
-        ToolDeny ->
-          PlanRefuse
-            ( "tool error: the MCP server "
-                ++ mcpServerName (mcpServerConfig server)
-                ++ " is disabled"
-            )
-        ToolAsk -> planned (PlanApproveMcp server tool)
-        ToolAllow -> planned (PlanRunMcp server tool)
-      where
-        planned makePlan =
-          case mcpArguments call of
-            Left message -> PlanRefuse ("tool error: " ++ message)
-            Right arguments -> makePlan arguments
-
-    shellPlan policy mode =
-      case policy of
-        -- Refuse before inspecting the call, so a denied model cannot probe
-        -- which tool names or argument shapes exist.
-        ToolDeny -> PlanRefuse "tool error: the model shell tools are disabled"
-        ToolAllow -> plannedShell (PlanRun mode)
-        ToolAsk -> plannedShell (PlanApprove mode)
-      where
-        plannedShell makePlan =
-          case toolRequest call of
-            Left message -> PlanRefuse ("tool error: " ++ message)
-            Right (RequestShell command) -> plannedCommand makePlan command
-            Right (RequestShellBackground command) -> plannedCommand makePlan command
-            Right _ -> PlanRefuse "tool error: the shell command is missing"
-
-        plannedCommand makePlan command
-          | all isSpace command = PlanRefuse "tool error: the shell command is empty"
-          | otherwise = makePlan command
-
-    shellInspectionPlan policy =
-      case policy of
-        ToolDeny -> PlanRefuse "tool error: the model shell tools are disabled"
-        _ ->
-          case toolRequest call of
-            Left message -> PlanRefuse ("tool error: " ++ message)
-            Right RequestJobs -> PlanListJobs
-            Right (RequestJobOutput target requestedLines) ->
-              PlanJobOutput target requestedLines
-            Right (RequestJobKill target) -> PlanJobKill target
-            Right _ -> PlanRefuse "tool error: unknown shell inspection tool"
-
-    webfetchPlan policy =
-      case policy of
-        ToolDeny -> PlanRefuse "tool error: the model webfetch tool is disabled"
-        _ ->
-          case toolRequest call of
-            Left message -> PlanRefuse ("tool error: " ++ message)
-            Right (RequestWebfetch url) ->
-              case webUrl url of
+planToolWith catalog call =
+  case resolveTool catalog (toolCallName call) of
+    Nothing -> PlanRefuse ("tool error: unknown tool: " ++ toolCallName call)
+    Just ref ->
+      case policyFor catalog ref of
+        Just policy
+          | policy /= ToolDeny ->
+              case decodeToolAction catalog ref call of
                 Left message -> PlanRefuse ("tool error: " ++ message)
-                Right validUrl
-                  | policy == ToolAsk -> PlanApproveWebfetch validUrl
-                  | otherwise -> PlanRunWebfetch validUrl
-            Right _ -> PlanRefuse "tool error: the webfetch request is missing"
-
-    subagentPlan agents
-      | null agents = PlanRefuse "tool error: the model subagent tool is disabled"
-      | otherwise =
-          case toolRequest call of
-            Left message -> PlanRefuse ("tool error: " ++ message)
-            Right (RequestSubagent name prompt)
-              | all isSpace prompt ->
-                  PlanRefuse "tool error: the subagent prompt is empty"
-              | otherwise ->
-                  case filter ((== name) . subagentName) agents of
-                    agent : _ -> PlanSubagent agent prompt
-                    [] -> PlanRefuse ("tool error: unknown subagent: " ++ name)
-            Right _ -> PlanRefuse "tool error: the subagent request is missing"
+                Right action -> PlanExecute (approvalFor policy action) action
+        _ -> PlanRefuse ("tool error: " ++ disabledText ref)
 
 -- | Shell-only planning, kept for callers that have no full tool configuration.
+-- A denied shell refuses before resolving any name, so the model cannot probe
+-- which tool names exist.
 planTool :: ToolPolicy -> ToolCall -> ToolPlan
-planTool policy call =
-  case policy of
-    ToolDeny -> PlanRefuse "tool error: the model shell tools are disabled"
-    ToolAllow -> planned (PlanRun Foreground) (PlanRun Background)
-    ToolAsk -> planned (PlanApprove Foreground) (PlanApprove Background)
-  where
-    planned shellCommand background =
-      case toolRequest call of
-        Left message -> PlanRefuse ("tool error: " ++ message)
-        Right request -> resolve shellCommand background request
+planTool ToolDeny _ = PlanRefuse "tool error: the model shell tools are disabled"
+planTool policy call = planToolWith (shellOnlyCatalog policy) call
 
-    resolve shell background request =
-      case request of
-        RequestJobs -> PlanListJobs
-        RequestJobOutput target requestedLines -> PlanJobOutput target requestedLines
-        RequestJobKill target -> PlanJobKill target
-        RequestShell command -> commandPlan shell command
-        RequestShellBackground command -> commandPlan background command
-        RequestWebfetch _ -> PlanRefuse "tool error: the model webfetch tool is disabled"
-        RequestSubagent _ _ -> PlanRefuse "tool error: the model subagent tool is disabled"
+approvalFor :: ToolPolicy -> ToolAction -> Approval
+approvalFor ToolAsk action =
+  case action of
+    RunShell {} -> AskUser
+    FetchUrl {} -> AskUser
+    KillJob {} -> AskUser
+    CallMcp {} -> AskUser
+    ListJobs -> RunNow
+    ReadJobOutput {} -> RunNow
+    RunSubagent {} -> RunNow
+approvalFor _ _ = RunNow
 
-    commandPlan makePlan command
-      | all isSpace command = PlanRefuse "tool error: the shell command is empty"
-      | otherwise = makePlan command
+decodeToolAction :: ToolCatalog -> ToolRef -> ToolCall -> Either String ToolAction
+decodeToolAction catalog ref call =
+  case ref of
+    BuiltinRef tool ->
+      case tool of
+        BuiltinShell -> RunShell Foreground <$> nonEmptyShellCommand call
+        BuiltinShellBackground -> RunShell Background <$> nonEmptyShellCommand call
+        BuiltinJobs -> Right ListJobs
+        BuiltinJobOutput -> do
+          arguments <- argumentsObject call
+          ReadJobOutput <$> jobIdFrom arguments <*> linesFrom arguments
+        BuiltinJobKill -> KillJob <$> (argumentsObject call >>= jobIdFrom)
+        BuiltinWebfetch -> FetchUrl <$> (stringArgument "url" call >>= webUrl)
+        BuiltinSubagent -> do
+          arguments <- argumentsObject call
+          name <- stringFrom "name" arguments
+          prompt <- stringFrom "prompt" arguments
+          if all isSpace prompt
+            then Left "the subagent prompt is empty"
+            else
+              case filter ((== name) . subagentName) (catalogSubagents catalog) of
+                agent : _ -> Right (RunSubagent agent prompt)
+                [] -> Left ("unknown subagent: " ++ name)
+    McpRef server tool -> CallMcp server tool <$> mcpArguments call
+
+nonEmptyShellCommand :: ToolCall -> Either String String
+nonEmptyShellCommand call = do
+  command <- stringArgument "command" call
+  if all isSpace command
+    then Left "the shell command is empty"
+    else Right command
 
 findMcpTool :: [McpServer] -> String -> Maybe (McpServer, McpTool)
 findMcpTool servers name =
@@ -485,7 +481,7 @@ findMcpTool servers name =
     [ (server, tool)
     | server <- servers
     , tool <- mcpServerTools server
-    , mcpToolFunctionName (mcpServerName (mcpServerConfig server)) (mcpToolName tool) == name
+    , mcpToolFunctionName (mcpServerNameOf server) (mcpToolName tool) == name
     ]
 
 mcpArguments :: ToolCall -> Either String Value
@@ -519,9 +515,6 @@ stringFrom name arguments =
     Just (String value) -> Right (Text.unpack value)
     _ -> Left ("missing string argument: " ++ name)
 
-commandArgument :: ToolCall -> Either String String
-commandArgument = stringArgument "command"
-
 argumentsObject :: ToolCall -> Either String (KeyMap Value)
 argumentsObject call =
   case Aeson.eitherDecodeStrict' (TextEncoding.encodeUtf8 (Text.pack (toolCallArguments call))) of
@@ -534,8 +527,10 @@ jobIdFrom arguments =
     Nothing -> Left "missing integer argument: job_id"
     Just value ->
       case (Aeson.fromJSON value :: Result Int) of
-        Success identifier
-          | identifier > 0 -> Right (JobId identifier)
+        Success identifier ->
+          case jobIdFromInt identifier of
+            Just jobId -> Right jobId
+            Nothing -> Left "job_id must be a positive integer"
         _ -> Left "job_id must be a positive integer"
 
 linesFrom :: KeyMap Value -> Either String LineCount

@@ -19,6 +19,7 @@ import Hutian.Llm
   , LlmUrl (..)
   , ModelName (..)
   , SystemPrompt (..)
+  , apiFor
   , runLlm
   , runLlmWithTools
   )
@@ -130,6 +131,7 @@ settingsFor :: Int -> LlmSettings
 settingsFor port =
   LlmSettings
     { settingUrl = LlmUrl ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")
+    , settingApi = apiFor (LlmUrl ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions"))
     , settingModel = ModelName "test-model"
     , settingSystemPrompt = SystemPrompt "system prompt"
     , settingSocket = Nothing

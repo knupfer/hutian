@@ -42,6 +42,7 @@ import qualified Data.Text.Encoding.Error as TextEncodingError
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
 import Hutian.Conversation (ToolCall (..))
+import Hutian.Json (jsonInt)
 
 -- | The result of one streaming LLM request.
 data LlmResult = LlmResult
@@ -212,10 +213,10 @@ toolCallObjects fields =
     _ -> []
 
 lookupIndex :: KeyMap.KeyMap Value -> Maybe Int
-lookupIndex fields =
-  case KeyMap.lookup "index" fields of
-    Just (Number number) -> Just (round number)
-    _ -> Nothing
+lookupIndex fields = do
+  value <- KeyMap.lookup "index" fields
+  index <- jsonInt value
+  if index >= 0 then Just index else Nothing
 
 lookupFunctionString :: Key -> KeyMap.KeyMap Value -> Maybe Text.Text
 lookupFunctionString key fields =

@@ -20,10 +20,9 @@ import Control.Concurrent.MVar
   , newMVar
   , readMVar
   )
-import Control.Exception (IOException, bracket, catch, onException, try)
+import Control.Exception (IOException, bracket, catch, displayException, onException, try)
 import Control.Monad (forM_)
 import qualified Data.ByteString as BS
-import Data.Either (fromRight)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
@@ -64,7 +63,7 @@ data JobRuntime = JobRuntime
   }
 
 data JobState = JobState
-  { stateNextId :: Int
+  { stateNextId :: JobId
   , stateJobs :: Map.Map JobId RuntimeJob
   }
 
@@ -83,7 +82,7 @@ withJobRuntime directory workingDirectory =
 
 newJobRuntime :: FilePath -> FilePath -> IO JobRuntime
 newJobRuntime directory workingDirectory = do
-  state <- newMVar (JobState 1 Map.empty)
+  state <- newMVar (JobState firstJobId Map.empty)
   pure (JobRuntime directory workingDirectory state)
 
 -- | Start a command in the background. The command runs in a new process group
@@ -103,7 +102,7 @@ startJob runtime command = do
             let info = runtimeInfo runtimeJob
                 state' =
                   state
-                    { stateNextId = stateNextId state + 1
+                    { stateNextId = nextJobId (stateNextId state)
                     , stateJobs = Map.insert (jobId info) runtimeJob (stateJobs state)
                     }
              in (state', Right runtimeJob)
@@ -123,18 +122,20 @@ listRuntimeJobs runtime = Map.elems . stateJobs <$> readMVar (runtimeState runti
 
 -- | Read a bounded tail of a job's log. The job and whether the output was
 -- truncated are returned so both the terminal and the model can describe it.
-readJobOutput :: JobRuntime -> JobId -> LineCount -> IO (Either String (Job, String, Bool))
+readJobOutput :: JobRuntime -> JobId -> LineCount -> IO (Either String (Job, String, Truncation))
 readJobOutput runtime target requestedLines = do
   found <- findJob runtime target
   case found of
     Nothing -> pure (noSuchJob target)
     Just job -> do
-      (output, truncated) <- readLogTail (jobLogPath job) (lineCountValue requestedLines)
-      pure (Right (job, output, truncated))
+      tailResult <- readLogTail (jobLogPath job) (lineCountValue requestedLines)
+      pure $ case tailResult of
+        Left message -> Left message
+        Right (output, truncation) -> Right (job, output, truncation)
 
 -- | Ask a job to stop, then force it if it does not exit. The final job and
 -- whether it was still running when the request arrived are returned.
-killJob :: JobRuntime -> JobId -> IO (Either String (Job, Bool))
+killJob :: JobRuntime -> JobId -> IO (Either String (Job, JobActivity))
 killJob runtime target = do
   found <- findRuntimeJob runtime target
   case found of
@@ -142,7 +143,7 @@ killJob runtime target = do
     Just runtimeJob -> do
       let job = runtimeInfo runtimeJob
       if jobStatus job /= JobRunning
-        then pure (Right (job, False))
+        then pure (Right (job, JobAlreadyFinished))
         else do
           signalRuntimeJob runtimeJob sigTERM
           waitForExit runtime target 50
@@ -154,8 +155,8 @@ killJob runtime target = do
                   signalRuntimeJob runtimeJob sigKILL
                   waitForExit runtime target 50
                   final <- findJob runtime target
-                  pure (Right (fromMaybe job' final, True))
-              | otherwise -> pure (Right (job', True))
+                  pure (Right (fromMaybe job' final, JobWasRunning))
+              | otherwise -> pure (Right (job', JobWasRunning))
 
 maxRunningJobs :: Int
 maxRunningJobs = 8
@@ -176,7 +177,7 @@ prepareJobDirectory directory = do
   createDirectoryIfMissing True directory
   ignoreIO (setFileMode directory 0o700)
 
-spawnJob :: JobRuntime -> Int -> String -> IO (Either String RuntimeJob)
+spawnJob :: JobRuntime -> JobId -> String -> IO (Either String RuntimeJob)
 spawnJob runtime nextId command = do
   let path = logPath runtime nextId
   logHandle <- openFile path AppendMode
@@ -189,7 +190,7 @@ spawnJob runtime nextId command = do
       ignoreIO (hClose logHandle)
       pure . Right $
         RuntimeJob
-          (Job (JobId nextId) command (fromIntegral <$> pid) path JobRunning)
+          (Job nextId command (fromIntegral <$> pid) path JobRunning)
           handle
     )
     `onException` closeHandle
@@ -214,8 +215,8 @@ processSpec workingDirectory logHandle command =
     , close_fds = False
     }
 
-logPath :: JobRuntime -> Int -> FilePath
-logPath runtime nextId = runtimeDirectory runtime </> show nextId <.> "log"
+logPath :: JobRuntime -> JobId -> FilePath
+logPath runtime nextId = runtimeDirectory runtime </> jobIdText nextId <.> "log"
 
 waitForJob :: JobRuntime -> RuntimeJob -> IO ()
 waitForJob runtime runtimeJob = do
@@ -270,13 +271,16 @@ shutdownJobs runtime = do
       forM_ remaining (`signalRuntimeJob` sigKILL)
 
 -- | Read at most @lineLimit@ lines from the end of a file. At most 64 KiB is
--- read, so a chatty job cannot make reading its output unbounded.
-readLogTail :: FilePath -> Int -> IO (String, Bool)
+-- read, so a chatty job cannot make reading its output unbounded. A log that
+-- cannot be read is reported instead of looking empty.
+readLogTail :: FilePath -> Int -> IO (Either String (String, Truncation))
 readLogTail path lineLimit = do
   result <-
     try (withBinaryFile path ReadMode (readTail (max 1 lineLimit)))
-      :: IO (Either IOException (String, Bool))
-  pure (fromRight ("", False) result)
+      :: IO (Either IOException (String, Truncation))
+  pure $ case result of
+    Left exception -> Left ("cannot read job log: " ++ displayException exception)
+    Right value -> Right value
   where
     readTail limit handle = do
       size <- hFileSize handle
@@ -288,8 +292,11 @@ readLogTail path lineLimit = do
           withoutPartial = if start > 0 then dropFirstLine text else text
           allLines = lines withoutPartial
           selected = drop (max 0 (length allLines - limit)) allLines
-          truncated = start > 0 || length allLines > limit
-      pure (unlines selected, truncated)
+          truncation =
+            if start > 0 || length allLines > limit
+              then OutputTruncated
+              else OutputComplete
+      pure (unlines selected, truncation)
 
     dropFirstLine value =
       case break (== '\n') value of

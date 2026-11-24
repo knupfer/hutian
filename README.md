@@ -24,8 +24,8 @@ tool has a three-way policy: `"deny"` hides it and refuses any call, `"ask"`
 advertises it but needs approval, and `"allow"` runs it automatically.
 
 - `tools.shell` covers `shell`, `shell_background`, `jobs`, `job_output`, and
-  `job_kill`. Listing jobs and reading or stopping one do not need approval in
-  `"ask"` mode; only starting a command does.
+  `job_kill`. Listing jobs and reading a log do not need approval in `"ask"`
+  mode; starting a command and stopping a job do.
 - `tools.webfetch` covers the `webfetch` tool, which fetches an http or https URL
   from inside the sandbox.
 - `tools.subagent` maps selector names to subagents. Each has an upstream
@@ -337,8 +337,9 @@ relay still provides model traffic over its Unix socket.
 Set `agent.tools.shell = "deny"` to disable the model's shell tools. Term mode
 remains available for your own commands. Hutian omits the tools from every LLM
 request and also refuses to execute any tool call that arrives anyway. Use
-`"ask"` to keep the tools available with per-command approval (job inspection
-stays free), or `"allow"` to run model-requested commands automatically.
+`"ask"` to keep the tools available with per-command approval (job listing and
+log reads stay free), or `"allow"` to run model-requested commands
+automatically.
 `agent.tools.webfetch` uses the same three values for the `webfetch` tool.
 
 `agent.tools.subagent` maps selector names to subagents. Each selector has an
@@ -750,13 +751,18 @@ The code keeps pure logic separate from IO:
 - `Hutian.Policy` defines the shared three-way tool policy (`deny`, `ask`, or
   `allow`) used by the LLM protocol and the tool loop. `Hutian.Tool.Config`
   holds the pure tool policies, subagent and result-handler configuration, and
-  the MCP server list; `Hutian.Tool.Catalog` pairs that configuration with the
-  MCP tools and sessions discovered at runtime.
-- `Hutian.Tool` turns a model tool call and the tool configuration into a pure
-  `ToolPlan`. `Hutian.Tool.Exec` performs only the terminal, shell, web, MCP,
+  the MCP server list; `Hutian.Tool.Catalog` is the runtime catalog, with one
+  entry per policy plus the discovered MCP servers, each carrying its immutable
+  configuration. That keeps configuration and discovery state in one place.
+- `Hutian.Tool` resolves a tool name, decodes its arguments into a `ToolAction`,
+  and combines the policy with the action into a pure `ToolPlan` (`RunNow` or
+  `AskUser`). `Hutian.Tool.Exec` performs only the terminal, shell, web, MCP,
   subagent, or result-handler IO that the plan requests, so refusals, approvals,
   commands, and job actions can be tested without a terminal. `Hutian.Web`
   performs bounded HTTP fetches.
+- `Hutian.Agent` owns the model turn, tool loop, subagent and result-handler
+  wiring, and terminal input, all over one `RuntimeEnv` rather than a long
+  parameter list.
 - `Hutian.Mcp.Protocol` builds pure MCP JSON-RPC messages and decodes tools and
   results. `Hutian.Mcp` performs the Streamable HTTP handshake, discovery, and
   tool calls.
@@ -786,7 +792,8 @@ The code keeps pure logic separate from IO:
   both term-mode input and model-requested commands.
 - `Hutian.Llm` keeps SSE parsing, tool-call accumulation, request building, and
   settings parsing pure, with IO limited to HTTP, bounded error bodies, and a
-  caller-supplied output sink.
+  caller-supplied output sink. `Hutian.Json` provides the strict integer
+  decoding shared by the stream and MCP protocols.
 - `Hutian.Http.Wire` contains the shared socket framing helpers used by both
   the relay and the sandbox-side client.
 - `Hutian.Llm.UnixSocket` is the sandbox-side client for the host relay socket.
@@ -803,7 +810,8 @@ The code keeps pure logic separate from IO:
 - `Hutian.Shell` returns captured command output as `CommandResult` data instead
   of printing it.
 - `Hutian.Interrupt` is the signal boundary.
-- `Main` wires the boundaries together and drives the tool-call loop.
+- `Hutian.Agent` wires the boundaries together and drives the tool-call loop;
+  `Main` only parses settings, discovers MCP tools, and starts the session.
 
 The package uses `GHC2021` and compiles with strict warnings and `-Werror`.
 
@@ -816,6 +824,7 @@ nix/hutian-shell.nix            Haskell package definition
 nix/sandbox.nix                 Rootfs mounts, working directory, and relay mount
 nix/lint.nix                    Shared lint and LiquidHaskell checks
 src/                            Haskell library source
+src/Hutian/Agent.hs             Model turns, tool loop, subagents, and input
 src/Hutian/Ansi.hs              Typed terminal colours and styles
 src/Hutian/Cli.hs               Strict shared command-line option parser
 src/Hutian/Command.hs           Term-mode input classification
@@ -831,6 +840,7 @@ src/Hutian/Http/Wire.hs         Shared socket framing helpers
 src/Hutian/Interrupt.hs         Interrupt flag and signal handling
 src/Hutian/Jobs.hs              Pure background-job model and text
 src/Hutian/Jobs/Runtime.hs      Job processes, logs, and signals
+src/Hutian/Json.hs              Strict JSON integer decoding
 src/Hutian/Key.hs               Pure terminal key classification
 src/Hutian/Llm.hs               HTTP, relay, and streamed-response IO
 src/Hutian/Llm/Loop.hs          Model and tool exchange loop

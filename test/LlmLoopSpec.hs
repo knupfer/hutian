@@ -18,6 +18,7 @@ import Hutian.Interrupt
   )
 import Hutian.Llm.Loop (LlmLoop (..), runToolLoop)
 import Hutian.Llm.Stream (LlmResult (..))
+import Hutian.Tool.Exec (ToolRun (..))
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -40,7 +41,7 @@ tests =
               LlmLoop
                 { loopRunTools = \conversation calls -> do
                     calls @?= [call]
-                    pure (False, appendToolResult "call-1" "ok" conversation)
+                    pure (ToolsCompleted, appendToolResult "call-1" "ok" conversation)
                 , loopContinue = \conversation -> do
                     conversation @?= base ++ [ToolResultEntry "call-1" "ok"]
                     pure (LlmResult (Just "done") [])
@@ -68,7 +69,7 @@ tests =
               LlmLoop
                 { loopRunTools = \conversation _ ->
                     pure
-                      ( True
+                      ( ToolsAborted
                       , appendToolResult "call-1" abortedToolMessage conversation
                       )
                 , loopContinue = \_ -> assertFailure "continuation must not run"
@@ -85,7 +86,7 @@ tests =
               LlmLoop
                 { loopRunTools = \conversation calls ->
                     pure
-                      ( False
+                      ( ToolsCompleted
                       , foldl
                           (\current call -> appendToolResult (toolCallId call) "ok" current)
                           conversation
@@ -113,6 +114,6 @@ idleLoop runs =
   LlmLoop
     { loopRunTools = \conversation _ -> do
         modifyIORef' runs (+ 1)
-        pure (False, conversation)
+        pure (ToolsCompleted, conversation)
     , loopContinue = \_ -> assertFailure "continuation must not run"
     }

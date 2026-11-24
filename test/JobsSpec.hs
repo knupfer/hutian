@@ -16,7 +16,7 @@ import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import Test.Tasty
 import Test.Tasty.HUnit
-import TestSupport (stripAnsi, withTemporaryDirectory)
+import TestSupport (stripAnsi, testJobId, withTemporaryDirectory)
 
 tests :: TestTree
 tests =
@@ -62,14 +62,14 @@ pureTests =
         jobListResult [runningJob, finishedJob]
           @?= "job 1  running  pid 1234  sleep 10\njob 1  signal 15  sleep 10"
     , testCase "an output result reports status and truncation" $ do
-        jobOutputResult runningJob "hello\n" False @?= "job 1 running\nhello\n"
-        jobOutputResult runningJob "hello\n" True
+        jobOutputResult runningJob "hello\n" OutputComplete @?= "job 1 running\nhello\n"
+        jobOutputResult runningJob "hello\n" OutputTruncated
           @?= "job 1 running\n[output truncated; showing the most recent lines]\nhello\n"
-        jobOutputResult runningJob "" False @?= "job 1 running\n(no output)\n"
+        jobOutputResult runningJob "" OutputComplete @?= "job 1 running\n(no output)\n"
     , testCase "a kill result distinguishes stopped, finished, and stubborn jobs" $ do
-        jobKillResult False finishedJob @?= "job 1 already finished: signal 15"
-        jobKillResult True finishedJob @?= "job 1 stopped: signal 15"
-        jobKillResult True runningJob @?= "job 1 is still running"
+        jobKillResult JobAlreadyFinished finishedJob @?= "job 1 already finished: signal 15"
+        jobKillResult JobWasRunning finishedJob @?= "job 1 stopped: signal 15"
+        jobKillResult JobWasRunning runningJob @?= "job 1 is still running"
     , testCase "output defaults and limits are stable" $ do
         lineCountValue defaultJobOutputLines @?= 50
         maxJobOutputLines @?= 500
@@ -92,7 +92,7 @@ runtimeTests =
               Left message -> assertFailure message
               Right (_, text, truncated) -> do
                 text @?= "hello\n"
-                truncated @?= False
+                truncated @?= OutputComplete
     , testCase "a job runs in the runtime working directory" $
         withTemporaryDirectory "hutian-jobs" $ \directory ->
           withTemporaryDirectory "hutian-jobs-cwd" $ \workingDirectory ->
@@ -113,7 +113,7 @@ runtimeTests =
               Left message -> assertFailure message
               Right (_, text, truncated) -> do
                 text @?= "c\n"
-                truncated @?= True
+                truncated @?= OutputTruncated
     , testCase "killing a stopped job escalates to SIGKILL" $
         withTemporaryDirectory "hutian-jobs" $ \directory ->
           withJobRuntime directory directory $ \runtime -> do
@@ -123,13 +123,13 @@ runtimeTests =
             result <- killJob runtime (jobId job)
             case result of
               Left message -> assertFailure message
-              Right (finished, wasRunning) -> do
-                assertBool "the job was running" wasRunning
+              Right (finished, activity) -> do
+                activity @?= JobWasRunning
                 assertBool "the job is no longer running" (jobStatus finished /= JobRunning)
     ]
 
 runningJob :: Job
-runningJob = Job (JobId 1) "sleep 10" (Just 1234) "/tmp/hutian-jobs/1.log" JobRunning
+runningJob = Job (testJobId 1) "sleep 10" (Just 1234) "/tmp/hutian-jobs/1.log" JobRunning
 
 finishedJob :: Job
 finishedJob =

@@ -58,13 +58,17 @@ import qualified Data.Text.Encoding.Error as TextEncodingError
 import Data.Text.Read (decimal)
 import Hutian.Cli
   ( OptionKind (..)
+  , OptionSpec (..)
   , appendUsage
   , flagPresent
   , missingOptions
   , missingOptionsMessage
+  , optionSpecPairs
+  , optionSpecText
   , optionValueFor
   , parseOptions
   , requiredOption
+  , usageLine
   )
 import Hutian.Http.Wire (WireError (..), recvAllLimited)
 import Hutian.Relay.Protocol (encodeStatus)
@@ -158,15 +162,19 @@ parseRelaySettings arguments = do
         else Right value
 
 relayOptionSpec :: [(String, OptionKind)]
-relayOptionSpec =
-  [ ("--listen", OptionValue)
-  , ("--upstream", OptionValue)
-  , ("--max-body", OptionValue)
-  , ("--no-auth", OptionFlag)
-  ]
+relayOptionSpec = optionSpecPairs relayOptions
+
+relayOptions :: [OptionSpec]
+relayOptions = [listenOption, upstreamOption, maxBodyOption, noAuthOption]
+
+listenOption, upstreamOption, maxBodyOption, noAuthOption :: OptionSpec
+listenOption = OptionSpec "--listen" OptionValue "PATH" False
+upstreamOption = OptionSpec "--upstream" OptionValue "URL" False
+maxBodyOption = OptionSpec "--max-body" OptionValue "BYTES" True
+noAuthOption = OptionSpec "--no-auth" OptionFlag "" True
 
 requiredRelayOptions :: [String]
-requiredRelayOptions = ["--listen", "--upstream"]
+requiredRelayOptions = map optionSpecName [listenOption, upstreamOption]
 
 parsePositive :: String -> String -> Either String Int
 parsePositive flag value =
@@ -177,8 +185,11 @@ parsePositive flag value =
 
 relayUsage :: String
 relayUsage =
-  "usage: hutian-llm-relay --listen PATH --upstream URL [--max-body BYTES] [--no-auth]\n"
-    ++ "the API key is read from standard input unless --no-auth is given"
+  usageLine
+    "hutian-llm-relay"
+    (map optionSpecText [listenOption, upstreamOption])
+    (filter optionSpecOptional relayOptions)
+    ++ "\nthe API key is read from standard input unless --no-auth is given"
 
 -- | A key is a bearer token, not a document. Reading a bounded prefix keeps a
 -- misconfigured file or command from making the relay buffer arbitrary data.

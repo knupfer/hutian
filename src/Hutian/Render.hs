@@ -5,23 +5,19 @@
 module Hutian.Render
   ( PromptKind (LlmPrompt, ShellPrompt, ToolPrompt, SubagentPrompt)
   , OutputKind (..)
-  , TurnContext (..)
+  , TurnContext
   , promptRenderText
-  , toolPromptText
   , toolPromptTextIn
   , toolTextPromptTextIn
   , subagentPromptText
-  , toolLabelText
   , toolLabelTextIn
   , prefixFor
   , reasoningLabelText
   , answerLabelText
   , systemPromptText
   , toolsPromptText
-  , outputForeground
   , outputForegroundIn
   , outputBlockLabelTextIn
-  , outputLabelText
   , outputLabelTextIn
   , grayOutputText
   , trailingNewline
@@ -52,7 +48,7 @@ import Data.Char (toUpper)
 import Data.List (isSuffixOf)
 import Numeric (showHex)
 import qualified Hutian.Ansi as Ansi
-import Hutian.Context (TurnContext (..), pathPrefix)
+import Hutian.Context (TurnContext, isSubagentContext, pathPrefix)
 import Hutian.Editor
   ( Prompt
   , cursorPosition
@@ -135,7 +131,7 @@ promptRenderText kind previousRow width prompt =
             | otherwise = rest
           inputRow text =
             case kind of
-              ToolPrompt (SubagentContext _) _ ->
+              ToolPrompt context _ | isSubagentContext context ->
                 grayForeground ++ text ++ reset
               _ -> highlightShellLine text
           styleReset
@@ -148,11 +144,7 @@ promptRenderText kind previousRow width prompt =
 
 -- | Render a command requested by the model as a prompt line, followed by a
 -- newline. Tool calls use a bright teal prompt so they stand out from
--- user-entered commands.
-toolPromptText :: String -> Int -> String -> String
-toolPromptText = toolPromptTextIn MainContext
-
--- | Like 'toolPromptText', but tools run by a subagent use the subagent blue.
+-- user-entered commands; tools run by a subagent use the subagent blue.
 toolPromptTextIn :: TurnContext -> String -> Int -> String -> String
 toolPromptTextIn context toolName width command =
   fst (promptRenderText (ToolPrompt context toolName) 0 width (setPromptText command initialPrompt))
@@ -173,9 +165,6 @@ toolTextPromptTextIn context toolName _width text =
     ++ "\n"
 
 -- | A label for a tool call that has no command to show.
-toolLabelText :: String -> String
-toolLabelText = toolLabelTextIn MainContext
-
 toolLabelTextIn :: TurnContext -> String -> String
 toolLabelTextIn context toolName =
   toolPromptForeground context ++ pathPrefix context ++ toolName ++ reset
@@ -201,14 +190,16 @@ prefixForegroundFor (SubagentPrompt _) = boldBlue
 prefixForegroundFor _ = boldVibrantPink
 
 toolPromptForeground :: TurnContext -> String
-toolPromptForeground MainContext = boldTeal
-toolPromptForeground (SubagentContext _) = dimBlueForeground
+toolPromptForeground context
+  | isSubagentContext context = dimBlueForeground
+  | otherwise = boldTeal
 
 -- | Dim foreground shared by reasoning, request blocks, and tool output: teal
 -- for the main agent and blue for a subagent.
 dimForegroundFor :: TurnContext -> String
-dimForegroundFor MainContext = dimTealForeground
-dimForegroundFor (SubagentContext _) = dimBlueForeground
+dimForegroundFor context
+  | isSubagentContext context = dimBlueForeground
+  | otherwise = dimTealForeground
 
 -- | The label above streamed reasoning. A subagent's reasoning uses its blue
 -- so the nested turn stays visually distinct from the main model.
@@ -222,8 +213,9 @@ answerLabelText context =
   answerForeground context ++ pathPrefix context ++ "answer" ++ reset
 
 answerForeground :: TurnContext -> String
-answerForeground MainContext = boldTeal
-answerForeground (SubagentContext _) = dimBlueForeground
+answerForeground context
+  | isSubagentContext context = dimBlueForeground
+  | otherwise = boldTeal
 
 -- | A full system message shown in high verbosity. The label matches the turn
 -- palette and the body is dimmed, while the text itself is unchanged.
@@ -307,20 +299,14 @@ startPromptText :: String
 startPromptText = clearLine
 
 -- | Foreground for the label printed before command output. The colour is the
--- command's mode colour, dimmed like a thinking block.
-outputForeground :: OutputKind -> String
-outputForeground = outputForegroundIn MainContext
-
--- | Like 'outputForeground', but subagent tool output uses the dimmed blue.
+-- command's mode colour, dimmed like a thinking block; subagent tool output
+-- uses the dimmed blue.
 outputForegroundIn :: TurnContext -> OutputKind -> String
 outputForegroundIn _ TermOutput = dimPinkForeground
 outputForegroundIn context ToolOutput = dimForegroundFor context
 
 -- | The label printed above captured output, coloured when interactive. The
 -- tool path makes the label match the input prompt that caused the output.
-outputLabelText :: String -> OutputKind -> Bool -> String
-outputLabelText = outputLabelTextIn MainContext
-
 outputLabelTextIn :: TurnContext -> String -> OutputKind -> Bool -> String
 outputLabelTextIn context toolPath kind =
   outputBlockLabelTextIn context kind (pathPrefix context ++ toolPath ++ ".output")

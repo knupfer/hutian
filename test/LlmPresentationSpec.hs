@@ -7,10 +7,10 @@ module LlmPresentationSpec (tests) where
 import Data.List (isInfixOf)
 import qualified Data.Text as Text
 import Hutian.Llm.Presentation
+import Hutian.Context (TurnContext (MainContext), subagentContext)
 import Hutian.Llm.Stream (StreamEvent (..))
 import Hutian.Render
-  ( TurnContext (..)
-  , boldTeal
+  (  boldTeal
   , dimBlueForeground
   , dimTealForeground
   , grayForeground
@@ -54,7 +54,7 @@ tests =
     , testCase "a subagent uses dim blue reasoning and answer labels" $ do
         let output =
               presentAllIn
-                (SubagentContext ["cheap"])
+                (subagentContext MainContext "cheap")
                 [reasoningEvent "thinking\n", contentEvent "hello\n"]
         assertBool
           "blue think label"
@@ -79,7 +79,7 @@ tests =
             subagentOutput =
               presentAllWith
                 VerbosityLow
-                (SubagentContext ["cheap"])
+                (subagentContext MainContext "cheap")
                 [contentEvent "hidden answer\n"]
         assertBool "main answer shown" ("visible answer" `isInfixOf` mainOutput)
         assertBool
@@ -97,12 +97,12 @@ tests =
             subagentOutput =
               presentAllWith
                 VerbosityNormal
-                (SubagentContext ["cheap"])
+                (subagentContext MainContext "cheap")
                 [reasoningEvent "hidden reasoning\n"]
             subagentAnswerOutput =
               presentAllWith
                 VerbosityNormal
-                (SubagentContext ["cheap"])
+                (subagentContext MainContext "cheap")
                 [contentEvent "hidden answer\n"]
         assertBool "main think label" ("think" `isInfixOf` mainOutput)
         assertBool "main reasoning shown" ("visible reasoning" `isInfixOf` mainOutput)
@@ -125,7 +125,7 @@ tests =
         let output =
               presentAllWith
                 VerbosityHigh
-                (SubagentContext ["cheap"])
+                (subagentContext MainContext "cheap")
                 [contentEvent "dim answer\n"]
         assertBool
           "dim blue answer label"

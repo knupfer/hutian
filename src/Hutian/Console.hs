@@ -23,7 +23,6 @@ module Hutian.Console
   , consoleWriteToolCommandIn
   , consoleWriteToolLabelIn
   , consoleWriteToolTextIn
-  , printOutputLabel
   , printOutputLabelIn
   , resetTerminal
   , startPromptLine
@@ -46,7 +45,8 @@ import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Hutian.Highlight (sanitize, sanitizeOutput)
 import Hutian.Context (pathPrefix)
 import Hutian.Markdown
-  ( finishMarkdownWith
+  ( MarkdownFlavor (..)
+  , finishMarkdownWith
   , initialMarkdownState
   , renderMarkdownWith
   )
@@ -54,7 +54,7 @@ import Hutian.Render
   ( CursorStyle (..)
   , OutputKind (..)
   , ToolApproval (..)
-  , TurnContext (..)
+  , TurnContext
   , approvalDecisionText
   , approvalForKey
   , approvePromptText
@@ -109,13 +109,6 @@ import System.Posix.Terminal
   , withTime
   , withoutMode
   )
-
--- | Serialize writes that show or hide the cursor. A modal prompt holds this
--- lock while it waits so the responding-cursor blink thread cannot reveal the
--- cursor again.
-{-# NOINLINE cursorVisibilityLock #-}
-cursorVisibilityLock :: MVar ()
-cursorVisibilityLock = unsafePerformIO (newMVar ())
 
 -- | Configure the process's text encoding and buffering before any prompt.
 configureConsole :: IO ()
@@ -279,12 +272,13 @@ consoleWriteToolDefinitions context summaries = do
 -- | Render Markdown with the same dim palette as thinking blocks.
 renderedMarkdown :: String -> String
 renderedMarkdown source =
-  let (state, output) =
+  let flavor = DimMarkdown grayForeground
+      (state, output) =
         renderMarkdownWith
-          grayForeground
+          flavor
           initialMarkdownState
           (Text.pack source)
-      trailing = finishMarkdownWith grayForeground state
+      trailing = finishMarkdownWith flavor state
    in output ++ trailing
 
 -- | Show one line of command or job output in gray. Streamed and multi-line
@@ -338,7 +332,7 @@ confirmToolApproval = do
 -- thread reveal it in the meantime.
 withHiddenCursor :: IO a -> IO a
 withHiddenCursor action =
-  withMVar cursorVisibilityLock $ \_ -> do
+  withMVar (consoleVisibilityLock consoleState) $ \_ -> do
     consoleWrite hideCursorText
     consoleFlush
     action `finally` do
@@ -361,10 +355,6 @@ drainPendingInput =
 
 drainChunk :: Int
 drainChunk = 4096
-
--- | Print the label shown on its own line before shell or tool output.
-printOutputLabel :: String -> OutputKind -> IO ()
-printOutputLabel = printOutputLabelIn MainContext
 
 printOutputLabelIn :: TurnContext -> String -> OutputKind -> IO ()
 printOutputLabelIn context toolPath kind = do
@@ -431,19 +421,38 @@ data CursorState = CursorState
   , cursorStyleStack :: [CursorStyle]
   }
 
-{-# NOINLINE respondingCursorState #-}
-respondingCursorState :: MVar CursorState
-respondingCursorState = unsafePerformIO (newMVar (CursorState Nothing []))
+-- | Process-global terminal state. The shell has one terminal for its whole
+-- lifetime, so these MVars are created once and shared by every prompt, tool,
+-- and blink thread. The visibility lock is held while a modal prompt waits, so
+-- the blink thread cannot reveal the cursor; the cursor state records the
+-- nested colour scopes.
+data ConsoleState = ConsoleState
+  { consoleVisibilityLock :: MVar ()
+  , consoleCursorState :: MVar CursorState
+  }
+
+{-# NOINLINE consoleState #-}
+consoleState :: ConsoleState
+consoleState =
+  unsafePerformIO
+    ( ConsoleState
+        <$> newMVar ()
+        <*> newMVar (CursorState Nothing [])
+    )
+
+writeCursorStyle :: CursorStyle -> IO ()
+writeCursorStyle style = do
+  consoleWrite (showCursorText ++ cursorStyleText style)
+  consoleFlush
 
 enterRespondingCursor :: CursorStyle -> IO ()
 enterRespondingCursor style =
-  modifyMVar_ respondingCursorState $ \state -> do
+  modifyMVar_ (consoleCursorState consoleState) $ \state -> do
     blinkThread <-
       case cursorBlinkThread state of
         Just thread -> pure (Just thread)
         Nothing -> Just <$> forkIO blinkCursor
-    consoleWrite (showCursorText ++ cursorStyleText style)
-    consoleFlush
+    writeCursorStyle style
     pure
       state
         { cursorBlinkThread = blinkThread
@@ -452,28 +461,26 @@ enterRespondingCursor style =
 
 exitRespondingCursor :: IO ()
 exitRespondingCursor =
-  modifyMVar_ respondingCursorState $ \state -> do
+  modifyMVar_ (consoleCursorState consoleState) $ \state -> do
     let (activeStyle, remaining) = popCursorStyle (cursorStyleStack state)
         state' = state {cursorStyleStack = remaining}
     case remaining of
       [] -> do
         for_ (cursorBlinkThread state') killThread
-        consoleWrite (showCursorText ++ cursorStyleText activeStyle)
-        consoleFlush
+        writeCursorStyle activeStyle
         pure state' {cursorBlinkThread = Nothing}
       _ -> do
-        consoleWrite (showCursorText ++ cursorStyleText activeStyle)
-        consoleFlush
+        writeCursorStyle activeStyle
         pure state'
 
 -- | Toggle the cursor independently of streamed output, starting visible.
--- Cursor writes share 'cursorVisibilityLock' so a modal prompt can keep the
+-- Cursor writes share the visibility lock so a modal prompt can keep the
 -- cursor hidden while it waits for input.
 blinkCursor :: IO ()
 blinkCursor = loop True
   where
     loop visible = do
-      withMVar cursorVisibilityLock $ \_ -> do
+      withMVar (consoleVisibilityLock consoleState) $ \_ -> do
         consoleWrite (if visible then showCursorText else hideCursorText)
         consoleFlush
       threadDelay blinkInterval

@@ -21,6 +21,8 @@ module Hutian.Ansi
   , normalIntensity
   , noItalic
   , noUnderline
+  , strikeCode
+  , noStrikeCode
   ) where
 
 import Data.Colour.SRGB (RGB (..), sRGB24, toSRGB24)
@@ -115,3 +117,10 @@ noItalic = Style [SetItalicized False]
 
 noUnderline :: Style
 noUnderline = Style [SetUnderlining NoUnderline]
+
+-- | Strikethrough has no portable @SGR@ constructor in the pinned
+-- ansi-terminal, so these are encoded directly. They are still kept here, next
+-- to every other terminal attribute, rather than in the Markdown renderer.
+strikeCode, noStrikeCode :: String
+strikeCode = "\ESC[9m"
+noStrikeCode = "\ESC[29m"

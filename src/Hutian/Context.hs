@@ -2,7 +2,7 @@
 -- Kept in a small module so policy and verbosity code does not depend on the
 -- ANSI rendering layer.
 module Hutian.Context
-  ( TurnContext (..)
+  ( TurnContext (MainContext)
   , isSubagentContext
   , contextPath
   , subagentContext
@@ -14,7 +14,8 @@ import Data.List (intercalate)
 
 -- | A subagent carries its full path, outermost first. The main agent has an
 -- empty path. Prompts use the path as a dotted prefix, for example
--- @foo.bar.think@.
+-- @foo.bar.think@. Only 'subagentContext' can build a nested context, so a
+-- nameless subagent cannot be represented.
 data TurnContext
   = MainContext
   | SubagentContext [String]
@@ -30,7 +31,9 @@ contextPath (SubagentContext path) = path
 
 -- | Extend a context with one more subagent name.
 subagentContext :: TurnContext -> String -> TurnContext
-subagentContext parent name = SubagentContext (contextPath parent ++ [name])
+subagentContext parent name
+  | null name = parent
+  | otherwise = SubagentContext (contextPath parent ++ [name])
 
 -- | The prefix for a prompt run in this context. Empty for the main agent.
 pathPrefix :: TurnContext -> String

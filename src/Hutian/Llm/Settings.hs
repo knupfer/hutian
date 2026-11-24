@@ -1,7 +1,9 @@
 -- | Launcher settings for the model connection. Parsing is pure so the shell
 -- can reject bad arguments before any IO or request happens.
 module Hutian.Llm.Settings
-  ( LlmUrl (..)
+  ( Api (..)
+  , apiFor
+  , LlmUrl (..)
   , ModelName (..)
   , SystemPrompt (..)
   , LlmSettings (..)
@@ -13,19 +15,23 @@ module Hutian.Llm.Settings
 
 import qualified Data.Aeson as Aeson
 import Data.Char (isControl, isSpace)
-import Data.List (isPrefixOf, nub)
+import Data.List (isPrefixOf, isSuffixOf, nub)
 import Data.Maybe (catMaybes)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import Hutian.Cli
   ( OptionKind (..)
+  , OptionSpec (..)
   , appendUsage
   , hasOption
   , missingOptions
   , missingOptionsMessage
+  , optionSpecPairs
+  , optionSpecText
   , optionValueFor
   , parseOptions
   , requiredOption
+  , usageLine
   )
 import Hutian.Policy (ToolPolicy (..), toolPolicyFromArgument)
 import Hutian.Tool.Catalog (ToolCatalog, toolCatalog)
@@ -39,6 +45,7 @@ import Hutian.Verbosity (Verbosity (..), verbosityFromArgument)
 -- | Connection settings supplied by the launcher.
 data LlmSettings = LlmSettings
   { settingUrl :: LlmUrl
+  , settingApi :: Api
   , settingModel :: ModelName
   , settingSystemPrompt :: SystemPrompt
   , settingSocket :: Maybe FilePath
@@ -48,6 +55,25 @@ data LlmSettings = LlmSettings
   , settingTools :: ToolCatalog
   }
   deriving stock (Eq, Show)
+
+-- | Which llama.cpp endpoint the URL names. The value is computed once while
+-- parsing instead of on every request.
+data Api
+  = ChatApi
+  | CompletionApi
+  deriving stock (Eq, Show)
+
+-- | Classify an endpoint. A trailing slash is ignored so a proxy that appends
+-- one does not silently switch to the completion API.
+apiFor :: LlmUrl -> Api
+apiFor url
+  | "/v1/chat/completions" `isSuffixOf` dropTrailingSlash (urlPath url) = ChatApi
+  | otherwise = CompletionApi
+  where
+    dropTrailingSlash path =
+      case reverse path of
+        '/' : rest -> reverse rest
+        _ -> path
 
 newtype LlmUrl = LlmUrl {unLlmUrl :: String}
   deriving stock (Eq, Show)
@@ -191,19 +217,39 @@ llmFilePaths arguments = do
       ]
 
 llmOptionSpec :: [(String, OptionKind)]
-llmOptionSpec =
-  [ ("--llama-url", OptionValue)
-  , ("--model", OptionValue)
-  , ("--model-file", OptionValue)
-  , ("--system-prompt", OptionValue)
-  , ("--system-prompt-file", OptionValue)
-  , ("--llama-socket", OptionValue)
-  , ("--verbosity", OptionValue)
-  , ("--model-shell", OptionValue)
-  , ("--model-webfetch", OptionValue)
-  , ("--tools-file", OptionValue)
-  , ("--subagent-file", OptionValue)
+llmOptionSpec = optionSpecPairs llmOptions
+
+llmOptions :: [OptionSpec]
+llmOptions =
+  [ llmUrlOption
+  , verbosityOption
+  , modelOption
+  , modelFileOption
+  , systemPromptOption
+  , systemPromptFileOption
+  , socketOption
+  , toolsFileOption
+  , modelShellOption
+  , modelWebfetchOption
+  , subagentOption
   ]
+
+llmUrlOption, verbosityOption, modelOption, modelFileOption :: OptionSpec
+llmUrlOption = OptionSpec "--llama-url" OptionValue "URL" False
+verbosityOption = OptionSpec "--verbosity" OptionValue "low|normal|high" False
+modelOption = OptionSpec "--model" OptionValue "MODEL" False
+modelFileOption = OptionSpec "--model-file" OptionValue "PATH" False
+
+systemPromptOption, systemPromptFileOption, socketOption, toolsFileOption :: OptionSpec
+systemPromptOption = OptionSpec "--system-prompt" OptionValue "PROMPT" False
+systemPromptFileOption = OptionSpec "--system-prompt-file" OptionValue "PATH" False
+socketOption = OptionSpec "--llama-socket" OptionValue "PATH" True
+toolsFileOption = OptionSpec "--tools-file" OptionValue "PATH" True
+
+modelShellOption, modelWebfetchOption, subagentOption :: OptionSpec
+modelShellOption = OptionSpec "--model-shell" OptionValue "deny|ask|allow" True
+modelWebfetchOption = OptionSpec "--model-webfetch" OptionValue "deny|ask|allow" True
+subagentOption = OptionSpec "--subagent-file" OptionValue "PATH" True
 
 -- | Reject malformed URLs, empty model names, and empty socket paths; an empty
 -- system prompt is allowed.
@@ -212,7 +258,7 @@ settingsFrom url model systemPrompt socket verbosity tools = do
   validateLlmUrl url
   validateNonEmpty "--model" (unModelName model)
   maybe (Right ()) (validateNonEmpty "--llama-socket") socket
-  pure (LlmSettings url model systemPrompt socket verbosity (toolCatalog tools))
+  pure (LlmSettings url (apiFor url) model systemPrompt socket verbosity (toolCatalog tools))
   where
     validateNonEmpty name value
       | null value = Left ("empty value for " ++ name ++ "\n" ++ llmUsage)
@@ -255,4 +301,11 @@ urlPath (LlmUrl url) =
 
 llmUsage :: String
 llmUsage =
-  "usage: hutian-shell --llama-url URL --verbosity low|normal|high (--model MODEL | --model-file PATH) (--system-prompt PROMPT | --system-prompt-file PATH) [--llama-socket PATH] [--tools-file PATH] [--model-shell deny|ask|allow] [--model-webfetch deny|ask|allow] [--subagent-file PATH]"
+  usageLine
+    "hutian-shell"
+    [ optionSpecText llmUrlOption
+    , optionSpecText verbosityOption
+    , "(" ++ optionSpecText modelOption ++ " | " ++ optionSpecText modelFileOption ++ ")"
+    , "(" ++ optionSpecText systemPromptOption ++ " | " ++ optionSpecText systemPromptFileOption ++ ")"
+    ]
+    (filter optionSpecOptional llmOptions)

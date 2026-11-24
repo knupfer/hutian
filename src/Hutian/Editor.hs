@@ -3,9 +3,15 @@
 -- | Pure editor state, key semantics, and layout used by the interactive prompt.
 module Hutian.Editor
   ( InputMode (..)
-  , Row (unRow)
-  , Column (unColumn)
-  , GoalColumn (unGoalColumn)
+  , Row
+  , unRow
+  , Column
+  , unColumn
+  , GoalColumn
+  , unGoalColumn
+  , rowAt
+  , columnAt
+  , goalColumnAt
   , Prompt
   , promptLines
   , promptRow
@@ -75,6 +81,17 @@ newtype Column = Column { unColumn :: Int }
 
 newtype GoalColumn = GoalColumn { unGoalColumn :: Int }
   deriving stock (Eq, Ord, Show)
+
+-- | Build non-negative row and column values. Editor state never produces a
+-- negative position, so external callers get the same guarantee.
+rowAt :: Int -> Row
+rowAt = Row . max 0
+
+columnAt :: Int -> Column
+columnAt = Column . max 0
+
+goalColumnAt :: Int -> GoalColumn
+goalColumnAt = GoalColumn . max 0
 
 data Prompt = Prompt
   { promptLines :: NonEmpty String
@@ -290,15 +307,15 @@ moveToRow row prompt =
   let goal = maybe (unColumn (promptColumn prompt)) unGoalColumn (promptGoal prompt)
       column = min goal (length (lineAtRow prompt row))
    in prompt
-        { promptRow = Row row
-        , promptColumn = Column column
-        , promptGoal = Just (GoalColumn goal)
+        { promptRow = rowAt row
+        , promptColumn = columnAt column
+        , promptGoal = Just (goalColumnAt goal)
         }
 
 setColumn :: Int -> Prompt -> Prompt
 setColumn column prompt =
   prompt
-    { promptColumn = Column (min column (length (currentLine prompt)))
+    { promptColumn = columnAt (min column (length (currentLine prompt)))
     , promptGoal = Nothing
     }
 

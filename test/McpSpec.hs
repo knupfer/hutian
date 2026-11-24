@@ -13,6 +13,7 @@ import Data.Char (toLower)
 import Data.Either (fromRight)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (isInfixOf)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe)
 import Hutian.Context (TurnContext (..))
 import Hutian.Conversation
@@ -25,12 +26,13 @@ import Hutian.Mcp (callMcpTool, discoverMcpServers)
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Catalog
   ( McpServer (..)
-  , McpSessionId (..)
+  , mcpSessionIdFromString
   , McpTool (..)
-  , ToolCatalog (..)
+  , toolCatalog
+  , withMcpServers
   )
 import Hutian.Tool.Config
-  ( HandlerConfig (..)
+  ( AgentConfig (..)
   , HandlerConfigs (..)
   , McpServerConfig (..)
   , ToolConfig (..)
@@ -71,7 +73,7 @@ tests =
                   { mcpServerName = "demo"
                   , mcpServerUrl = "http://127.0.0.1:" ++ show port ++ "/mcp"
                   , mcpServerPolicy = ToolAllow
-                  , mcpHandlers = HandlerConfigs []
+                  , mcpHandlers = HandlerConfigs Map.empty
                   }
               config = defaultToolConfig {toolMcp = [server]}
           logs <- newIORef []
@@ -83,7 +85,7 @@ tests =
           case discovered of
             [discoveredServer] -> do
               mcpServerSession discoveredServer
-                @?= Just (McpSessionId "test-session")
+                @?= Just (mcpSessionIdFromString "test-session")
               map mcpToolName (mcpServerTools discoveredServer) @?= ["search"]
               case mcpServerTools discoveredServer of
                 searchTool : _ -> do
@@ -115,18 +117,18 @@ tests =
     , testCase "result handlers for unknown MCP tools are reported" $
         withMcpUpstream $ \port _ -> do
           let handler =
-                HandlerConfig
-                  { handlerModel = "unused"
-                  , handlerDescription = "unused"
-                  , handlerSystemPrompt = "unused"
-                  , handlerTools = defaultToolConfig
+                AgentConfig
+                  { agentModel = "unused"
+                  , agentDescription = "unused"
+                  , agentSystemPrompt = "unused"
+                  , agentTools = defaultToolConfig
                   }
               server =
                 McpServerConfig
                   { mcpServerName = "demo"
                   , mcpServerUrl = "http://127.0.0.1:" ++ show port ++ "/mcp"
                   , mcpServerPolicy = ToolAllow
-                  , mcpHandlers = HandlerConfigs [("missing", handler)]
+                  , mcpHandlers = HandlerConfigs (Map.fromList [("missing", handler)])
                   }
           logs <- newIORef []
           servers <-
@@ -149,18 +151,18 @@ tests =
           withTemporaryDirectory "hutian-mcp-result" $ \directory ->
             withJobRuntime directory directory $ \jobs -> do
               let handler =
-                    HandlerConfig
-                      { handlerModel = "unused"
-                      , handlerDescription = "unused"
-                      , handlerSystemPrompt = "unused"
-                      , handlerTools = defaultToolConfig
+                    AgentConfig
+                      { agentModel = "unused"
+                      , agentDescription = "unused"
+                      , agentSystemPrompt = "unused"
+                      , agentTools = defaultToolConfig
                       }
                   server =
                     McpServerConfig
                       { mcpServerName = "demo"
                       , mcpServerUrl = "http://127.0.0.1:" ++ show port ++ "/mcp"
                       , mcpServerPolicy = ToolAllow
-                      , mcpHandlers = HandlerConfigs [("search", handler)]
+                      , mcpHandlers = HandlerConfigs (Map.fromList [("search", handler)])
                       }
               discovered <- discoverMcpServers (\_ -> pure ()) [server]
               received <- newIORef Nothing
@@ -178,9 +180,8 @@ tests =
                               pure (Right "handled\n")
                         }
                     catalog =
-                      ToolCatalog
-                        (defaultToolConfig {toolMcp = [server]})
-                        discovered
+                      withMcpServers discovered
+                        (toolCatalog (defaultToolConfig {toolMcp = [server]}))
                 (_, conversation) <-
                   runToolCallsWith
                     runtime
@@ -206,7 +207,7 @@ tests =
                 { mcpServerName = "denied"
                 , mcpServerUrl = "http://127.0.0.1:1/mcp"
                 , mcpServerPolicy = ToolDeny
-                , mcpHandlers = HandlerConfigs []
+                , mcpHandlers = HandlerConfigs Map.empty
                 }
         logs <- newIORef []
         discovered <-

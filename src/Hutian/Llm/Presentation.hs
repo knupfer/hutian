@@ -10,9 +10,11 @@ module Hutian.Llm.Presentation
   ) where
 
 import qualified Data.Text as Text
+import Hutian.Context (TurnContext (MainContext))
 import Hutian.Llm.Stream (StreamEvent (..))
 import Hutian.Markdown
-  ( MarkdownState
+  ( MarkdownFlavor (..)
+  , MarkdownState
   , finishMarkdown
   , finishMarkdownWith
   , initialMarkdownState
@@ -20,8 +22,7 @@ import Hutian.Markdown
   , renderMarkdownWith
   )
 import Hutian.Render
-  ( TurnContext (..)
-  , answerLabelText
+  ( answerLabelText
   , grayForeground
   , reasoningLabelText
   , reset
@@ -37,7 +38,7 @@ import Hutian.Verbosity
 -- | Rendering state for one streamed response. Reasoning and answer Markdown
 -- are kept separately so the answer can flush the reasoning buffer first.
 data StreamPresenter = StreamPresenter
-  { presenterVerbosity :: Verbosity
+  { presenterRenderMode :: RenderMode
   , presenterContext :: TurnContext
   , presenterReasoning :: MarkdownState
   , presenterReasoningStarted :: Bool
@@ -51,17 +52,13 @@ initialStreamPresenter = initialStreamPresenterIn VerbosityHigh MainContext
 initialStreamPresenterIn :: Verbosity -> TurnContext -> StreamPresenter
 initialStreamPresenterIn verbosity context =
   StreamPresenter
-    { presenterVerbosity = verbosity
+    { presenterRenderMode = renderMode verbosity context
     , presenterContext = context
     , presenterReasoning = initialMarkdownState
     , presenterReasoningStarted = False
     , presenterAnswer = initialMarkdownState
     , presenterAnswerStarted = False
     }
-
-presenterMode :: StreamPresenter -> RenderMode
-presenterMode presenter =
-  renderMode (presenterVerbosity presenter) (presenterContext presenter)
 
 -- | Render one event into terminal text. Errors stay on the event so the
 -- caller's diagnostics boundary decides where they go.
@@ -84,12 +81,12 @@ appendReasoning (Just text) presenter
           (presenter {presenterReasoningStarted = True}, header)
         Full -> (presenter', header ++ output)
   where
-    mode = presenterMode presenter
+    mode = presenterRenderMode presenter
     header
       | presenterReasoningStarted presenter = ""
       | otherwise = reasoningLabelText (presenterContext presenter) ++ "\n"
     (markdown', output) =
-      renderMarkdownWith thinkingGrey (presenterReasoning presenter) text
+      renderMarkdownWith (DimMarkdown thinkingGrey) (presenterReasoning presenter) text
     presenter' =
       presenter
         { presenterReasoning = markdown'
@@ -106,7 +103,7 @@ appendContent (Just text) presenter
           (startingAnswer {presenterAnswerStarted = True}, flushed ++ header)
         Full -> (presenter', flushed ++ header ++ output)
   where
-    mode = presenterMode presenter
+    mode = presenterRenderMode presenter
     (startingAnswer, flushed) = flushReasoning presenter
     header
       | presenterAnswerStarted startingAnswer = ""
@@ -131,8 +128,8 @@ flushReasoning presenter
         LabelOnly -> (resetReasoning presenter, "")
         Full -> (resetReasoning presenter, output)
   where
-    mode = presenterMode presenter
-    trailing = finishMarkdownWith thinkingGrey (presenterReasoning presenter)
+    mode = presenterRenderMode presenter
+    trailing = finishMarkdownWith (DimMarkdown thinkingGrey) (presenterReasoning presenter)
     output = (if null trailing then "" else trailing ++ "\n") ++ reset
 
 resetReasoning :: StreamPresenter -> StreamPresenter
@@ -151,18 +148,18 @@ finishPresentation presenter =
     (stateAfterReasoning, reasoningOutput) = flushReasoning presenter
     trailing =
       finishAnswer
-        (presenterMode stateAfterReasoning)
+        (presenterRenderMode stateAfterReasoning)
         (presenterAnswer stateAfterReasoning)
     answerOutput = trailing ++ if null trailing then "" else "\n"
 
 renderAnswer :: RenderMode -> MarkdownState -> Text.Text -> (MarkdownState, String)
 renderAnswer mode
-  | modeAnswerStyle mode == AnswerDim = renderMarkdownWith thinkingGrey
+  | modeAnswerStyle mode == AnswerDim = renderMarkdownWith (DimMarkdown thinkingGrey)
   | otherwise = renderMarkdown
 
 finishAnswer :: RenderMode -> MarkdownState -> String
 finishAnswer mode
-  | modeAnswerStyle mode == AnswerDim = finishMarkdownWith thinkingGrey
+  | modeAnswerStyle mode == AnswerDim = finishMarkdownWith (DimMarkdown thinkingGrey)
   | otherwise = finishMarkdown
 
 -- | Thinking text uses the same grey as command output.

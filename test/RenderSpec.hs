@@ -3,6 +3,7 @@ module RenderSpec (tests) where
 import Data.List (isInfixOf, isSuffixOf)
 import Hutian.Ansi (darkenColour, rgb)
 import qualified Hutian.Ansi as Ansi
+import Hutian.Context (TurnContext (MainContext), subagentContext)
 import Hutian.Editor (cursorPosition, initialPrompt, setPromptText)
 import Hutian.Render
 import Test.Tasty
@@ -110,8 +111,8 @@ tests =
         assertBool "label sits above the command" ("shell\nls" `isInfixOf` stripAnsi output)
         position @?= cursorPosition 80 toolLine prompt
         position @?= (1, 2)
-    , testCase "toolPromptText renders a command with the tool label" $ do
-        let output = toolPromptText "shell" 80 "echo hi"
+    , testCase "toolPromptTextIn MainContext renders a command with the tool label" $ do
+        let output = toolPromptTextIn MainContext "shell" 80 "echo hi"
         assertBool "teal prefix" ((boldTeal ++ "shell") `isInfixOf` output)
         assertBool "label text" ("shell" `isInfixOf` output)
         assertBool "command text" ("echo hi" `isInfixOf` stripAnsi output)
@@ -129,8 +130,8 @@ tests =
           "arguments sit below the label"
           ("mcp.demo.search\n{\"query\":\"haskell\"}" `isInfixOf` stripAnsi output)
         assertBool "json syntax style" ("\ESC[38;2;" `isInfixOf` output)
-    , testCase "toolLabelText labels commandless tool calls" $
-        toolLabelText "jobs" @?= boldTeal ++ "jobs" ++ reset
+    , testCase "toolLabelTextIn MainContext labels commandless tool calls" $
+        toolLabelTextIn MainContext "jobs" @?= boldTeal ++ "jobs" ++ reset
     , testCase "subagent prompts use blue and show the submitted task" $ do
         let output = subagentPromptText "cheap" 80 "summarize the page"
         assertBool "blue prefix" ((boldBlue ++ "cheap") `isInfixOf` output)
@@ -143,19 +144,19 @@ tests =
         assertBool "label sits above the work" ("cheap\nwork" `isInfixOf` stripAnsi rendered)
         position @?= cursorPosition 80 "cheap\n" prompt
     , testCase "subagent tool prompts use blue labels with dim inputs" $ do
-        let promptOutput = toolPromptTextIn (SubagentContext ["cheap"]) "shell" 80 "ls"
+        let promptOutput = toolPromptTextIn (subagentContext MainContext "cheap") "shell" 80 "ls"
         assertBool "dim blue prefix" ((dimBlueForeground ++ "cheap.shell") `isInfixOf` promptOutput)
         assertBool "dim input" ((grayForeground ++ "ls" ++ reset) `isInfixOf` promptOutput)
         assertBool "no teal prefix" (not ((boldTeal ++ "cheap.shell") `isInfixOf` promptOutput))
-        toolLabelTextIn (SubagentContext ["cheap"]) "jobs"
+        toolLabelTextIn (subagentContext MainContext "cheap") "jobs"
           @?= dimBlueForeground ++ "cheap.jobs" ++ reset
-        outputForegroundIn (SubagentContext ["cheap"]) ToolOutput @?= dimBlueForeground
-        outputLabelTextIn (SubagentContext ["cheap"]) "shell" ToolOutput True
+        outputForegroundIn (subagentContext MainContext "cheap") ToolOutput @?= dimBlueForeground
+        outputLabelTextIn (subagentContext MainContext "cheap") "shell" ToolOutput True
           @?= dimBlueForeground ++ "cheap.shell.output" ++ reset
     , testCase "subagent MCP tool arguments are dim and highlighted" $ do
         let output =
               toolTextPromptTextIn
-                (SubagentContext ["cheap"])
+                (subagentContext MainContext "cheap")
                 "mcp.demo.search"
                 80
                 "{\"query\":\"haskell\"}"
@@ -165,9 +166,9 @@ tests =
         assertBool "json syntax style" ("\ESC[38;2;" `isInfixOf` output)
         assertBool
           "subagent output does not keep the teal"
-          (outputForegroundIn (SubagentContext ["cheap"]) ToolOutput /= dimTealForeground)
-    , testCase "toolPromptText resets before the final newline" $ do
-        let output = toolPromptText "shell" 80 "echo hi"
+          (outputForegroundIn (subagentContext MainContext "cheap") ToolOutput /= dimTealForeground)
+    , testCase "toolPromptTextIn MainContext resets before the final newline" $ do
+        let output = toolPromptTextIn MainContext "shell" 80 "echo hi"
             (beforeNewline, afterNewline) = splitLastNewline output
         assertBool
           "reset must come before the newline"
@@ -175,8 +176,8 @@ tests =
         assertBool
           "nothing after the newline may change colors"
           (not ("\ESC" `isInfixOf` afterNewline))
-    , testCase "multiline toolPromptText resets before the final newline" $ do
-        let output = toolPromptText "shell" 80 "echo one\necho two"
+    , testCase "multiline toolPromptTextIn MainContext resets before the final newline" $ do
+        let output = toolPromptTextIn MainContext "shell" 80 "echo one\necho two"
             (beforeNewline, afterNewline) = splitLastNewline output
         assertBool
           "reset must come before the newline"
@@ -185,39 +186,39 @@ tests =
           "nothing after the final newline may change colors"
           (not ("\ESC" `isInfixOf` afterNewline))
     , testCase "output labels are dimmed versions of the mode colours" $ do
-        outputForeground TermOutput @?= "\ESC[1;38;2;153;12;88m"
-        outputForeground ToolOutput @?= "\ESC[1;38;2;0;153;120m"
-        outputLabelText "shell" TermOutput True
-          @?= outputForeground TermOutput ++ "shell.output" ++ reset
-        outputLabelText "webfetch" ToolOutput True
-          @?= outputForeground ToolOutput ++ "webfetch.output" ++ reset
+        outputForegroundIn MainContext TermOutput @?= "\ESC[1;38;2;153;12;88m"
+        outputForegroundIn MainContext ToolOutput @?= "\ESC[1;38;2;0;153;120m"
+        outputLabelTextIn MainContext "shell" TermOutput True
+          @?= outputForegroundIn MainContext TermOutput ++ "shell.output" ++ reset
+        outputLabelTextIn MainContext "webfetch" ToolOutput True
+          @?= outputForegroundIn MainContext ToolOutput ++ "webfetch.output" ++ reset
         outputBlockLabelTextIn MainContext ToolOutput "mcp.demo.handlers.search" True
           @?= dimTealForeground ++ "mcp.demo.handlers.search" ++ reset
-        outputBlockLabelTextIn (SubagentContext ["cheap"]) ToolOutput "mcp.demo.handlers.search" True
+        outputBlockLabelTextIn (subagentContext MainContext "cheap") ToolOutput "mcp.demo.handlers.search" True
           @?= dimBlueForeground ++ "mcp.demo.handlers.search" ++ reset
         assertBool
           "shell and tool labels differ"
-          (outputForeground TermOutput /= outputForeground ToolOutput)
+          (outputForegroundIn MainContext TermOutput /= outputForegroundIn MainContext ToolOutput)
     , testCase "output labels are plain when not interactive" $ do
-        outputLabelText "shell" TermOutput False @?= "shell.output"
-        outputLabelText "webfetch" ToolOutput False @?= "webfetch.output"
+        outputLabelTextIn MainContext "shell" TermOutput False @?= "shell.output"
+        outputLabelTextIn MainContext "webfetch" ToolOutput False @?= "webfetch.output"
         outputBlockLabelTextIn MainContext ToolOutput "mcp.demo.handlers.search" False
           @?= "mcp.demo.handlers.search"
     , testCase "reasoning, answer, and tool labels are dim blue for a subagent" $ do
         reasoningLabelText MainContext @?= dimTealForeground ++ "think" ++ reset
-        reasoningLabelText (SubagentContext ["cheap"])
+        reasoningLabelText (subagentContext MainContext "cheap")
           @?= dimBlueForeground ++ "cheap.think" ++ reset
         answerLabelText MainContext @?= boldTeal ++ "answer" ++ reset
-        answerLabelText (SubagentContext ["cheap"])
+        answerLabelText (subagentContext MainContext "cheap")
           @?= dimBlueForeground ++ "cheap.answer" ++ reset
-        reasoningLabelText (SubagentContext ["foo", "bar"])
+        reasoningLabelText (subagentContext (subagentContext MainContext "foo") "bar")
           @?= dimBlueForeground ++ "foo.bar.think" ++ reset
-        answerLabelText (SubagentContext ["foo", "bar"])
+        answerLabelText (subagentContext (subagentContext MainContext "foo") "bar")
           @?= dimBlueForeground ++ "foo.bar.answer" ++ reset
     , testCase "system prompts use the turn palette and keep the text" $ do
         let mainOutput = systemPromptText MainContext "system rules\n"
             subagentOutput =
-              systemPromptText (SubagentContext ["cheap"]) "subagent rules\n"
+              systemPromptText (subagentContext MainContext "cheap") "subagent rules\n"
         assertBool
           "dim teal main label"
           ((dimTealForeground ++ "system" ++ reset) `isInfixOf` mainOutput)
@@ -234,7 +235,7 @@ tests =
     , testCase "tool definitions use the turn palette and keep the JSON" $ do
         let mainOutput = toolsPromptText MainContext "[\n  {\"name\": \"shell\"}\n]\n"
             subagentOutput =
-              toolsPromptText (SubagentContext ["cheap"]) "[]\n"
+              toolsPromptText (subagentContext MainContext "cheap") "[]\n"
         assertBool
           "dim teal main label"
           ((dimTealForeground ++ "tools" ++ reset) `isInfixOf` mainOutput)

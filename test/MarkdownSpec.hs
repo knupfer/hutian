@@ -100,12 +100,12 @@ unitTests =
         stripAnsi rendered @?= source
     , testCase "a custom base color applies to thinking text" $ do
         let source = "plain **bold** and `code`\n"
-            rendered = renderAllWith "\ESC[38;5;245m" source
+            rendered = renderAllWith (DimMarkdown "\ESC[38;5;245m") source
         assertBool "expected grey base color" ("\ESC[38;5;245m" `isInfixOf` rendered)
         stripAnsi rendered @?= source
     , testCase "thinking text dims the Markdown highlight colours" $ do
         let source = "# Head\n**bold** `code` [link](https://example.test)\n"
-            rendered = renderAllWith thinkingBase source
+            rendered = renderAllWith (DimMarkdown thinkingBase) source
         assertBool "dim heading" ("\ESC[1;38;2;82;108;150m" `isInfixOf` rendered)
         assertBool "dim bold" ("\ESC[1;38;2;149;136;105m" `isInfixOf` rendered)
         assertBool "dim code" ("\ESC[38;2;100;136;97m" `isInfixOf` rendered)
@@ -118,7 +118,7 @@ unitTests =
     , testCase "thinking code blocks dim Skylighting colours too" $ do
         let source = "```haskell\nmain = putStrLn \"hi\"\n```\n"
             normal = renderAll source
-            dimmed = renderAllWith thinkingBase source
+            dimmed = renderAllWith (DimMarkdown thinkingBase) source
         assertBool "dimmed fence differs from normal" (dimmed /= normal)
         assertBool "dimmed fence markers" ("\ESC[38;2;100;136;97m" `isInfixOf` dimmed)
         assertBool "base colour is unchanged" (thinkingBase `isInfixOf` dimmed)
@@ -166,15 +166,15 @@ propertyTests =
     ]
 
 renderAll :: String -> String
-renderAll = renderAllWith ""
+renderAll = renderAllWith NormalMarkdown
 
 thinkingBase :: String
 thinkingBase = "\ESC[38;2;130;130;130m"
 
-renderAllWith :: String -> String -> String
-renderAllWith base source =
-  let (state, rendered) = renderMarkdownWith base initialMarkdownState (Text.pack source)
-   in rendered ++ finishMarkdownWith base state
+renderAllWith :: MarkdownFlavor -> String -> String
+renderAllWith flavor source =
+  let (state, rendered) = renderMarkdownWith flavor initialMarkdownState (Text.pack source)
+   in rendered ++ finishMarkdownWith flavor state
 
 prop_preservesText :: String -> Property
 prop_preservesText source =
@@ -210,7 +210,7 @@ prop_resetsStyles source =
 prop_basePreservesText :: String -> Property
 prop_basePreservesText source =
   let clean = filter (not . isControl) source
-   in stripAnsi (renderAllWith "\ESC[38;5;245m" clean) === clean
+   in stripAnsi (renderAllWith (DimMarkdown "\ESC[38;5;245m") clean) === clean
 
 prop_sanitizesControls :: String -> Property
 prop_sanitizesControls source =

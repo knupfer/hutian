@@ -10,9 +10,9 @@ import Hutian.Console
   , consoleWriteToolDefinitions
   , withGrayOutput
   )
+import Hutian.Context (TurnContext (MainContext))
 import Hutian.Render
   ( ToolApproval (..)
-  , TurnContext (..)
   , approvalDecisionText
   , approvalForKey
   , approvePromptText

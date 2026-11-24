@@ -4,9 +4,12 @@ module ToolConfigSpec (tests) where
 
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as AesonKey
+import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Map.Strict as Map
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Config
-  ( HandlerConfig (..)
+  ( AgentConfig (..)
   , HandlerConfigs (..)
   , McpServerConfig (..)
   , SubagentConfig (..)
@@ -38,16 +41,7 @@ tests =
           @?= Just
             defaultToolConfig
               { toolShell = ToolAsk
-              , toolSubagent =
-                  [ SubagentConfig
-                      { subagentName = "cheap"
-                      , subagentModel = "cheap-upstream"
-                      , subagentDescription = "Summarize pages."
-                      , subagentSystemPrompt = "Fetch and summarize."
-                      , subagentTools =
-                          defaultToolConfig {toolWebfetch = ToolAllow}
-                      }
-                  ]
+              , toolSubagent = [cheapAgent "cheap-upstream" "Summarize pages."]
               }
     , testCase "subagents are sorted by selector" $
         decodeConfig
@@ -63,8 +57,8 @@ tests =
           @?= Just
             defaultToolConfig
               { toolSubagent =
-                  [ SubagentConfig "alpha" "a" "A." "Fetch and summarize." (defaultToolConfig {toolWebfetch = ToolAllow})
-                  , SubagentConfig "zeta" "z" "Z." "Fetch and summarize." (defaultToolConfig {toolWebfetch = ToolAllow})
+                  [ setSubagentName "alpha" (cheapAgent "a" "A.")
+                  , setSubagentName "zeta" (cheapAgent "z" "Z.")
                   ]
               }
     , testCase "subagent names, models, and descriptions must be non-empty" $ do
@@ -73,20 +67,13 @@ tests =
         decodeConfig (withAgent "" (agentValue "m" "D.")) @?= (Nothing :: Maybe ToolConfig)
         decodeConfig (withAgent "cheap" (agentValue "" "D.")) @?= (Nothing :: Maybe ToolConfig)
         decodeConfig (withAgent "cheap" (agentValue "m" "")) @?= (Nothing :: Maybe ToolConfig)
-    , testCase "MCP servers are keyed by name" $
+    , testCase "MCP servers require url, policy, and handlers" $
         decodeConfig
           ( toolsObject
               (String "deny")
               (String "deny")
               (object [])
-              ( object
-                  [ "demo"
-                      .= object
-                        [ "url" .= ("https://mcp.example.test/mcp" :: String)
-                        , "policy" .= String "allow"
-                        ]
-                  ]
-              )
+              (object ["demo" .= mcpValue "https://mcp.example.test/mcp" "allow" (object [])])
           )
           @?= Just
             defaultToolConfig
@@ -95,45 +82,100 @@ tests =
                       { mcpServerName = "demo"
                       , mcpServerUrl = "https://mcp.example.test/mcp"
                       , mcpServerPolicy = ToolAllow
-                      , mcpHandlers = HandlerConfigs []
+                      , mcpHandlers = HandlerConfigs Map.empty
                       }
                   ]
               }
+    , testCase "every tool group is required" $ do
+        decodeConfig (object ["webfetch" .= String "deny", "subagent" .= object [], "mcp" .= object []])
+          @?= (Nothing :: Maybe ToolConfig)
+        decodeConfig (object ["shell" .= String "deny", "subagent" .= object [], "mcp" .= object []])
+          @?= (Nothing :: Maybe ToolConfig)
+        decodeConfig (object ["shell" .= String "deny", "webfetch" .= String "deny", "mcp" .= object []])
+          @?= (Nothing :: Maybe ToolConfig)
+        decodeConfig (object ["shell" .= String "deny", "webfetch" .= String "deny", "subagent" .= object []])
+          @?= (Nothing :: Maybe ToolConfig)
+    , testCase "unknown keys are rejected instead of being ignored" $ do
+        decodeConfig
+          ( insertKey "webFetch"
+              (String "allow")
+              (toolsValue (String "deny") (String "deny") (object []))
+          )
+          @?= (Nothing :: Maybe ToolConfig)
+        decodeConfig
+          ( toolsValue
+              (String "deny")
+              (String "deny")
+              (object ["cheap" .= insertKey "tool" (object []) (agentValue "m" "D.")])
+          )
+          @?= (Nothing :: Maybe ToolConfig)
+        decodeConfig
+          ( toolsObject
+              (String "deny")
+              (String "deny")
+              (object [])
+              (object ["demo" .= insertKey "url2" (String "x") (mcpValue "https://mcp.example.test/mcp" "allow" (object []))])
+          )
+          @?= (Nothing :: Maybe ToolConfig)
+    , testCase "MCP servers must state their policy and handler map" $ do
+        decodeConfig
+          ( toolsObject
+              (String "deny")
+              (String "deny")
+              (object [])
+              (object ["demo" .= object ["url" .= ("https://mcp.example.test/mcp" :: String), "handlers" .= object []]])
+          )
+          @?= (Nothing :: Maybe ToolConfig)
+        decodeConfig
+          ( toolsObject
+              (String "deny")
+              (String "deny")
+              (object [])
+              (object ["demo" .= object ["url" .= ("https://mcp.example.test/mcp" :: String), "policy" .= String "allow"]])
+          )
+          @?= (Nothing :: Maybe ToolConfig)
+    , testCase "agent tools are required" $
+        decodeConfig
+          ( toolsValue
+              (String "deny")
+              (String "deny")
+              ( object
+                  [ "cheap"
+                      .= object
+                        [ "model" .= ("m" :: String)
+                        , "description" .= ("D." :: String)
+                        , "systemPrompt" .= ("" :: String)
+                        ]
+                  ]
+              )
+          )
+          @?= (Nothing :: Maybe ToolConfig)
     , testCase "MCP result handlers can have their own MCP result handlers" $
-        let nestedHandler =
-              HandlerConfig
-                { handlerModel = "nested"
-                , handlerDescription = "Nested summary."
-                , handlerSystemPrompt = "Summarize."
-                , handlerTools = defaultToolConfig
-                }
+        let nestedHandler = handlerConfig "nested" "Nested summary." defaultToolConfig
             innerServer =
               McpServerConfig
                 { mcpServerName = "inner"
                 , mcpServerUrl = "https://inner.example.test/mcp"
                 , mcpServerPolicy = ToolAllow
-                , mcpHandlers = HandlerConfigs [("fetch", nestedHandler)]
+                , mcpHandlers = HandlerConfigs (Map.fromList [("fetch", nestedHandler)])
                 }
             outerHandler =
-              HandlerConfig
-                { handlerModel = "cheap"
-                , handlerDescription = "Summarize search results."
-                , handlerSystemPrompt = "Summarize."
-                , handlerTools = defaultToolConfig {toolMcp = [innerServer]}
-                }
+              handlerConfig
+                "cheap"
+                "Summarize search results."
+                (defaultToolConfig {toolMcp = [innerServer]})
             innerJson =
-              object
-                [ "url" .= ("https://inner.example.test/mcp" :: String)
-                , "policy" .= String "allow"
-                , "handlers"
-                    .= object
-                      [ "fetch"
-                          .= handlerValue
-                            "nested"
-                            "Nested summary."
-                            (toolsValue (String "deny") (String "deny") (object []))
-                      ]
-                ]
+              mcpValue
+                "https://inner.example.test/mcp"
+                "allow"
+                ( object
+                    [ "fetch"
+                        .= handlerValue
+                          "nested"
+                          "Nested summary."
+                          (toolsValue (String "deny") (String "deny") (object []))
+                    ]
+                )
             outerJson =
               handlerValue
                 "cheap"
@@ -147,11 +189,10 @@ tests =
             mcpJson =
               object
                 [ "demo"
-                    .= object
-                      [ "url" .= ("https://mcp.example.test/mcp" :: String)
-                      , "policy" .= String "allow"
-                      , "handlers" .= object ["search" .= outerJson]
-                      ]
+                    .= mcpValue
+                      "https://mcp.example.test/mcp"
+                      "allow"
+                      (object ["search" .= outerJson])
                 ]
          in decodeConfig (toolsObject (String "deny") (String "deny") (object []) mcpJson)
               @?= Just
@@ -161,33 +202,27 @@ tests =
                           { mcpServerName = "demo"
                           , mcpServerUrl = "https://mcp.example.test/mcp"
                           , mcpServerPolicy = ToolAllow
-                          , mcpHandlers = HandlerConfigs [("search", outerHandler)]
+                          , mcpHandlers = HandlerConfigs (Map.fromList [("search", outerHandler)])
                           }
                       ]
                   }
     , testCase "MCP server result handlers are decoded" $
-        let handlerConfig =
-              HandlerConfig
-                { handlerModel = "cheap"
-                , handlerDescription = "Summarize search results."
-                , handlerSystemPrompt = "Summarize."
-                , handlerTools = defaultToolConfig
-                }
+        let handlerConfigValue =
+              handlerConfig "cheap" "Summarize search results." defaultToolConfig
             mcpJson =
               object
                 [ "demo"
-                    .= object
-                      [ "url" .= ("https://mcp.example.test/mcp" :: String)
-                      , "policy" .= String "allow"
-                      , "handlers"
-                          .= object
-                            [ "search"
-                                .= handlerValue
-                                  "cheap"
-                                  "Summarize search results."
-                                  (toolsValue (String "deny") (String "deny") (object []))
-                            ]
-                      ]
+                    .= mcpValue
+                      "https://mcp.example.test/mcp"
+                      "allow"
+                      ( object
+                          [ "search"
+                              .= handlerValue
+                                "cheap"
+                                "Summarize search results."
+                                (toolsValue (String "deny") (String "deny") (object []))
+                          ]
+                      )
                 ]
          in decodeConfig (toolsObject (String "deny") (String "deny") (object []) mcpJson)
               @?= Just
@@ -197,7 +232,7 @@ tests =
                           { mcpServerName = "demo"
                           , mcpServerUrl = "https://mcp.example.test/mcp"
                           , mcpServerPolicy = ToolAllow
-                          , mcpHandlers = HandlerConfigs [("search", handlerConfig)]
+                          , mcpHandlers = HandlerConfigs (Map.fromList [("search", handlerConfigValue)])
                           }
                       ]
                   }
@@ -235,15 +270,7 @@ tests =
               defaultToolConfig
                 { toolShell = ToolAllow
                 , toolWebfetch = ToolAsk
-                , toolSubagent =
-                    [ SubagentConfig
-                        { subagentName = "cheap"
-                        , subagentModel = "cheap-upstream"
-                        , subagentDescription = "Summarize pages."
-                        , subagentSystemPrompt = "Fetch and summarize."
-                        , subagentTools = defaultToolConfig
-                        }
-                    ]
+                , toolSubagent = [cheapAgent "cheap-upstream" "Summarize pages."]
                 , toolMcp =
                     [ McpServerConfig
                         { mcpServerName = "demo"
@@ -251,15 +278,12 @@ tests =
                         , mcpServerPolicy = ToolAsk
                         , mcpHandlers =
                             HandlerConfigs
-                              [ ( "search"
-                                , HandlerConfig
-                                    { handlerModel = "cheap"
-                                    , handlerDescription = "Summarize search."
-                                    , handlerSystemPrompt = "Summarize."
-                                    , handlerTools = defaultToolConfig
-                                    }
-                                )
-                              ]
+                              ( Map.fromList
+                                  [ ( "search"
+                                    , handlerConfig "cheap" "Summarize search." defaultToolConfig
+                                    )
+                                  ]
+                              )
                         }
                     ]
                 }
@@ -285,6 +309,20 @@ toolsObject shell webfetch subagent mcp =
     , "mcp" .= mcp
     ]
 
+mcpValue :: String -> String -> Value -> Value
+mcpValue url policy handlers =
+  object
+    [ "url" .= url
+    , "policy" .= policy
+    , "handlers" .= handlers
+    ]
+
+-- Add one key to an object, for unknown-key tests.
+insertKey :: String -> Value -> Value -> Value
+insertKey key value (Object fields) =
+  Object (KeyMap.insert (AesonKey.fromString key) value fields)
+insertKey _ _ value = value
+
 handlerValue :: String -> String -> Value -> Value
 handlerValue model description tools =
   object
@@ -294,6 +332,15 @@ handlerValue model description tools =
     , "tools" .= tools
     ]
 
+handlerConfig :: String -> String -> ToolConfig -> AgentConfig
+handlerConfig model description tools =
+  AgentConfig
+    { agentModel = model
+    , agentDescription = description
+    , agentSystemPrompt = "Summarize."
+    , agentTools = tools
+    }
+
 agentValue :: String -> String -> Value
 agentValue model description =
   object
@@ -302,3 +349,19 @@ agentValue model description =
     , "systemPrompt" .= ("Fetch and summarize." :: String)
     , "tools" .= toolsValue (String "deny") (String "allow") (object [])
     ]
+
+cheapAgent :: String -> String -> SubagentConfig
+cheapAgent model description =
+  SubagentConfig
+    { subagentName = "cheap"
+    , subagentAgent =
+        AgentConfig
+          { agentModel = model
+          , agentDescription = description
+          , agentSystemPrompt = "Fetch and summarize."
+          , agentTools = defaultToolConfig {toolWebfetch = ToolAllow}
+          }
+    }
+
+setSubagentName :: String -> SubagentConfig -> SubagentConfig
+setSubagentName name agent = agent {subagentName = name}

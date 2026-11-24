@@ -20,7 +20,7 @@ import Data.Word (Word8)
 import Hutian.Conversation (ConversationEntry (..))
 import Hutian.Http.Wire (recvAll, recvExactly, recvUntil)
 import Hutian.Interrupt (newInterruptFlag)
-import Hutian.Llm (LlmSettings (..), LlmUrl (..), ModelName (..), SystemPrompt (..), runLlm)
+import Hutian.Llm (LlmSettings (..), LlmUrl (..), ModelName (..), SystemPrompt (..), apiFor, runLlm)
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Catalog (toolCatalog)
 import Hutian.Verbosity (Verbosity (..))
@@ -386,6 +386,7 @@ endToEndTests =
                 settings =
                   LlmSettings
                     (LlmUrl "http://hutian-relay/v1/chat/completions")
+                    (apiFor (LlmUrl "http://hutian-relay/v1/chat/completions"))
                     (ModelName "test-model")
                     (SystemPrompt "system prompt")
                     (Just socketPath)

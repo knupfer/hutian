@@ -89,6 +89,7 @@ let
     "Editor"
     "History"
     "Jobs"
+    "Json"
     "Key"
     "Llm/Request"
     "Llm/Settings"

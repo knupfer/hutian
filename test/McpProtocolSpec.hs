@@ -13,7 +13,7 @@ tests :: TestTree
 tests =
   testGroup
     "mcp-protocol"
-    [ testCase "tool names are namespaced and sanitized" $ do
+    [ testCase "tool names are namespaced for the API and displayed verbatim" $ do
         mcpToolFunctionName "demo" "search"
           @?= "mcp__demo__search"
         mcpToolDisplayName "demo" "search"
@@ -21,12 +21,12 @@ tests =
         mcpToolFunctionName "a.b" "x y"
           @?= "mcp__a_b__x_y"
         mcpToolDisplayName "a.b" "x y"
-          @?= "mcp.a_b.x_y"
-    , testCase "result handler paths are namespaced and sanitized" $ do
+          @?= "mcp.a.b.x y"
+    , testCase "result handler paths use the real tool names" $ do
         mcpHandlerName "demo" "search"
           @?= "mcp.demo.handlers.search"
         mcpHandlerName "a.b" "x y"
-          @?= "mcp.a_b.handlers.x_y"
+          @?= "mcp.a.b.handlers.x y"
     , testCase "tools/list decodes descriptions and schemas" $
         parseTools
           ( object

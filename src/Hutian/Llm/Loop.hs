@@ -14,12 +14,13 @@ import Hutian.Conversation
   )
 import Hutian.Interrupt (InterruptFlag, isInterrupted)
 import Hutian.Llm.Stream (LlmResult (..))
+import Hutian.Tool (ToolRun (..))
 
 -- | One iteration's effects.
 data LlmLoop = LlmLoop
-  { -- | Run the requested tool calls. The flag reports that the turn aborted,
+  { -- | Run the requested tool calls. The status reports that the turn aborted,
     -- so no further calls or continuations may run.
-    loopRunTools :: Conversation -> [ToolCall] -> IO (Bool, Conversation)
+    loopRunTools :: Conversation -> [ToolCall] -> IO (ToolRun, Conversation)
   , -- | Ask the model to continue after the tool results.
     loopContinue :: Conversation -> IO LlmResult
   }
@@ -42,11 +43,11 @@ runToolLoopWithResult loop interruptFlag conversation result
       if interrupted
         then pure (abortToolCalls conversation (llmToolCalls result), result)
         else do
-          (aborted, conversation') <-
+          (status, conversation') <-
             loopRunTools loop conversation (llmToolCalls result)
-          if aborted
-            then pure (conversation', result)
-            else do
+          case status of
+            ToolsAborted -> pure (conversation', result)
+            ToolsCompleted -> do
               next <- loopContinue loop conversation'
               runToolLoopWithResult
                 loop

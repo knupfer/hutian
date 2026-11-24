@@ -1,6 +1,6 @@
 module VerbositySpec (tests) where
 
-import Hutian.Context (TurnContext (..))
+import Hutian.Context (TurnContext (MainContext), subagentContext)
 import Hutian.Verbosity
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -17,7 +17,7 @@ tests =
             , modeAnswerStyle = AnswerNormal
             , modeToolOutput = LabelOnly
             }
-        renderMode VerbosityLow (SubagentContext ["cheap"])
+        renderMode VerbosityLow (subagentContext MainContext "cheap")
           @?= RenderMode
             { modeReasoning = LabelOnly
             , modeAnswer = LabelOnly
@@ -33,7 +33,7 @@ tests =
             , modeToolOutput = Full
             }
     , testCase "normal presents subagents like low and keeps their answer" $
-        renderMode VerbosityNormal (SubagentContext ["cheap"])
+        renderMode VerbosityNormal (subagentContext MainContext "cheap")
           @?= RenderMode
             { modeReasoning = LabelOnly
             , modeAnswer = Full
@@ -48,7 +48,7 @@ tests =
             , modeAnswerStyle = AnswerNormal
             , modeToolOutput = Full
             }
-        renderMode VerbosityHigh (SubagentContext ["cheap"])
+        renderMode VerbosityHigh (subagentContext MainContext "cheap")
           @?= RenderMode
             { modeReasoning = Full
             , modeAnswer = Full

@@ -1,7 +1,10 @@
 -- | Pure background-job model, identifiers, status, and text used by the
 -- model-facing tools.
 module Hutian.Jobs
-  ( JobId (..)
+  ( JobId
+  , jobIdFromInt
+  , firstJobId
+  , nextJobId
   , JobStatus (..)
   , jobStatusFromExit
   , Job (..)
@@ -10,8 +13,10 @@ module Hutian.Jobs
   , jobSummaryLine
   , jobStartedLine
   , jobListResult
+  , Truncation (..)
   , jobOutputResult
   , jobOutputTruncationNote
+  , JobActivity (..)
   , jobKillResult
   , LineCount
   , lineCount
@@ -20,12 +25,24 @@ module Hutian.Jobs
   , maxJobOutputLines
   ) where
 
-import Data.List (intercalate)
+import Data.List (intercalate, isSuffixOf)
 import System.Exit (ExitCode (..))
 
--- | A job id is allocated per shell session and is always positive.
+-- | A job id is allocated per shell session and is always positive. Helpers
+-- outside this module can only obtain ids from parsing or from 'nextJobId'.
 newtype JobId = JobId Int
   deriving stock (Eq, Ord, Show)
+
+jobIdFromInt :: Int -> Maybe JobId
+jobIdFromInt value
+  | value > 0 = Just (JobId value)
+  | otherwise = Nothing
+
+firstJobId :: JobId
+firstJobId = JobId 1
+
+nextJobId :: JobId -> JobId
+nextJobId (JobId value) = JobId (value + 1)
 
 -- | A job either runs or has stopped with an explicit outcome. Keeping the
 -- exit number and the signal number separate avoids the @ExitFailure (-n)@
@@ -97,32 +114,48 @@ jobListResult :: [Job] -> String
 jobListResult [] = "no background jobs"
 jobListResult jobs = intercalate "\n" (map jobSummaryLine jobs)
 
-jobOutputResult :: Job -> String -> Bool -> String
-jobOutputResult job output truncated =
+jobOutputResult :: Job -> String -> Truncation -> String
+jobOutputResult job output truncation =
   "job "
     ++ jobIdText (jobId job)
     ++ " "
     ++ jobStatusText (jobStatus job)
     ++ "\n"
-    ++ truncation
+    ++ truncationNote
     ++ body
   where
-    truncation = if truncated then jobOutputTruncationNote ++ "\n" else ""
+    truncationNote =
+      case truncation of
+        OutputTruncated -> jobOutputTruncationNote ++ "\n"
+        OutputComplete -> ""
     body
       | null output = "(no output)\n"
-      | last output == '\n' = output
+      | "\n" `isSuffixOf` output = output
       | otherwise = output ++ "\n"
+
+-- | Whether a log tail was cut off at the start.
+data Truncation
+  = OutputTruncated
+  | OutputComplete
+  deriving stock (Eq, Show)
 
 jobOutputTruncationNote :: String
 jobOutputTruncationNote = "[output truncated; showing the most recent lines]"
 
--- | Text describing the result of a stop request. @wasRunning@ distinguishes a
--- job that was already finished from one that the signal actually stopped.
-jobKillResult :: Bool -> Job -> String
-jobKillResult wasRunning job
-  | not wasRunning = alreadyFinished
-  | JobRunning <- jobStatus job = "job " ++ jobIdText (jobId job) ++ " is still running"
-  | otherwise = "job " ++ jobIdText (jobId job) ++ " stopped: " ++ jobStatusText (jobStatus job)
+-- | Whether the job was still running when a stop request arrived.
+data JobActivity
+  = JobWasRunning
+  | JobAlreadyFinished
+  deriving stock (Eq, Show)
+
+-- | Text describing the result of a stop request.
+jobKillResult :: JobActivity -> Job -> String
+jobKillResult activity job =
+  case activity of
+    JobAlreadyFinished -> alreadyFinished
+    JobWasRunning
+      | JobRunning <- jobStatus job -> "job " ++ jobIdText (jobId job) ++ " is still running"
+      | otherwise -> "job " ++ jobIdText (jobId job) ++ " stopped: " ++ jobStatusText (jobStatus job)
   where
     alreadyFinished =
       "job "

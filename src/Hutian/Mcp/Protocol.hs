@@ -27,6 +27,7 @@ import Data.Aeson
   , object
   , (.=)
   )
+import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
@@ -36,7 +37,7 @@ import Data.List (intercalate)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 import Hutian.Tool.Catalog (McpTool (..))
-import Text.Read (readMaybe)
+import Hutian.Json (jsonInt)
 
 -- | The protocol revision used for Streamable HTTP servers.
 mcpProtocolVersion :: String
@@ -109,15 +110,16 @@ mcpToolFunctionName :: String -> String -> String
 mcpToolFunctionName serverName toolName =
   "mcp__" ++ sanitizeName serverName ++ "__" ++ sanitizeName toolName
 
--- | The dotted label used in prompts for one MCP tool.
+-- | The dotted label used in prompts for one MCP tool. Display text keeps the
+-- server's real names; only the API-facing function name is sanitized.
 mcpToolDisplayName :: String -> String -> String
 mcpToolDisplayName serverName toolName =
-  "mcp." ++ sanitizeName serverName ++ "." ++ sanitizeName toolName
+  "mcp." ++ serverName ++ "." ++ toolName
 
 -- | The path of the result handler for one concrete MCP tool.
 mcpHandlerName :: String -> String -> String
 mcpHandlerName serverName toolName =
-  "mcp." ++ sanitizeName serverName ++ ".handlers." ++ sanitizeName toolName
+  "mcp." ++ serverName ++ ".handlers." ++ toolName
 
 sanitizeName :: String -> String
 sanitizeName text =
@@ -179,10 +181,7 @@ selectJsonRpcResponse expected = go
 
 responseId :: Value -> Maybe Int
 responseId (Object fields) =
-  case KeyMap.lookup "id" fields of
-    Just (Number number) -> Just (round number)
-    Just (String text) -> readMaybe (Text.unpack text)
-    _ -> Nothing
+  KeyMap.lookup "id" fields >>= jsonInt
 responseId _ = Nothing
 
 errorText :: Value -> String
@@ -204,28 +203,20 @@ parseTools value =
         Just (Array tools) -> traverse parseTool (Vector.toList tools)
         _ -> protocolError "MCP tools/list result is missing tools"
     _ -> protocolError "MCP tools/list result is not an object"
-  where
-    parseTool (Object fields) =
-      case KeyMap.lookup "name" fields of
-        Just (String name)
-          | Text.null name -> protocolError "MCP tool name is empty"
-          | otherwise -> do
-              let description =
-                    case KeyMap.lookup "description" fields of
-                      Just (String text) -> Text.unpack text
-                      _ -> ""
-                  schema =
-                    case KeyMap.lookup "inputSchema" fields of
-                      Just schemaValue@(Object _) -> schemaValue
-                      _ -> object ["type" .= ("object" :: String)]
-              pure
-                McpTool
-                  { mcpToolName = Text.unpack name
-                  , mcpToolDescription = description
-                  , mcpToolInputSchema = schema
-                  }
-        _ -> protocolError "MCP tool is missing a name"
-    parseTool _ = protocolError "MCP tool is not an object"
+
+-- | The name checks stay explicit so each malformed shape keeps its own
+-- message; the remaining fields use the 'FromJSON' instance.
+parseTool :: Value -> Either McpError McpTool
+parseTool tool@(Object fields) =
+  case KeyMap.lookup "name" fields of
+    Nothing -> protocolError "MCP tool is missing a name"
+    Just (String name)
+      | Text.null name -> protocolError "MCP tool name is empty"
+    _ ->
+      case Aeson.fromJSON tool of
+        Aeson.Success parsed -> Right parsed
+        Aeson.Error message -> protocolError ("invalid MCP tool: " ++ message)
+parseTool _ = protocolError "MCP tool is not an object"
 
 -- | Turn a @tools/call@ result into text for the model. MCP servers return one or more
 -- text content parts; other content types are shown as JSON so nothing is lost.

@@ -4,14 +4,16 @@
 -- tools and sessions live in "Hutian.Tool.Catalog".
 --
 -- The launcher passes one JSON document for the whole tree, including the
--- nested tools of every configured subagent and result handler. Keeping the
--- parser here means a malformed configuration is rejected before the shell
--- accepts input.
+-- nested tools of every configured subagent and result handler. The parser is
+-- as strict as the flake schema: every field is required and unknown keys are
+-- rejected, so a malformed configuration is reported before the shell accepts
+-- input instead of silently disabling a tool.
 module Hutian.Tool.Config
   ( ToolConfig (..)
+  , AgentConfig (..)
   , SubagentConfig (..)
   , SubagentConfigs (..)
-  , HandlerConfig (..)
+  , HandlerConfig
   , HandlerConfigs (..)
   , handlerConfigFor
   , McpServerConfig (..)
@@ -26,26 +28,31 @@ import Data.Aeson
   , object
   , withObject
   , (.:)
-  , (.:?)
-  , (.!=)
   , (.=)
   )
 import Data.Aeson.Types (Parser)
 import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.KeyMap as KeyMap
-import Data.List (sortOn)
+import Data.List (intercalate, sortOn)
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import Hutian.Policy (ToolPolicy (..))
+
+-- | The settings shared by a subagent and a tool-result handler.
+data AgentConfig = AgentConfig
+  { agentModel :: String
+  , agentDescription :: String
+  , agentSystemPrompt :: String
+  , agentTools :: ToolConfig
+  }
+  deriving stock (Eq, Show)
 
 -- | One configured subagent. The name is the selector the main model uses; the
 -- model is the upstream name sent to the shared API. Subagents run serially and
 -- only their final answer is returned to the caller.
 data SubagentConfig = SubagentConfig
   { subagentName :: String
-  , subagentModel :: String
-  , subagentDescription :: String
-  , subagentSystemPrompt :: String
-  , subagentTools :: ToolConfig
+  , subagentAgent :: AgentConfig
   }
   deriving stock (Eq, Show)
 
@@ -57,27 +64,21 @@ newtype SubagentConfigs = SubagentConfigs
   }
   deriving stock (Eq, Show)
 
--- | A tool-result handler. It has the same settings as a subagent but no
--- selector name: the tool name and the launcher derive its label. Only
--- concrete MCP tools can attach a handler.
-data HandlerConfig = HandlerConfig
-  { handlerModel :: String
-  , handlerDescription :: String
-  , handlerSystemPrompt :: String
-  , handlerTools :: ToolConfig
-  }
-  deriving stock (Eq, Show)
+-- | A tool-result handler has the same settings as a subagent but no selector
+-- name: the tool name and the launcher derive its label. Only concrete MCP
+-- tools can attach a handler.
+type HandlerConfig = AgentConfig
 
--- | The tool-keyed result-handler document. A handler may have its own
--- handlers nested in its tools; the parent handler is never inherited.
+-- | The tool-keyed result-handler document. A handler may have its own handlers
+-- nested in its tools; the parent handler is never inherited.
 newtype HandlerConfigs = HandlerConfigs
-  { unHandlerConfigs :: [(String, HandlerConfig)]
+  { unHandlerConfigs :: Map.Map String HandlerConfig
   }
   deriving stock (Eq, Show)
 
 -- | Look up a result handler by its local MCP tool name.
 handlerConfigFor :: String -> HandlerConfigs -> Maybe HandlerConfig
-handlerConfigFor name (HandlerConfigs handlers) = lookup name handlers
+handlerConfigFor name (HandlerConfigs handlers) = Map.lookup name handlers
 
 -- | One configured MCP server. The JSON configuration is keyed by name; the
 -- discovered tools and session live in "Hutian.Tool.Catalog".
@@ -105,7 +106,7 @@ data ToolConfig = ToolConfig
   deriving stock (Eq, Show)
 
 -- | Safe defaults used by tests, direct callers that only care about the shell
--- policy, and a launcher that does not provide a tools file.
+-- policy, and a launcher that constructs a configuration from flags.
 defaultToolConfig :: ToolConfig
 defaultToolConfig =
   ToolConfig
@@ -126,10 +127,11 @@ instance ToJSON ToolConfig where
 
 instance FromJSON ToolConfig where
   parseJSON = withObject "tools" $ \values -> do
-    shell <- policyField values "shell" ToolDeny
-    webfetch <- policyField values "webfetch" ToolDeny
-    subagent <- values .:? "subagent" .!= SubagentConfigs []
-    mcp <- values .:? "mcp" .!= McpServers []
+    requireKnownKeys "tools" ["shell", "webfetch", "subagent", "mcp"] values
+    shell <- values .: "shell"
+    webfetch <- values .: "webfetch"
+    subagent <- values .: "subagent"
+    mcp <- values .: "mcp"
     pure
       ToolConfig
         { toolShell = shell
@@ -138,13 +140,17 @@ instance FromJSON ToolConfig where
         , toolMcp = unMcpServers mcp
         }
 
+instance ToJSON AgentConfig where
+  toJSON config =
+    object
+      [ "model" .= agentModel config
+      , "description" .= agentDescription config
+      , "systemPrompt" .= agentSystemPrompt config
+      , "tools" .= agentTools config
+      ]
+
 instance ToJSON SubagentConfig where
-  toJSON agent =
-    agentObject
-      (subagentModel agent)
-      (subagentDescription agent)
-      (subagentSystemPrompt agent)
-      (subagentTools agent)
+  toJSON agent = toJSON (subagentAgent agent)
 
 instance ToJSON SubagentConfigs where
   toJSON = subagentObject . unSubagentConfigs
@@ -154,36 +160,21 @@ instance FromJSON SubagentConfigs where
     SubagentConfigs . sortOn subagentName
       <$> traverse (uncurry parseSubagent) (KeyMap.toList agents)
 
-instance ToJSON HandlerConfig where
-  toJSON config =
-    agentObject
-      (handlerModel config)
-      (handlerDescription config)
-      (handlerSystemPrompt config)
-      (handlerTools config)
-
-instance FromJSON HandlerConfig where
-  parseJSON = withObject "result handler" $ \values -> do
-    (model, description, systemPrompt, tools) <- parseAgentFields "result handler" values
-    pure
-      HandlerConfig
-        { handlerModel = Text.unpack model
-        , handlerDescription = Text.unpack description
-        , handlerSystemPrompt = Text.unpack systemPrompt
-        , handlerTools = tools
-        }
-
 instance ToJSON HandlerConfigs where
-  toJSON = handlersObject . unHandlerConfigs
+  toJSON = handlersObject . Map.toList . unHandlerConfigs
 
 instance FromJSON HandlerConfigs where
   parseJSON = withObject "handlers" $ \handlers ->
-    HandlerConfigs . sortOn fst
+    HandlerConfigs . Map.fromList
       <$> traverse parseEntry (KeyMap.toList handlers)
     where
       parseEntry (key, value) = do
         name <- requireName "handler tool" key
-        config <- parseJSON value
+        config <-
+          withObject
+            "result handler"
+            (parseAgentFields ("result handler " ++ name))
+            value
         pure (name, config)
 
 instance ToJSON McpServerConfig where
@@ -212,9 +203,10 @@ mcpServersObject servers =
 parseMcpServer :: AesonKey.Key -> Value -> Parser McpServerConfig
 parseMcpServer nameKey = withObject "mcp server" $ \values -> do
   name <- requireName "MCP server" nameKey
+  requireKnownKeys ("MCP server " ++ name) ["url", "policy", "handlers"] values
   url <- values .: "url" >>= requireNonEmpty ("MCP server " ++ name ++ " URL")
-  policy <- values .:? "policy" .!= ToolAsk
-  handlers <- values .:? "handlers" .!= HandlerConfigs []
+  policy <- values .: "policy"
+  handlers <- values .: "handlers"
   pure
     McpServerConfig
       { mcpServerName = name
@@ -249,40 +241,28 @@ keyedObject entries =
 parseSubagent :: AesonKey.Key -> Value -> Parser SubagentConfig
 parseSubagent nameKey = withObject "subagent" $ \values -> do
   name <- requireName "subagent" nameKey
-  (model, description, systemPrompt, tools) <-
-    parseAgentFields ("subagent " ++ name) values
-  pure
-    SubagentConfig
-      { subagentName = name
-      , subagentModel = Text.unpack model
-      , subagentDescription = Text.unpack description
-      , subagentSystemPrompt = Text.unpack systemPrompt
-      , subagentTools = tools
-      }
+  SubagentConfig name <$> parseAgentFields ("subagent " ++ name) values
+
+agentKeys :: [Text.Text]
+agentKeys = ["model", "description", "systemPrompt", "tools"]
 
 -- | Parse the fields shared by a subagent and a result handler. The label
 -- prefixes both required field errors.
-parseAgentFields
-  :: String
-  -> Object
-  -> Parser (Text.Text, Text.Text, Text.Text, ToolConfig)
+parseAgentFields :: String -> Object -> Parser AgentConfig
 parseAgentFields label values = do
+  requireKnownKeys label agentKeys values
   model <- values .: "model" >>= requireNonEmpty (label ++ " model")
   description <-
     values .: "description" >>= requireNonEmpty (label ++ " description")
   systemPrompt <- values .: "systemPrompt"
-  tools <- values .:? "tools" .!= defaultToolConfig
-  pure (model, description, systemPrompt, tools)
-
--- | Encode the fields shared by a subagent and a result handler.
-agentObject :: String -> String -> String -> ToolConfig -> Value
-agentObject model description systemPrompt tools =
-  object
-    [ "model" .= model
-    , "description" .= description
-    , "systemPrompt" .= systemPrompt
-    , "tools" .= tools
-    ]
+  tools <- values .: "tools"
+  pure
+    AgentConfig
+      { agentModel = Text.unpack model
+      , agentDescription = Text.unpack description
+      , agentSystemPrompt = Text.unpack systemPrompt
+      , agentTools = tools
+      }
 
 requireNonEmpty :: String -> Text.Text -> Parser Text.Text
 requireNonEmpty label text
@@ -293,6 +273,15 @@ requireName :: String -> AesonKey.Key -> Parser String
 requireName label key =
   Text.unpack <$> requireNonEmpty label (AesonKey.toText key)
 
-policyField :: Object -> Text.Text -> ToolPolicy -> Parser ToolPolicy
-policyField values key fallback =
-  values .:? AesonKey.fromText key .!= fallback
+-- | Reject keys the schema does not define, instead of silently ignoring a
+-- misspelling that would disable a tool.
+requireKnownKeys :: String -> [Text.Text] -> Object -> Parser ()
+requireKnownKeys label allowed values =
+  case filter (`notElem` allowed) (map AesonKey.toText (KeyMap.keys values)) of
+    [] -> pure ()
+    extra ->
+      fail
+        ( label
+            ++ " has unknown keys: "
+            ++ intercalate ", " (map Text.unpack extra)
+        )

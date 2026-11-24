@@ -1,18 +1,46 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Runtime tool catalog. The pure configuration in "Hutian.Tool.Config" is
--- paired with the MCP tools and sessions discovered before a model turn.
+-- combined with the MCP tools and sessions discovered before a model turn.
+--
+-- The catalog is the single source of truth after construction: MCP server
+-- configuration and discovery state live together in 'McpServer', so the two
+-- cannot drift apart.
 module Hutian.Tool.Catalog
-  ( ToolCatalog (..)
+  ( ToolCatalog
+  , catalogShell
+  , catalogWebfetch
+  , catalogSubagents
+  , catalogMcp
   , toolCatalog
+  , withMcpServers
+  , shellOnlyCatalog
   , McpServer (..)
-  , McpSessionId (..)
+  , mcpServerNameOf
+  , mcpServerPolicyOf
+  , mcpServerHandlersOf
+  , McpSessionId
+  , mcpSessionIdFromString
+  , mcpSessionIdText
   , McpTool (..)
-  , HasToolCatalog (toolCatalogFor)
   ) where
 
-import Data.Aeson (Value)
+import Data.Aeson
+  ( FromJSON (..)
+  , Value
+  , object
+  , withObject
+  , (.:)
+  , (.:?)
+  , (.!=)
+  , (.=)
+  )
+import qualified Data.Text as Text
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Config
-  ( McpServerConfig
+  ( HandlerConfigs
+  , McpServerConfig (..)
+  , SubagentConfig
   , ToolConfig (..)
   , defaultToolConfig
   )
@@ -25,11 +53,26 @@ data McpServer = McpServer
   }
   deriving stock (Eq, Show)
 
+mcpServerNameOf :: McpServer -> String
+mcpServerNameOf = mcpServerName . mcpServerConfig
+
+mcpServerPolicyOf :: McpServer -> ToolPolicy
+mcpServerPolicyOf = mcpServerPolicy . mcpServerConfig
+
+mcpServerHandlersOf :: McpServer -> HandlerConfigs
+mcpServerHandlersOf = mcpHandlers . mcpServerConfig
+
 -- | The opaque session identifier returned by an MCP server.
 newtype McpSessionId = McpSessionId
   { unMcpSessionId :: String
   }
   deriving stock (Eq, Show)
+
+mcpSessionIdFromString :: String -> McpSessionId
+mcpSessionIdFromString = McpSessionId
+
+mcpSessionIdText :: McpSessionId -> String
+mcpSessionIdText = unMcpSessionId
 
 -- | One tool advertised by an MCP server.
 data McpTool = McpTool
@@ -39,28 +82,45 @@ data McpTool = McpTool
   }
   deriving stock (Eq, Show)
 
+instance FromJSON McpTool where
+  parseJSON = withObject "MCP tool" $ \values -> do
+    name <- values .: "name"
+    description <- values .:? "description" .!= ("" :: Text.Text)
+    schema <-
+      values .:? "inputSchema"
+        .!= object ["type" .= ("object" :: String)]
+    pure
+      McpTool
+        { mcpToolName = Text.unpack name
+        , mcpToolDescription = Text.unpack description
+        , mcpToolInputSchema = schema
+        }
+
 -- | The configuration plus the runtime MCP state used to build requests and
--- plans. Keeping this separate from 'ToolConfig' means the JSON configuration
--- never contains sessions or discovered schemas.
+-- plans.
 data ToolCatalog = ToolCatalog
-  { catalogConfig :: ToolConfig
+  { catalogShell :: ToolPolicy
+  , catalogWebfetch :: ToolPolicy
+  , catalogSubagents :: [SubagentConfig]
   , catalogMcp :: [McpServer]
   }
   deriving stock (Eq, Show)
 
--- | A catalog with no discovered MCP tools.
+-- | Build a catalog whose MCP servers are configured but not yet discovered.
 toolCatalog :: ToolConfig -> ToolCatalog
-toolCatalog config = ToolCatalog config []
+toolCatalog config =
+  ToolCatalog
+    { catalogShell = toolShell config
+    , catalogWebfetch = toolWebfetch config
+    , catalogSubagents = toolSubagent config
+    , catalogMcp = [McpServer server [] Nothing | server <- toolMcp config]
+    }
 
--- | Callers that only need a policy or a configuration still get a catalog.
-class HasToolCatalog a where
-  toolCatalogFor :: a -> ToolCatalog
+-- | Replace the configured servers with their discovery results.
+withMcpServers :: [McpServer] -> ToolCatalog -> ToolCatalog
+withMcpServers servers catalog = catalog {catalogMcp = servers}
 
-instance HasToolCatalog ToolCatalog where
-  toolCatalogFor = id
-
-instance HasToolCatalog ToolConfig where
-  toolCatalogFor = toolCatalog
-
-instance HasToolCatalog ToolPolicy where
-  toolCatalogFor policy = toolCatalog (defaultToolConfig {toolShell = policy})
+-- | A catalog with only a shell policy. Used by callers that have no full tool
+-- configuration, such as the shell-only executor and request-body tests.
+shellOnlyCatalog :: ToolPolicy -> ToolCatalog
+shellOnlyCatalog policy = toolCatalog (defaultToolConfig {toolShell = policy})
