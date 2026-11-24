@@ -137,11 +137,12 @@ tests =
               [server]
           messages <- readIORef logs
           assertBool
-            "unknown result tool is reported"
+            "unknown result tool is reported with the known names"
             ( any
                 (\message ->
                    "handlers.missing" `isInfixOf` message
                      && "no tool" `isInfixOf` message
+                     && "known tools: \"search\"" `isInfixOf` message
                 )
                 messages
             )

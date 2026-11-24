@@ -13,7 +13,7 @@ import Data.Aeson (Value (..))
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
-import Data.List (isInfixOf)
+import Data.List (intercalate, isInfixOf)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -121,8 +121,13 @@ reportUnknownHandlers report config tools =
                 ++ name
                 ++ " is configured but the server has no tool named "
                 ++ show name
+                ++ knownTools
                 ++ "; the result handler is ignored"
             )
+    knownTools =
+      case known of
+        [] -> "; the server exposes no tools"
+        _ -> "; known tools: " ++ intercalate ", " (map show known)
 
 -- | Keep the first tool for every API-facing name. Two remote tools can
 -- sanitize to the same function name, and advertising both would make the
