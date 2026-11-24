@@ -1,0 +1,108 @@
+#!/usr/bin/env expect
+#
+# Measure the interactive shell through a real pty:
+#
+#   1. time from spawn to the first prompt frame;
+#   2. time from one keystroke to the redrawn frame that echoes it.
+#
+# Every run starts the real launcher, so the startup number includes gVisor
+# and the relay. The shell exits after the key, so no model endpoint is needed.
+#
+# Usage: expect tui-bench.exp /path/to/hutian [runs]
+
+set timeout 60
+
+if {[llength $argv] < 1} {
+    puts stderr "usage: tui-bench.exp /path/to/hutian \[runs\]"
+    exit 2
+}
+
+set binary [lindex $argv 0]
+set runs 3
+if {[llength $argv] >= 2} {
+    set runs [lindex $argv 1]
+}
+
+# The child's terminal output is only needed for matching; keep it out of the
+# benchmark report.
+log_user 0
+
+# End of a synchronized prompt frame: ESC [ ? 2026 l
+set syncEnd "\033\[?2026l"
+
+proc now {} {
+    return [clock clicks -milliseconds]
+}
+
+proc summarize {label values} {
+    set sorted [lsort -integer $values]
+    set count [llength $sorted]
+    if {$count % 2 == 1} {
+        set median [lindex $sorted [expr {$count / 2}]]
+    } else {
+        set lower [lindex $sorted [expr {$count / 2 - 1}]]
+        set upper [lindex $sorted [expr {$count / 2}]]
+        set median [expr {($lower + $upper) / 2}]
+    }
+    puts [format "  %-20s median %5d ms   min %5d ms   max %5d ms" \
+        $label $median [lindex $sorted 0] [lindex $sorted end]]
+}
+
+set starts {}
+set echoes {}
+
+for {set run 1} {$run <= $runs} {incr run} {
+    set timeout 60
+    spawn -noecho $binary
+
+    set started [now]
+    expect {
+        -exact $syncEnd {}
+        eof {
+            puts stderr "run $run: exited before drawing a prompt"
+            exit 1
+        }
+        timeout {
+            puts stderr "run $run: no prompt within 60 s"
+            catch {exec kill -9 [exp_pid]}
+            exit 1
+        }
+    }
+    set prompted [now]
+    lappend starts [expr {$prompted - $started}]
+
+    set typed [now]
+    send "x"
+    set timeout 10
+    expect {
+        -exact "x" {}
+        eof {
+            puts stderr "run $run: exited before echoing the key"
+            exit 1
+        }
+        timeout {
+            puts stderr "run $run: no echo within 10 s"
+            catch {exec kill -9 [exp_pid]}
+            exit 1
+        }
+    }
+    set echoed [now]
+    lappend echoes [expr {$echoed - $typed}]
+
+    # Clear the input and exit.
+    send "\003"
+    send "\004"
+    set timeout 15
+    expect {
+        eof {}
+        timeout {
+            catch {exec kill -9 [exp_pid]}
+        }
+    }
+    catch {wait}
+}
+
+puts ""
+puts "Interactive pty (real launcher, $runs runs):"
+summarize "startup to prompt" $starts
+summarize "keystroke echo" $echoes

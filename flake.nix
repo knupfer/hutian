@@ -593,6 +593,19 @@
           nix-lint = lint.nix;
           inherit (lint) liquid sandboxClosure sandboxSource;
 
+          # Build and run the user-path benchmarks. Keep the per-benchmark
+          # budget short and the target deviation loose so `nix flake check`
+          # stays a smoke test; run `cabal bench` for precise numbers.
+          benchmark =
+            pkgs.haskell.lib.overrideCabal (pkgs.haskellPackages.callCabal2nix "hutian-shell" self { })
+              (_: {
+                doBenchmark = true;
+                doCheck = false;
+                postInstall = ''
+                  ./dist/build/hutian-shell-bench/hutian-shell-bench --timeout=2 --stdev=15
+                '';
+              });
+
           configuration = check "configuration" (
             map (pattern: contains pattern probeLauncher) [
               "--llama-url"

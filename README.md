@@ -387,6 +387,39 @@ verifies the pure modules `Hutian.Ansi`, `Hutian.Cli`, `Hutian.Command`,
 
 The package uses `GHC2021` and compiles with strict warnings and `-Werror`.
 
+### Benchmarks
+
+`nix build .#checks.x86_64-linux.benchmark` builds and runs the `tasty-bench`
+suite in `bench/`, which covers the paths a session actually exercises:
+
+- a complete model reply streamed through the real Markdown and ANSI presenter,
+  once as a first token and once as 2000 token-sized pieces, written and flushed
+  like the console;
+- a shell result through the captured path (64 KiB, 256 KiB, and 1 MiB) that
+  goes to the model, and through the streamed 1 MiB term-mode path;
+- Markdown and syntax highlighting, SSE parsing, editor and prompt keystrokes,
+  the redraw layout for a 500-line prompt, and the startup PATH scan behind Tab
+  completion.
+
+Each reported time is one run. For the streaming cases, divide the chunk count
+by the time to get tokens per second. Save runs to compare them:
+
+```console
+$ cabal bench --benchmark-options='--timeout=5 --csv=bench.csv'
+```
+
+`scripts/bench.sh` measures the layers tasty-bench cannot reach. `hyperfine`
+times gVisor startup and one-shot commands, and an Expect script drives the
+interactive TUI through a real pty to report startup-to-prompt and
+keystroke-echo latency. Both tools are fetched through Nix when they are not
+installed. Set `HUTIAN_TUI_RUNS` to change the number of pty runs (default 3):
+
+```console
+$ scripts/bench.sh
+```
+
+Add `+RTS -s` to any Hutian run to print allocation and GC statistics.
+
 ## Requirements
 
 - Linux with unprivileged user namespaces enabled.

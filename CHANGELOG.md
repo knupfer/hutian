@@ -5,6 +5,19 @@ All notable changes to Hutian are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A `tasty-bench` suite for the paths a session exercises: a full model reply
+  streamed through the Markdown/ANSI presenter (including a 2000-chunk fast
+  decode), a 1 MiB shell result through the captured and streamed output paths,
+  highlighting, SSE parsing, editor and prompt reducers, redraw layout, and the
+  startup PATH scan (`bench/`, `nix build .#checks.<system>.benchmark`).
+- `scripts/bench.sh` measures real sandbox startup and one-shot commands with
+  `hyperfine`, then drives the interactive TUI through a pty with `expect` for
+  startup-to-prompt and keystroke-echo latency.
+- The executables now accept RTS options, so `+RTS -s` prints allocation and GC
+  statistics.
+
 ## [0.11.0.0] - 2026-11-24
 
 ### Added

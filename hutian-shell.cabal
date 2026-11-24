@@ -32,6 +32,7 @@ common defaults
       -Wredundant-strictness-flags
       -Wunused-packages
       -threaded
+      -rtsopts
 
 common dependencies
   build-depends:
@@ -184,3 +185,17 @@ test-suite hutian-shell-test
     , text
     , unix
     , vector
+
+benchmark hutian-shell-bench
+  import:           defaults
+  type:             exitcode-stdio-1.0
+  main-is:          BenchMain.hs
+  hs-source-dirs:   bench
+  build-depends:
+      base
+    , bytestring
+    , containers
+    , hutian-shell
+    , network
+    , tasty-bench
+    , text
