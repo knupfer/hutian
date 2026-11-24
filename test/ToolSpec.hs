@@ -22,6 +22,7 @@ import Hutian.Jobs
   , maxJobOutputLines
   )
 import Hutian.Jobs.Runtime (withJobRuntime)
+import Hutian.Json (jsonText)
 import Hutian.Context (TurnContext (..))
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool
@@ -231,6 +232,9 @@ tests =
           @?= PlanRefuse "tool error: the MCP tool arguments must be a JSON object"
         planToolWith mcpToolsConfig (ToolCall "call-1" "mcp__demo__search" "")
           @?= PlanExecute RunNow (CallMcp demoServer demoSearch (object []))
+    , testCase "MCP arguments keep non-ASCII text when displayed" $
+        jsonText (object ["path" .= ("R\225quira" :: String)])
+          @?= "{\"path\":\"R\225quira\"}"
     , testCase "MCP tool definitions carry the server name" $ do
         let definitions =
               LBS8.unpack (Aeson.encode (toolDefinitionsFor mcpToolsConfig))

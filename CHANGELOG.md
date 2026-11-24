@@ -29,6 +29,8 @@ All notable changes to Hutian are documented here. The format follows
 
 ### Fixed
 
+- MCP tool arguments are rendered as UTF-8 text, so accented characters no
+  longer appear as mojibake in the tool-input block.
 - An unreadable job log is reported as an error instead of appearing empty.
 - JSON tool-call indices and MCP response ids reject fractional and
   out-of-range numbers.

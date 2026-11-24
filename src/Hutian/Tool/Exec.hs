@@ -34,10 +34,9 @@ import Hutian.Conversation
   , appendToolResult
   )
 import Control.Monad (when)
-import qualified Data.Aeson as Aeson
-import qualified Data.ByteString.Lazy.Char8 as LBS8
 import Hutian.Context (TurnContext (MainContext))
 import Hutian.Highlight (sanitizeOutput)
+import Hutian.Json (jsonText)
 import Hutian.Jobs
   ( Job
   , Truncation (..)
@@ -328,7 +327,7 @@ runToolCall planner runtime conversation call =
       consoleWriteToolTextIn
         context
         (mcpToolDisplayName (mcpServerNameOf server) (mcpToolName tool))
-        (LBS8.unpack (Aeson.encode arguments))
+        (jsonText arguments)
 
 -- | Run a command the model is already allowed to execute and display it.
 executeShellTool :: Visibility -> FilePath -> String -> IO (Either String String)
