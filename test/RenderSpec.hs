@@ -151,7 +151,7 @@ tests =
         toolLabelTextIn (subagentContext MainContext "cheap") "jobs"
           @?= dimBlueForeground ++ "cheap.jobs" ++ reset
         outputForegroundIn (subagentContext MainContext "cheap") ToolOutput @?= dimBlueForeground
-        outputLabelTextIn (subagentContext MainContext "cheap") "shell" ToolOutput True
+        outputLabelTextIn (subagentContext MainContext "cheap") "shell" ToolOutput
           @?= dimBlueForeground ++ "cheap.shell.output" ++ reset
     , testCase "subagent MCP tool arguments are dim and highlighted" $ do
         let output =
@@ -188,22 +188,17 @@ tests =
     , testCase "output labels are dimmed versions of the mode colours" $ do
         outputForegroundIn MainContext TermOutput @?= "\ESC[1;38;2;153;12;88m"
         outputForegroundIn MainContext ToolOutput @?= "\ESC[1;38;2;0;153;120m"
-        outputLabelTextIn MainContext "shell" TermOutput True
+        outputLabelTextIn MainContext "shell" TermOutput
           @?= outputForegroundIn MainContext TermOutput ++ "shell.output" ++ reset
-        outputLabelTextIn MainContext "webfetch" ToolOutput True
+        outputLabelTextIn MainContext "webfetch" ToolOutput
           @?= outputForegroundIn MainContext ToolOutput ++ "webfetch.output" ++ reset
-        outputBlockLabelTextIn MainContext ToolOutput "mcp.demo.search.handler" True
+        outputBlockLabelTextIn MainContext ToolOutput "mcp.demo.search.handler"
           @?= dimTealForeground ++ "mcp.demo.search.handler" ++ reset
-        outputBlockLabelTextIn (subagentContext MainContext "cheap") ToolOutput "mcp.demo.search.handler" True
+        outputBlockLabelTextIn (subagentContext MainContext "cheap") ToolOutput "mcp.demo.search.handler"
           @?= dimBlueForeground ++ "mcp.demo.search.handler" ++ reset
         assertBool
           "shell and tool labels differ"
           (outputForegroundIn MainContext TermOutput /= outputForegroundIn MainContext ToolOutput)
-    , testCase "output labels are plain when not interactive" $ do
-        outputLabelTextIn MainContext "shell" TermOutput False @?= "shell.output"
-        outputLabelTextIn MainContext "webfetch" ToolOutput False @?= "webfetch.output"
-        outputBlockLabelTextIn MainContext ToolOutput "mcp.demo.search.handler" False
-          @?= "mcp.demo.search.handler"
     , testCase "reasoning, answer, and tool labels are dim blue for a subagent" $ do
         reasoningLabelText MainContext @?= dimTealForeground ++ "think" ++ reset
         reasoningLabelText (subagentContext MainContext "cheap")

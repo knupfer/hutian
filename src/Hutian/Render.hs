@@ -309,17 +309,16 @@ outputForegroundIn :: TurnContext -> OutputKind -> String
 outputForegroundIn _ TermOutput = dimPinkForeground
 outputForegroundIn context ToolOutput = dimForegroundFor context
 
--- | The label printed above captured output, coloured when interactive. The
--- tool path makes the label match the input prompt that caused the output.
-outputLabelTextIn :: TurnContext -> String -> OutputKind -> Bool -> String
+-- | The label printed above captured output. The tool path makes the label
+-- match the input prompt that caused the output.
+outputLabelTextIn :: TurnContext -> String -> OutputKind -> String
 outputLabelTextIn context toolPath kind =
   outputBlockLabelTextIn context kind (pathPrefix context ++ toolPath ++ ".output")
 
--- | An output-style label for arbitrary text, coloured when interactive.
-outputBlockLabelTextIn :: TurnContext -> OutputKind -> String -> Bool -> String
-outputBlockLabelTextIn context kind label interactive
-  | interactive = outputForegroundIn context kind ++ label ++ reset
-  | otherwise = label
+-- | An output-style label for arbitrary text.
+outputBlockLabelTextIn :: TurnContext -> OutputKind -> String -> String
+outputBlockLabelTextIn context kind label =
+  outputForegroundIn context kind ++ label ++ reset
 
 -- | Wrap captured output in gray when it is going to a terminal.
 grayOutputText :: Bool -> String -> String

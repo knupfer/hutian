@@ -142,10 +142,15 @@ runBatchInput env prompt = do
   let runtime = toolRuntime env MainContext
   (_, result) <-
     runModelTurn env (envSettings env) runtime emptyConversation prompt
-  pure $
-    case llmResponseText result of
-      Just answer -> Right answer
-      Nothing -> Left "hutian: the model returned no answer"
+  pure (finalAnswer "hutian: the model returned no answer" result)
+
+-- | The answer text of a finished turn, or the caller's message when the model
+-- produced none.
+finalAnswer :: String -> LlmResult -> Either String String
+finalAnswer missing result =
+  case llmResponseText result of
+    Just answer -> Right answer
+    Nothing -> Left missing
 
 -- | Send one prompt, then run the tool/continuation loop until the model
 -- answers. Returns the updated conversation and the result that ended the turn.
@@ -160,25 +165,19 @@ runModelTurn
   -> IO (Conversation, LlmResult)
 runModelTurn env settings runtime conversation prompt = do
   let output = llmOutputFor runtime
+      loop =
+        LlmLoop
+          { loopRunTools = runToolCallsWith runtime (settingTools settings)
+          , loopContinue =
+              runLlmContinuation output (envInterrupt env) settings
+          }
   result <-
     runLlmWithTools output (envInterrupt env) settings conversation prompt
   runToolLoopWithResult
-    (llmLoop env settings runtime)
+    loop
     (envInterrupt env)
     (appendResult (Just prompt) (llmResponseText result) (llmToolCalls result) conversation)
     result
-
--- | Bind the loop's effects to the real executor and model client.
-llmLoop :: RuntimeEnv -> LlmSettings -> ToolRuntime -> LlmLoop
-llmLoop env settings runtime =
-  LlmLoop
-    { loopRunTools = runToolCallsWith runtime (settingTools settings)
-    , loopContinue =
-        runLlmContinuation
-          (llmOutputFor runtime)
-          (envInterrupt env)
-          settings
-    }
 
 -- | The runtime for one model turn. Subagents reuse the same API, settings,
 -- job runtime, and interrupt flag, but substitute their own model, system
@@ -276,10 +275,7 @@ runAgent env parent presentation agentName agent prompt = do
       runtime
       emptyConversation
       prompt
-  pure $
-    case llmResponseText finalResult of
-      Just answer -> Right answer
-      Nothing -> Left "tool error: the subagent returned no answer"
+  pure (finalAnswer "tool error: the subagent returned no answer" finalResult)
 
 -- | The output sink for one runtime, so the initial request and every
 -- continuation use the same palette and verbosity. The presentation event is

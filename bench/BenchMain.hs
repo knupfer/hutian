@@ -48,7 +48,6 @@ import Hutian.Llm
   , LlmUrl (..)
   , ModelName (..)
   , SystemPrompt (..)
-  , apiFor
   , runLlm
   )
 import Hutian.Llm.Stream (ToolCallDelta (..), mergeToolCallDeltas, parseStreamLine)
@@ -285,7 +284,6 @@ settingsFor :: Int -> LlmSettings
 settingsFor port =
   LlmSettings
     { settingUrl = url
-    , settingApi = apiFor url
     , settingModel = ModelName "bench-model"
     , settingSystemPrompt = SystemPrompt "bench system prompt"
     , settingSocket = Nothing

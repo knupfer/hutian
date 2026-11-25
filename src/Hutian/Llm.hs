@@ -9,7 +9,6 @@ module Hutian.Llm
   , module Hutian.Llm.Settings
   , module Hutian.Llm.Stream
   , LlmOutput (..)
-  , loadLlmSettings
   , loadLlmLaunch
   , runLlm
   , runLlmWithTools
@@ -72,14 +71,9 @@ data LlmOutput = LlmOutput
   , llmOutputVerbosity :: Verbosity
   }
 
--- | Load settings, including file-backed model and system-prompt values. The
--- files are removed before parsing succeeds so they are gone before the shell
--- can run a command.
-loadLlmSettings :: [String] -> IO (Either String LlmSettings)
-loadLlmSettings = loadLlmWith parseLlmSettingsWithFiles
-
--- | Load settings and the positional prompt arguments. Positional arguments
--- after the options become the batch-mode user message.
+-- | Load settings and the positional prompt arguments. File-backed model and
+-- system-prompt values are read and removed before parsing succeeds, so they
+-- are gone before the shell can run a command.
 loadLlmLaunch :: [String] -> IO (Either String (LlmSettings, [String]))
 loadLlmLaunch = loadLlmWith parseLlmLaunchWithFiles
 

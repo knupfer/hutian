@@ -31,7 +31,6 @@ testSettings :: Api -> ToolCatalog -> String -> String -> LlmSettings
 testSettings api tools model systemPrompt =
   LlmSettings
     { settingUrl = LlmUrl url
-    , settingApi = api
     , settingModel = ModelName model
     , settingSystemPrompt = SystemPrompt systemPrompt
     , settingSocket = Nothing
@@ -75,7 +74,6 @@ unitTests =
           @?= Right
             ( LlmSettings
                 (LlmUrl "http://127.0.0.1:8080/v1/chat/completions")
-                (apiFor (LlmUrl "http://127.0.0.1:8080/v1/chat/completions"))
                 (ModelName "test-model")
                 (SystemPrompt "system rules")
                 Nothing
@@ -91,7 +89,7 @@ unitTests =
           , ""
           ]
           @?= Right
-            (LlmSettings (LlmUrl "http://example.test/completion") (apiFor (LlmUrl "http://example.test/completion")) (ModelName "m") (SystemPrompt "") Nothing VerbosityHigh (shellTools ToolDeny))
+            (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt "") Nothing VerbosityHigh (shellTools ToolDeny))
     , testCase "parseLlmLaunchWithFiles returns positional prompt arguments" $ do
         let base =
               [ "--llama-url"
@@ -142,7 +140,6 @@ unitTests =
           @?= Right
             ( LlmSettings
                 (LlmUrl "http://example.test/v1/chat/completions")
-                (apiFor (LlmUrl "http://example.test/v1/chat/completions"))
                 (ModelName "m")
                 (SystemPrompt "system rules")
                 (Just "/run/hutian/llm.sock")
@@ -166,14 +163,13 @@ unitTests =
           @?= Right
             ( LlmSettings
                 (LlmUrl "http://example.test/v1/chat/completions")
-                (apiFor (LlmUrl "http://example.test/v1/chat/completions"))
                 (ModelName "file-model")
                 (SystemPrompt "file rules")
                 Nothing
                 VerbosityHigh
                 (shellTools ToolDeny)
             )
-    , testCase "loadLlmSettings removes the model and prompt files" $ do
+    , testCase "loadLlmLaunch removes the model and prompt files" $ do
         temporary <- getTemporaryDirectory
         (modelPath, modelHandle) <- openTempFile temporary "hutian-model"
         hPutStr modelHandle "file-model"
@@ -182,7 +178,7 @@ unitTests =
         hPutStr promptHandle "file rules"
         hClose promptHandle
         result <-
-          loadLlmSettings
+          loadLlmLaunch
             [ "--llama-url"
             , "http://example.test/v1/chat/completions"
             , "--model-file"
@@ -192,11 +188,10 @@ unitTests =
             , "--verbosity"
             , "high"
             ]
-        result
+        fmap fst result
           @?= Right
             ( LlmSettings
                 (LlmUrl "http://example.test/v1/chat/completions")
-                (apiFor (LlmUrl "http://example.test/v1/chat/completions"))
                 (ModelName "file-model")
                 (SystemPrompt "file rules")
                 Nothing
@@ -227,7 +222,6 @@ unitTests =
           @?= Right
             ( LlmSettings
                 (LlmUrl "http://example.test/v1/chat/completions")
-                (apiFor (LlmUrl "http://example.test/v1/chat/completions"))
                 (ModelName "m")
                 (SystemPrompt "")
                 Nothing
@@ -292,7 +286,6 @@ unitTests =
               Right
                 ( LlmSettings
                     (LlmUrl "http://example.test/v1/chat/completions")
-                    (apiFor (LlmUrl "http://example.test/v1/chat/completions"))
                     (ModelName "m")
                     (SystemPrompt "")
                     Nothing
@@ -594,7 +587,6 @@ prop_parseSettings model systemPrompt =
     === Right
       ( LlmSettings
           (LlmUrl urlText)
-          (apiFor (LlmUrl urlText))
           (ModelName modelText)
           (SystemPrompt systemPrompt)
           Nothing
@@ -620,7 +612,6 @@ prop_parseSettingsWithSocket model systemPrompt socket =
     === Right
       ( LlmSettings
           (LlmUrl urlText)
-          (apiFor (LlmUrl urlText))
           (ModelName modelText)
           (SystemPrompt systemPrompt)
           (Just socketText)

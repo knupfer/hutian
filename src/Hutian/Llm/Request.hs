@@ -25,6 +25,7 @@ import Hutian.Llm.Settings
   , LlmSettings (..)
   , ModelName (..)
   , SystemPrompt (..)
+  , apiFor
   )
 import Hutian.Tool (toolDefinitionsFor)
 import Hutian.Tool.Catalog (ToolCatalog)
@@ -50,7 +51,7 @@ continuationBodyFor settings conversation =
 -- system prompt always come from the same settings value.
 bodyFor :: LlmSettings -> [ChatMessage] -> String -> Aeson.Value
 bodyFor settings messages completionText =
-  case settingApi settings of
+  case apiFor (settingUrl settings) of
     ChatApi ->
       chatBody (settingTools settings) (settingModel settings) messages
     CompletionApi ->

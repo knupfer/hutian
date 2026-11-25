@@ -2,6 +2,11 @@
 
 -- | The single boundary for terminal IO: writes, attributes, cursor styling,
 -- and size. Other modules build strings and call these functions.
+--
+-- Presentation functions may assume stdout is a terminal: batch mode routes
+-- presentation through the silent "Hutian.Output" instead of calling them.
+-- Diagnostics keep their own stderr checks so a plain error still works when
+-- stderr is redirected.
 module Hutian.Console
   ( configureConsole
   , confirmToolApproval
@@ -46,7 +51,6 @@ import qualified Data.Text as Text
 import Foreign.Marshal.Alloc (allocaBytes)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Hutian.Highlight (sanitize, sanitizeOutput)
-import Hutian.Context (pathPrefix)
 import Hutian.Markdown
   ( MarkdownFlavor (..)
   , finishMarkdownWith
@@ -181,61 +185,42 @@ consoleWidth = do
 -- subagent's tools use the subagent blue instead of the main tool teal.
 consoleWriteToolCommandIn :: TurnContext -> String -> String -> IO ()
 consoleWriteToolCommandIn context toolName command = do
-  interactive <- consoleIsInteractive
-  if interactive
-    then do
-      width <- consoleWidth
-      consoleWrite (toolPromptTextIn context (sanitize toolName) width command)
-    else consoleWriteLine (sanitizeOutput command)
+  width <- consoleWidth
+  consoleWrite (toolPromptTextIn context (sanitize toolName) width command)
   consoleFlush
 
 -- | Show a tool call whose argument is data, such as MCP JSON arguments.
 consoleWriteToolTextIn :: TurnContext -> String -> String -> IO ()
 consoleWriteToolTextIn context toolName text = do
-  interactive <- consoleIsInteractive
-  if interactive
-    then do
-      width <- consoleWidth
-      consoleWrite (toolTextPromptTextIn context (sanitize toolName) width text)
-    else consoleWriteLine (sanitizeOutput text)
+  width <- consoleWidth
+  consoleWrite (toolTextPromptTextIn context (sanitize toolName) width text)
   consoleFlush
 
 -- | Show a tool call that has no command of its own.
 consoleWriteToolLabelIn :: TurnContext -> String -> IO ()
 consoleWriteToolLabelIn context toolName = do
-  interactive <- consoleIsInteractive
-  let name = sanitize toolName
-  consoleWriteLine $
-    if interactive
-      then toolLabelTextIn context name
-      else pathPrefix context ++ name
+  consoleWriteLine (toolLabelTextIn context (sanitize toolName))
   consoleFlush
 
 -- | Announce the subagent and the task prompt it was given. The label is the
--- full dotted path, blue when output goes to a terminal and plain otherwise.
+-- full dotted path.
 consoleWriteSubagentPrompt :: String -> String -> IO ()
 consoleWriteSubagentPrompt label prompt = do
-  interactive <- consoleIsInteractive
-  let safeLabel = sanitize label
-      task = sanitize prompt
-  if interactive
-    then do
-      width <- consoleWidth
-      consoleWrite (subagentPromptText safeLabel width task)
-    else consoleWrite (safeLabel ++ "\n" ++ task ++ taskNewline)
+  width <- consoleWidth
+  consoleWrite
+    ( subagentPromptText
+        (sanitize label)
+        width
+        (sanitizeOutput prompt)
+    )
   consoleFlush
-  where
-    taskNewline
-      | null prompt = ""
-      | otherwise = "\n"
 
 -- | Show a result handler's prompt as a tool-output block: a dim label and,
 -- when visible, the body in gray. The caller applies the verbosity policy.
 consoleWriteHandlerPromptIn :: TurnContext -> String -> Bool -> String -> IO ()
 consoleWriteHandlerPromptIn context label showBody prompt = do
-  interactive <- consoleIsInteractive
   consoleWriteLine $
-    outputBlockLabelTextIn context ToolOutput (sanitize label) interactive
+    outputBlockLabelTextIn context ToolOutput (sanitize label)
   when (showBody && not (null prompt)) $
     withGrayOutput
       ( consoleWrite (trailingNewline (sanitizeOutput prompt))
@@ -248,16 +233,7 @@ consoleWriteHandlerPromptIn context label showBody prompt = do
 consoleWriteSystemPrompt :: TurnContext -> String -> IO ()
 consoleWriteSystemPrompt _ "" = pure ()
 consoleWriteSystemPrompt context prompt = do
-  interactive <- consoleIsInteractive
-  let body = sanitizeOutput prompt
-  if interactive
-    then consoleWrite (systemPromptText context body)
-    else
-      consoleWrite
-        ( pathPrefix context
-            ++ "system\n"
-            ++ trailingNewline body
-        )
+  consoleWrite (systemPromptText context (sanitizeOutput prompt))
   consoleFlush
 
 -- | Show the tool definitions sent with the request in high verbosity as one
@@ -265,19 +241,11 @@ consoleWriteSystemPrompt context prompt = do
 consoleWriteToolDefinitions :: TurnContext -> [String] -> IO ()
 consoleWriteToolDefinitions _ [] = pure ()
 consoleWriteToolDefinitions context summaries = do
-  interactive <- consoleIsInteractive
-  let source = sanitizeOutput (intercalate "\n" summaries)
-      body
-        | interactive = renderedMarkdown source
-        | otherwise = source
-  if interactive
-    then consoleWrite (toolsPromptText context body)
-    else
-      consoleWrite
-        ( pathPrefix context
-            ++ "tools\n"
-            ++ trailingNewline body
-        )
+  consoleWrite
+    ( toolsPromptText
+        context
+        (renderedMarkdown (sanitizeOutput (intercalate "\n" summaries)))
+    )
   consoleFlush
 
 -- | Render Markdown with the same dim palette as thinking blocks.
@@ -297,8 +265,7 @@ renderedMarkdown source =
 -- the terminal sees exactly one colour sequence and one reset.
 consoleWriteGrayLine :: String -> IO ()
 consoleWriteGrayLine message = do
-  interactive <- consoleIsInteractive
-  consoleWriteLine (grayOutputText interactive (sanitize message))
+  consoleWriteLine (grayOutputText True (sanitize message))
   consoleFlush
 
 -- | The result line shown after the options are removed.
@@ -369,8 +336,7 @@ drainChunk = 4096
 
 printOutputLabelIn :: TurnContext -> String -> OutputKind -> IO ()
 printOutputLabelIn context toolPath kind = do
-  interactive <- consoleIsInteractive
-  consoleWriteLine (outputLabelTextIn context toolPath kind interactive)
+  consoleWriteLine (outputLabelTextIn context toolPath kind)
   consoleFlush
 
 -- | Print streamed output in gray, restoring the terminal afterwards. When

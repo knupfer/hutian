@@ -73,7 +73,6 @@ import Hutian.Web (fetchResultText, fetchUrl)
 import Hutian.Verbosity
   ( RenderMode (..)
   , Verbosity (..)
-  , Visibility
   , outputBodyVisible
   , renderMode
   )
@@ -211,15 +210,15 @@ runToolCall planner runtime conversation call =
     confirmAction action =
       case action of
         RunShell _ command ->
-          outputToolCommand output context (toolCallName call) command
+          outputConfirmToolCommand output context (toolCallName call) command
         FetchUrl url ->
-          outputToolCommand output context "webfetch" url
+          outputConfirmToolCommand output context "webfetch" url
         CallMcp server tool arguments -> do
           showMcpCall server tool arguments
-          outputApproval output
+          outputConfirmApproval output
         KillJob {} -> do
           present (PresentToolLabel context "job_kill")
-          outputApproval output
+          outputConfirmApproval output
         _ -> pure ToolApproved
 
     deniedMessage action =
@@ -247,7 +246,7 @@ runToolCall planner runtime conversation call =
           finish
             =<< executeShellTool
               output
-              toolOutput
+              (outputBodyVisible toolOutput)
               workingDirectory
               command
         Background -> do
@@ -336,16 +335,14 @@ runToolCall planner runtime conversation call =
 -- | Run a command the model is already allowed to execute and display it.
 executeShellTool
   :: Output
-  -> Visibility
+  -> Bool
   -> FilePath
   -> String
   -> IO (Either String String)
-executeShellTool output toolOutput workingDirectory command = do
+executeShellTool output showOutput workingDirectory command = do
   result <- runShellCommandCaptured workingDirectory command
   case result of
     Left message -> pure (Left message)
     Right captured -> do
-      when
-        (outputBodyVisible toolOutput)
-        (outputPresent output (PresentCapturedOutput captured))
+      when showOutput (outputPresent output (PresentCapturedOutput captured))
       pure (Right (capturedOutputText captured))

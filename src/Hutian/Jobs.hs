@@ -15,7 +15,7 @@ module Hutian.Jobs
   , jobListResult
   , Truncation (..)
   , jobOutputResult
-  , jobOutputTruncationNote
+  , jobOutputBlock
   , JobActivity (..)
   , jobKillResult
   , LineCount
@@ -114,6 +114,12 @@ jobListResult :: [Job] -> String
 jobListResult [] = "no background jobs"
 jobListResult jobs = intercalate "\n" (map jobSummaryLine jobs)
 
+-- | Whether a log tail was cut off at the start.
+data Truncation
+  = OutputTruncated
+  | OutputComplete
+  deriving stock (Eq, Show)
+
 jobOutputResult :: Job -> String -> Truncation -> String
 jobOutputResult job output truncation =
   "job "
@@ -121,8 +127,13 @@ jobOutputResult job output truncation =
     ++ " "
     ++ jobStatusText (jobStatus job)
     ++ "\n"
-    ++ truncationNote
-    ++ body
+    ++ jobOutputBlock output truncation
+
+-- | The truncation note and log body, ending with a newline. Shared by the
+-- model-facing result and the terminal display.
+jobOutputBlock :: String -> Truncation -> String
+jobOutputBlock output truncation =
+  truncationNote ++ body
   where
     truncationNote =
       case truncation of
@@ -132,12 +143,6 @@ jobOutputResult job output truncation =
       | null output = "(no output)\n"
       | "\n" `isSuffixOf` output = output
       | otherwise = output ++ "\n"
-
--- | Whether a log tail was cut off at the start.
-data Truncation
-  = OutputTruncated
-  | OutputComplete
-  deriving stock (Eq, Show)
 
 jobOutputTruncationNote :: String
 jobOutputTruncationNote = "[output truncated; showing the most recent lines]"

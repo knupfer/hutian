@@ -38,16 +38,15 @@ import Hutian.Context (TurnContext)
 import Hutian.Highlight (sanitizeOutput, sanitizeOutputBytes)
 import Hutian.Jobs
   ( Job
-  , Truncation (..)
+  , Truncation
   , jobListResult
-  , jobOutputTruncationNote
+  , jobOutputBlock
   )
 import Hutian.Render
   ( OutputKind
   , ToolApproval (..)
   , grayOutputBytes
   , grayOutputText
-  , trailingNewline
   , trailingNewlineBytes
   )
 import Hutian.Shell (CapturedOutput (..))
@@ -76,8 +75,8 @@ data OutputEvent
 data Output = Output
   { outputPresent :: OutputEvent -> IO ()
   , outputSubagentCursor :: forall a. IO a -> IO a
-  , outputToolCommand :: TurnContext -> String -> String -> IO ToolApproval
-  , outputApproval :: IO ToolApproval
+  , outputConfirmToolCommand :: TurnContext -> String -> String -> IO ToolApproval
+  , outputConfirmApproval :: IO ToolApproval
   }
 
 -- | Draw every event on the terminal and ask the user for approvals.
@@ -86,8 +85,8 @@ interactiveOutput =
   Output
     { outputPresent = presentInteractive
     , outputSubagentCursor = withSubagentCursor
-    , outputToolCommand = confirmToolCommandIn
-    , outputApproval = confirmToolApproval
+    , outputConfirmToolCommand = confirmToolCommandIn
+    , outputConfirmApproval = confirmToolApproval
     }
 
 -- | Ignore every event and deny approval questions. Used by one-turn batch
@@ -97,8 +96,8 @@ silentOutput =
   Output
     { outputPresent = const (pure ())
     , outputSubagentCursor = id
-    , outputToolCommand = \_ _ _ -> pure ToolDenied
-    , outputApproval = pure ToolDenied
+    , outputConfirmToolCommand = \_ _ _ -> pure ToolDenied
+    , outputConfirmApproval = pure ToolDenied
     }
 
 presentInteractive :: OutputEvent -> IO ()
@@ -157,11 +156,6 @@ displayCapturedOutput captured = do
 displayJobOutput :: String -> Truncation -> IO ()
 displayJobOutput output truncation = do
   interactive <- consoleIsInteractive
-  let note =
-        case truncation of
-          OutputTruncated -> jobOutputTruncationNote ++ "\n"
-          OutputComplete -> ""
-      body = if null output then "(no output)\n" else output
-      text = trailingNewline (sanitizeOutput (note ++ body))
-  consoleWrite (grayOutputText interactive text)
+  consoleWrite
+    (grayOutputText interactive (sanitizeOutput (jobOutputBlock output truncation)))
   consoleFlush

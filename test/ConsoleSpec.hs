@@ -98,14 +98,14 @@ tests =
           assertBool
             "headings use the dim Markdown palette"
             ("38;2;82;108;150" `isInfixOf` output)
-    , testCase "a subagent prompt shows its name above the task" $
+    , testCase "a subagent prompt keeps the task's line structure" $
         withPseudoTerminalOutput $ \readOutput -> do
-          consoleWriteSubagentPrompt "cheap" "summarize this"
+          consoleWriteSubagentPrompt "cheap" "line one\nline two"
           output <- readOutput
           let plain = filter (/= '\r') (stripAnsi output)
           assertBool
             "the label sits above the task"
-            ("cheap\nsummarize this" `isInfixOf` plain)
+            ("cheap\nline one\nline two" `isInfixOf` plain)
     , testCase "a result prompt uses the tool-output style" $
         withPseudoTerminalOutput $ \readOutput -> do
           consoleWriteHandlerPromptIn

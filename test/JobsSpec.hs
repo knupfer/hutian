@@ -66,6 +66,12 @@ pureTests =
         jobOutputResult runningJob "hello\n" OutputTruncated
           @?= "job 1 running\n[output truncated; showing the most recent lines]\nhello\n"
         jobOutputResult runningJob "" OutputComplete @?= "job 1 running\n(no output)\n"
+    , testCase "the shared output block always ends with a newline" $ do
+        jobOutputBlock "hello\n" OutputComplete @?= "hello\n"
+        jobOutputBlock "hello" OutputComplete @?= "hello\n"
+        jobOutputBlock "" OutputComplete @?= "(no output)\n"
+        jobOutputBlock "hello" OutputTruncated
+          @?= "[output truncated; showing the most recent lines]\nhello\n"
     , testCase "a kill result distinguishes stopped, finished, and stubborn jobs" $ do
         jobKillResult JobAlreadyFinished finishedJob @?= "job 1 already finished: signal 15"
         jobKillResult JobWasRunning finishedJob @?= "job 1 stopped: signal 15"

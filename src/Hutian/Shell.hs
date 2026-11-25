@@ -4,15 +4,11 @@
 -- to the caller; captured output is returned as data.
 module Hutian.Shell
   ( CapturedOutput (..)
-  , CommandResult (CommandResult, commandStdout, commandStderr)
   , capturedOutputText
-  , commandResultText
   , executableCommands
   , runShellCommand
   , runShellCommandCaptured
-  , runShellCommandOutput
   , runShellCommandStreaming
-  , shellExitSuffix
   , shellProcess
   ) where
 
@@ -50,14 +46,6 @@ import System.Process
   , proc
   , waitForProcess
   )
-
--- | The result of a command whose output was captured.
-data CommandResult = CommandResult
-  { commandExitCode :: ExitCode
-  , commandStdout :: String
-  , commandStderr :: String
-  }
-  deriving stock (Eq, Show)
 
 -- | Captured output before UTF-8 decoding. Keeping bytes lets a caller format
 -- large results for the terminal without a 'String' round trip, and decode only
@@ -211,18 +199,6 @@ copyChunkBytes = 4096
 copyPollMicros :: Int
 copyPollMicros = 20000
 
--- | Run a command and capture its output for the model.
-runShellCommandOutput :: FilePath -> String -> IO (Either String CommandResult)
-runShellCommandOutput workingDirectory line =
-  fmap (fmap toCommandResult) (runShellCommandCaptured workingDirectory line)
-  where
-    toCommandResult captured =
-      CommandResult
-        { commandExitCode = capturedExitCode captured
-        , commandStdout = decodeUtf8Lenient (capturedStdout captured)
-        , commandStderr = decodeUtf8Lenient (capturedStderr captured)
-        }
-
 -- | Run a shell action, turning a synchronous IO failure into a message for
 -- the model. Every shell entry point reports failures the same way.
 shellFailure :: IO (Either String a) -> IO (Either String a)
@@ -237,13 +213,6 @@ shellFailure action =
 shellProcess :: FilePath -> String -> CreateProcess
 shellProcess workingDirectory line =
   (proc "/bin/sh" ["-c", line]) { cwd = Just workingDirectory }
-
--- | The text sent back to the model for a captured command.
-commandResultText :: CommandResult -> String
-commandResultText result =
-  commandStdout result
-    ++ commandStderr result
-    ++ shellExitSuffix (commandExitCode result)
 
 -- | The trailing text that reports a non-zero command exit status.
 shellExitSuffix :: ExitCode -> String

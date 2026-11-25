@@ -46,7 +46,6 @@ import Hutian.Verbosity (Verbosity (..), verbosityFromArgument)
 -- | Connection settings supplied by the launcher.
 data LlmSettings = LlmSettings
   { settingUrl :: LlmUrl
-  , settingApi :: Api
   , settingModel :: ModelName
   , settingSystemPrompt :: SystemPrompt
   , settingSocket :: Maybe FilePath
@@ -57,8 +56,8 @@ data LlmSettings = LlmSettings
   }
   deriving stock (Eq, Show)
 
--- | Which llama.cpp endpoint the URL names. The value is computed once while
--- parsing instead of on every request.
+-- | Which llama.cpp endpoint the URL names. Derived from the URL wherever the
+-- request shape is chosen, so the settings cannot hold a mismatched API.
 data Api
   = ChatApi
   | CompletionApi
@@ -94,7 +93,7 @@ parseLlmSettings :: [String] -> Either String LlmSettings
 parseLlmSettings = parseLlmSettingsWithFiles []
 
 -- | Parse settings with already-loaded contents for the file-backed options.
--- 'Hutian.Llm.loadLlmSettings' reads and removes the files before calling this
+-- 'Hutian.Llm.loadLlmLaunch' reads and removes the files before calling this
 -- function so the contents never appear in the process listing.
 parseLlmSettingsWithFiles :: [(FilePath, String)] -> [String] -> Either String LlmSettings
 parseLlmSettingsWithFiles loaded arguments = do
@@ -277,7 +276,7 @@ settingsFrom url model systemPrompt socket verbosity tools = do
   validateLlmUrl url
   validateNonEmpty "--model" (unModelName model)
   maybe (Right ()) (validateNonEmpty "--llama-socket") socket
-  pure (LlmSettings url (apiFor url) model systemPrompt socket verbosity (toolCatalog tools))
+  pure (LlmSettings url model systemPrompt socket verbosity (toolCatalog tools))
   where
     validateNonEmpty name value
       | null value = Left ("empty value for " ++ name ++ "\n" ++ llmUsage)

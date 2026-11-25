@@ -2,19 +2,14 @@ module ShellSpec (tests) where
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
-import Data.List (isInfixOf)
 import Hutian.Highlight (sanitizeOutputBytes)
 import Hutian.Shell
   ( CapturedOutput (..)
-  , CommandResult (..)
   , capturedOutputText
-  , commandResultText
   , executableCommands
   , runShellCommand
   , runShellCommandCaptured
-  , runShellCommandOutput
   , runShellCommandStreaming
-  , shellExitSuffix
   )
 import System.Directory
   ( Permissions (..)
@@ -46,17 +41,6 @@ tests =
         contents <- readFile path
         contents @?= "hello"
         removeFile path
-    , testCase "runShellCommandOutput captures output and exit status" $ do
-        hello <- runShellCommandOutput "/" "printf hello"
-        case hello of
-          Left message -> assertFailure message
-          Right output -> commandResultText output @?= "hello"
-        failed <- runShellCommandOutput "/" "printf bad >&2; exit 3"
-        case failed of
-          Left message -> assertFailure message
-          Right output -> do
-            assertBool "stderr should be captured" ("bad" `isInfixOf` commandResultText output)
-            assertBool "exit status should be reported" ("[exit 3]" `isInfixOf` commandResultText output)
     , testCase "runShellCommandCaptured keeps bytes and decodes them once" $ do
         result <- runShellCommandCaptured "/" "printf out; printf err >&2; exit 3"
         case result of
@@ -96,19 +80,15 @@ tests =
           Just (failure, output, _) -> do
             failure @?= Right ()
             output @?= BS8.pack "done"
-    , testCase "commandResultText appends stderr and exit status in order" $ do
-        commandResultText (CommandResult ExitSuccess "out" "err") @?= "outerr"
-        commandResultText (CommandResult (ExitFailure 3) "out" "err")
-          @?= "outerr\n[exit 3]\n"
     , testCase "commands cannot change the parent working directory" $
         withTemporaryDirectory "hutian-shell-cd" $ \directory -> do
           original <- getCurrentDirectory
           _ <- runShellCommand original ("cd " ++ directory)
-          output <- runShellCommandOutput original ("cd " ++ directory)
+          output <- runShellCommandCaptured original ("cd " ++ directory)
           changed <- getCurrentDirectory
           case output of
             Left message -> assertFailure message
-            Right result -> commandResultText result @?= ""
+            Right captured -> capturedOutputText captured @?= ""
           changed @?= original
     , testCase "executableCommands includes PATH entries without duplicates" $
         withTemporaryDirectory "hutian-shell-path" $ \directory -> do
@@ -120,9 +100,6 @@ tests =
             commands <- executableCommands
             assertBool "custom command missing" ("test-command" `elem` commands)
             commands @?= ["test-command"]
-    , testCase "shellExitSuffix reports only failures" $ do
-        shellExitSuffix ExitSuccess @?= ""
-        shellExitSuffix (ExitFailure 3) @?= "\n[exit 3]\n"
     ]
 
 shellQuote :: String -> String

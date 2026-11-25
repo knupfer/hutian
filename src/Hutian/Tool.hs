@@ -483,14 +483,11 @@ mcpArguments :: ToolCall -> Either String Value
 mcpArguments call
   | all isSpace (toolCallArguments call) = Right (object [])
   | otherwise =
-      case
-          Aeson.decodeStrict'
-            (TextEncoding.encodeUtf8 (Text.pack (toolCallArguments call)))
-        of
-          Just value@(Object _) -> Right value
-          Just Null -> Right (object [])
-          Just _ -> Left "the MCP tool arguments must be a JSON object"
-          Nothing -> Left "the MCP tool arguments are not valid JSON"
+      case decodedArguments call of
+        Just value@(Object _) -> Right value
+        Just Null -> Right (object [])
+        Just _ -> Left "the MCP tool arguments must be a JSON object"
+        Nothing -> Left "the MCP tool arguments are not valid JSON"
 
 -- | Reject non-http URLs and whitespace before the HTTP client sees them.
 webUrl :: String -> Either String String
@@ -510,10 +507,15 @@ stringFrom name arguments =
     Just (String value) -> Right (Text.unpack value)
     _ -> Left ("missing string argument: " ++ name)
 
+decodedArguments :: ToolCall -> Maybe Value
+decodedArguments call =
+  Aeson.decodeStrict'
+    (TextEncoding.encodeUtf8 (Text.pack (toolCallArguments call)))
+
 argumentsObject :: ToolCall -> Either String (KeyMap Value)
 argumentsObject call =
-  case Aeson.eitherDecodeStrict' (TextEncoding.encodeUtf8 (Text.pack (toolCallArguments call))) of
-    Right (Object arguments) -> Right arguments
+  case decodedArguments call of
+    Just (Object arguments) -> Right arguments
     _ -> Left "tool arguments are not a JSON object"
 
 jobIdFrom :: KeyMap Value -> Either String JobId

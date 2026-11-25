@@ -14,7 +14,6 @@ import Hutian.Completion (CompletionKind (..), chooseCompletion)
 import Hutian.Console
   ( consoleFlush
   , consoleInputReady
-  , consoleIsInteractive
   , consoleWidth
   , consoleWrite
   , consoleWriteLine
@@ -59,7 +58,8 @@ data PromptContext = PromptContext
   , contextHistory :: History
   }
 
--- | Read one prompt as raw terminal input.
+-- | Read one prompt as raw terminal input. Callers must only use this when
+-- stdin and stdout are terminals; the launch mode selection guarantees that.
 --
 -- Returns the mode that was active when the prompt finished, together with
 -- 'Nothing' when the user presses @Ctrl+D@ on empty input and 'Just' the
@@ -76,19 +76,18 @@ promptForInput
   -> PromptBuffers
   -> IO (InputMode, Maybe String, PromptBuffers)
 promptForInput workingDirectory commands mode history buffers = do
-  interactive <- consoleIsInteractive
   let context =
         PromptContext
           { contextCommands = commands
           , contextHistory = history
           }
   withRawTerminal $ do
-    when interactive startPromptLine
-    readPrompt workingDirectory interactive context (initialPromptState mode buffers)
+    startPromptLine
+    readPrompt workingDirectory context (initialPromptState mode buffers)
 
-readPrompt :: FilePath -> Bool -> PromptContext -> PromptState -> IO (InputMode, Maybe String, PromptBuffers)
-readPrompt workingDirectory interactive context state = do
-  position <- renderPrompt interactive 0 state
+readPrompt :: FilePath -> PromptContext -> PromptState -> IO (InputMode, Maybe String, PromptBuffers)
+readPrompt workingDirectory context state = do
+  position <- renderPrompt 0 state
   loop position state
   where
     loop position currentState = do
@@ -111,12 +110,13 @@ readPrompt workingDirectory interactive context state = do
           completed <- completeInput workingDirectory (contextCommands context) current
           readNext displayedPosition logicalPosition True (acceptCompletion completed next)
         StepFinish outcome prompt next -> do
-          finishPrompt interactive (promptMode next) (fst displayedPosition) prompt
+          finishPrompt (promptMode next) (fst displayedPosition) prompt
           case outcome of
             PromptSubmitted ->
               pure (promptMode next, Just (promptText prompt), promptBuffers next)
             PromptExited -> do
-              when interactive (consoleWriteLine "" >> consoleFlush)
+              consoleWriteLine ""
+              consoleFlush
               pure (promptMode next, Nothing, promptBuffers next)
 
     readNext displayedPosition logicalPosition redraw currentState = do
@@ -126,7 +126,7 @@ readPrompt workingDirectory interactive context state = do
         else
           if redraw
             then do
-              nextPosition <- renderPrompt interactive (fst displayedPosition) currentState
+              nextPosition <- renderPrompt (fst displayedPosition) currentState
               loop nextPosition currentState
             else do
               when (logicalPosition /= displayedPosition) (writeCursorMove displayedPosition logicalPosition)
@@ -206,33 +206,28 @@ readSs3 =
 readChar :: IO (Either IOException Char)
 readChar = try getChar
 
-renderPrompt :: Bool -> Int -> PromptState -> IO (Int, Int)
-renderPrompt interactive previousRow state =
+renderPrompt :: Int -> PromptState -> IO (Int, Int)
+renderPrompt previousRow state =
   renderFrame
-    interactive
     (promptKindFor (promptMode state))
     previousRow
     (activePrompt (promptMode state) (promptBuffers state))
 
-renderFrame :: Bool -> PromptKind -> Int -> Prompt -> IO (Int, Int)
-renderFrame interactive kind previousRow prompt
-  | not interactive = pure (0, 0)
-  | otherwise = do
-      width <- consoleWidth
-      let (output, position) = promptRenderText kind previousRow width prompt
-      consoleWrite (syncStart ++ output ++ syncEnd)
-      consoleFlush
-      pure position
+renderFrame :: PromptKind -> Int -> Prompt -> IO (Int, Int)
+renderFrame kind previousRow prompt = do
+  width <- consoleWidth
+  let (output, position) = promptRenderText kind previousRow width prompt
+  consoleWrite (syncStart ++ output ++ syncEnd)
+  consoleFlush
+  pure position
 
-finishPrompt :: Bool -> InputMode -> Int -> Prompt -> IO ()
-finishPrompt interactive mode previousRow prompt
-  | not interactive = pure ()
-  | otherwise = do
-      let finished = cursorToEnd (clearSuggestions prompt)
-      _ <- renderFrame True (promptKindFor mode) previousRow finished
-      consoleWrite reset
-      unless (null (currentLine finished)) (consoleWrite "\n")
-      consoleFlush
+finishPrompt :: InputMode -> Int -> Prompt -> IO ()
+finishPrompt mode previousRow prompt = do
+  let finished = cursorToEnd (clearSuggestions prompt)
+  _ <- renderFrame (promptKindFor mode) previousRow finished
+  consoleWrite reset
+  unless (null (currentLine finished)) (consoleWrite "\n")
+  consoleFlush
 
 escape :: Char
 escape = '\ESC'
