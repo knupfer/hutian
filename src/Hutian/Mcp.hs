@@ -5,7 +5,10 @@
 -- tool calls use the session id from that handshake.
 module Hutian.Mcp
   ( discoverMcpServers
+  , McpSessionCache
+  , newMcpSessionCache
   , callMcpTool
+  , callMcpToolWithSessions
   ) where
 
 import Control.Applicative ((<|>))
@@ -13,6 +16,7 @@ import Data.Aeson (Value (..))
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.List (intercalate, isInfixOf)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -68,17 +72,10 @@ discoverServer report config
   | mcpServerPolicy config == ToolDeny = pure (emptyServer config)
   | otherwise = do
       manager <- newManager tlsManagerSettings
-      initialized <-
-        postMcp manager config Nothing 1 (mcpInitializeRequest 1)
+      initialized <- initializeServer manager config
       case initialized of
         Left failure -> reportFailure failure >> pure (emptyServer config)
-        Right (session, _) -> do
-          _ <-
-            postNotification
-              manager
-              config
-              session
-              mcpInitializedNotification
+        Right session -> do
           listed <-
             postMcp manager config session 2 (mcpListToolsRequest 2)
           case listed of
@@ -98,6 +95,22 @@ discoverServer report config
   where
     reportFailure failure =
       report ("mcp " ++ mcpServerName config ++ ": " ++ mcpErrorText failure)
+
+-- | Initialize one server and send the initialized notification. Returns the
+-- session id the server assigned, if any.
+initializeServer :: Manager -> McpServerConfig -> IO (Either McpError (Maybe McpSessionId))
+initializeServer manager config = do
+  initialized <- postMcp manager config Nothing 1 (mcpInitializeRequest 1)
+  case initialized of
+    Left failure -> pure (Left failure)
+    Right (session, _) -> do
+      _ <-
+        postNotification
+          manager
+          config
+          session
+          mcpInitializedNotification
+      pure (Right session)
 
 emptyServer :: McpServerConfig -> McpServer
 emptyServer config = McpServer config [] Nothing
@@ -154,20 +167,80 @@ reportDuplicate report config tool =
         ++ " has the same API name as an earlier tool; only the first is advertised"
     )
 
--- | Call one discovered MCP tool and format its content as tool output.
+-- | The latest session id for each server URL. A server may close an idle
+-- session, so recovery replaces the stale id for every later call instead of
+-- re-initializing on each tool call.
+newtype McpSessionCache = McpSessionCache (IORef (Map.Map String (Maybe McpSessionId)))
+
+newMcpSessionCache :: IO McpSessionCache
+newMcpSessionCache = McpSessionCache <$> newIORef Map.empty
+
+sessionKey :: McpServer -> String
+sessionKey = mcpServerUrl . mcpServerConfig
+
+lookupMcpSession :: McpSessionCache -> McpServer -> IO (Maybe McpSessionId)
+lookupMcpSession (McpSessionCache cache) server = do
+  sessions <- readIORef cache
+  pure
+    ( Map.findWithDefault
+        (mcpServerSession server)
+        (sessionKey server)
+        sessions
+    )
+
+storeMcpSession :: McpSessionCache -> McpServer -> Maybe McpSessionId -> IO ()
+storeMcpSession (McpSessionCache cache) server session =
+  modifyIORef' cache (Map.insert (sessionKey server) session)
+
+-- | Call one discovered MCP tool with a fresh, non-persistent session cache.
+-- Callers that make several tool calls should keep an 'McpSessionCache' and use
+-- 'callMcpToolWithSessions'.
 callMcpTool :: McpServer -> McpTool -> Value -> IO (Either McpError String)
 callMcpTool server tool arguments = do
+  cache <- newMcpSessionCache
+  callMcpToolWithSessions cache server tool arguments
+
+-- | Call one discovered MCP tool and format its content as tool output. A
+-- Streamable HTTP server answers 404 after it closes an idle session; in that
+-- case a new handshake replaces the cached session and the call is retried once.
+callMcpToolWithSessions
+  :: McpSessionCache
+  -> McpServer
+  -> McpTool
+  -> Value
+  -> IO (Either McpError String)
+callMcpToolWithSessions cache server tool arguments = do
   manager <- newManager tlsManagerSettings
-  result <-
-    postMcp
-      manager
-      (mcpServerConfig server)
-      (mcpServerSession server)
-      1
-      (mcpCallToolRequest 1 (mcpToolName tool) arguments)
-  pure $ do
-    (_, value) <- result
-    mcpToolResultText value
+  session <- lookupMcpSession cache server
+  first <- postMcp manager config session 1 request
+  case first of
+    Left failure
+      | Just _ <- session
+      , expiredSession failure -> do
+          refreshed <- initializeServer manager config
+          case refreshed of
+            Left _ -> pure (Left failure)
+            Right newSession -> do
+              storeMcpSession cache server newSession
+              retried <- postMcp manager config newSession 1 request
+              case retried of
+                Left retryFailure -> pure (Left retryFailure)
+                Right (session', value) ->
+                  finish (session' <|> newSession) value
+    Left failure -> pure (Left failure)
+    Right (session', value) -> finish (session' <|> session) value
+  where
+    config = mcpServerConfig server
+    request = mcpCallToolRequest 1 (mcpToolName tool) arguments
+
+    finish session value = do
+      storeMcpSession cache server session
+      pure (mcpToolResultText value)
+
+    -- The MCP Streamable HTTP transport requires a client to start a new
+    -- session when a request that carried a session id gets 404 Not Found.
+    expiredSession (McpHttpError 404 _) = True
+    expiredSession _ = False
 
 -- * HTTP transport
 

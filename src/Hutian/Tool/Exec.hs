@@ -54,7 +54,7 @@ import Hutian.Jobs.Runtime
   , readJobOutput
   , startJob
   )
-import Hutian.Mcp (callMcpTool)
+import Hutian.Mcp (McpSessionCache, callMcpToolWithSessions, newMcpSessionCache)
 import Hutian.Mcp.Protocol (mcpErrorText, mcpToolDisplayName)
 import Hutian.Policy (ToolPolicy)
 import Hutian.Render
@@ -107,6 +107,7 @@ data ToolRuntime = ToolRuntime
   , toolRuntimeWorkingDirectory :: FilePath
   , toolRuntimeContext :: TurnContext
   , toolRuntimeVerbosity :: Verbosity
+  , toolRuntimeMcpSessions :: McpSessionCache
   , toolRuntimeSubagent :: SubagentConfig -> String -> IO (Either String String)
   , toolRuntimeHandler :: String -> String -> HandlerConfig -> String -> IO (Either String String)
   }
@@ -114,7 +115,8 @@ data ToolRuntime = ToolRuntime
 -- | Run each requested call in order with a shell-only policy. This preserves
 -- the shell tool entry point used by tests and direct callers.
 runToolCalls :: JobRuntime -> FilePath -> ToolPolicy -> Conversation -> [ToolCall] -> IO (ToolRun, Conversation)
-runToolCalls jobs workingDirectory policy =
+runToolCalls jobs workingDirectory policy conversation calls = do
+  mcpSessions <- newMcpSessionCache
   runToolCallsPlanned
     (planTool policy)
     ToolRuntime
@@ -122,11 +124,14 @@ runToolCalls jobs workingDirectory policy =
       , toolRuntimeWorkingDirectory = workingDirectory
       , toolRuntimeContext = MainContext
       , toolRuntimeVerbosity = VerbosityHigh
+      , toolRuntimeMcpSessions = mcpSessions
       , toolRuntimeSubagent = \_ _ ->
           pure (Left "tool error: the model subagent tool is disabled")
       , toolRuntimeHandler = \_ _ _ _ ->
           pure (Left "tool error: the model result handler is disabled")
       }
+    conversation
+    calls
 
 -- | Run each requested call in order using the full tool configuration. Once a
 -- call aborts the turn, the remaining calls get an error result instead of
@@ -314,7 +319,12 @@ runToolCall planner runtime conversation call =
           displayName = mcpToolDisplayName serverName localName
           handlerConfig =
             handlerConfigFor localName (mcpServerHandlersOf server)
-      result <- callMcpTool server tool arguments
+      result <-
+        callMcpToolWithSessions
+          (toolRuntimeMcpSessions runtime)
+          server
+          tool
+          arguments
       case result of
         Left failure -> finishError (mcpErrorText failure)
         Right text -> do

@@ -30,6 +30,7 @@ import Hutian.Llm
   , SystemPrompt (..)
   , loadLlmSettings
   )
+import Hutian.Mcp (newMcpSessionCache)
 import Hutian.Session
   ( Session (..)
   , SessionEffects (..)
@@ -64,9 +65,17 @@ main = do
       commands <- executableCommands
       interruptFlag <- newInterruptFlag
       installInterruptHandler interruptFlag
+      mcpSessions <- newMcpSessionCache
       directory <- jobDirectory
       withJobRuntime directory workingDirectory $ \jobs -> do
-        let env = RuntimeEnv workingDirectory jobs settings interruptFlag
+        let env =
+              RuntimeEnv
+                { envWorkingDirectory = workingDirectory
+                , envJobs = jobs
+                , envSettings = settings
+                , envInterrupt = interruptFlag
+                , envMcpSessions = mcpSessions
+                }
             session =
               Session
                 { sessionMode = LlmInput

@@ -27,6 +27,12 @@ All notable changes to Hutian are documented here. The format follows
   block is labeled `mcp.<server>.<tool>.handler` and its prompts extend that
   path, instead of `mcp.<server>.handlers.<tool>`.
 
+### Fixed
+
+- An MCP server that closes an idle session no longer makes every later tool
+  call fail with `HTTP 404: Not Found: Session not found`. Hutian starts a new
+  session and retries the call once, then reuses that session for later calls.
+
 ## [0.11.0.0] - 2026-11-24
 
 ### Added

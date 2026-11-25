@@ -11,7 +11,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.Char (toLower)
 import Data.Either (fromRight)
-import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (isInfixOf)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe)
@@ -22,7 +22,12 @@ import Hutian.Conversation
   , emptyConversation
   )
 import Hutian.Jobs.Runtime (withJobRuntime)
-import Hutian.Mcp (callMcpTool, discoverMcpServers)
+import Hutian.Mcp
+  ( callMcpTool
+  , callMcpToolWithSessions
+  , discoverMcpServers
+  , newMcpSessionCache
+  )
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Catalog
   ( McpServer (..)
@@ -114,6 +119,42 @@ tests =
                 (\body -> "tools/call" `isInfixOf` BS8.unpack body && "Mcp-Session-Id: test-session" `isInfixOf` BS8.unpack body)
                 bodies
             )
+    , testCase "an expired MCP session is re-established and cached" $
+        withExpiringMcpUpstream $ \port requests -> do
+          let server =
+                McpServerConfig
+                  { mcpServerName = "demo"
+                  , mcpServerUrl = "http://127.0.0.1:" ++ show port ++ "/mcp"
+                  , mcpServerPolicy = ToolAllow
+                  , mcpHandlers = HandlerConfigs Map.empty
+                  }
+          discovered <- discoverMcpServers (\_ -> pure ()) [server]
+          cache <- newMcpSessionCache
+          case discovered of
+            [discoveredServer] ->
+              case mcpServerTools discoveredServer of
+                searchTool : _ -> do
+                  let arguments = object ["query" .= ("haskell" :: String)]
+                  callMcpToolWithSessions cache discoveredServer searchTool arguments
+                    >>= (@?= Right "Found results")
+                  callMcpToolWithSessions cache discoveredServer searchTool arguments
+                    >>= (@?= Right "Found results")
+                  bodies <- reverse <$> readIORef requests
+                  let initializeBodies =
+                        filter
+                          ("\"method\":\"initialize\"" `isInfixOf`)
+                          (map BS8.unpack bodies)
+                      newSessionCalls =
+                        filter
+                          ( \body ->
+                              "tools/call" `isInfixOf` body
+                                && "Mcp-Session-Id: session-2" `isInfixOf` body
+                          )
+                          (map BS8.unpack bodies)
+                  length initializeBodies @?= 2
+                  length newSessionCalls @?= 2
+                [] -> assertFailure "discovery returned no tools"
+            _ -> assertFailure "discovery did not return exactly one server"
     , testCase "result handlers for unknown MCP tools are reported" $
         withMcpUpstream $ \port _ -> do
           let handler =
@@ -167,6 +208,7 @@ tests =
                       }
               discovered <- discoverMcpServers (\_ -> pure ()) [server]
               received <- newIORef Nothing
+              mcpSessions <- newMcpSessionCache
               withPseudoTerminalOutput $ \readOutput -> do
                 let runtime =
                       ToolRuntime
@@ -174,6 +216,7 @@ tests =
                         , toolRuntimeWorkingDirectory = directory
                         , toolRuntimeContext = MainContext
                         , toolRuntimeVerbosity = VerbosityNormal
+                        , toolRuntimeMcpSessions = mcpSessions
                         , toolRuntimeSubagent = \_ _ -> pure (Left "not configured")
                         , toolRuntimeHandler =
                             \_ _ _ raw -> do
@@ -232,12 +275,30 @@ withMcpUpstream action =
       listen listener 8
       port <- fromIntegral <$> socketPort listener
       requests <- newIORef []
-      _ <- forkIO $ serveMany listener requests 4
+      _ <- forkIO $ serveMany listener requests (pure . responseFor) 4
       pure (port, requests, listener)
     stop (_, _, listener) = close listener `catch` \(_ :: SomeException) -> pure ()
 
-serveMany :: Socket -> IORef [ByteString] -> Int -> IO ()
-serveMany listener requests = go
+withExpiringMcpUpstream :: (Int -> IORef [ByteString] -> IO a) -> IO a
+withExpiringMcpUpstream action =
+  bracket start stop $ \(port, requests, _) -> action port requests
+  where
+    start = do
+      listener <- socket AF_INET Stream defaultProtocol
+      setSocketOption listener ReuseAddr 1
+      bind listener (SockAddrInet 0 (tupleToHostAddress (127, 0, 0, 1)))
+      listen listener 8
+      port <- fromIntegral <$> socketPort listener
+      requests <- newIORef []
+      validSessions <- newIORef []
+      nextSession <- newIORef 0
+      let state = ExpiringMcpState validSessions nextSession
+      _ <- forkIO $ serveMany listener requests (responseForExpiring state) 16
+      pure (port, requests, listener)
+    stop (_, _, listener) = close listener `catch` \(_ :: SomeException) -> pure ()
+
+serveMany :: Socket -> IORef [ByteString] -> (ByteString -> IO ByteString) -> Int -> IO ()
+serveMany listener requests respond = go
   where
     go 0 = pure ()
     go remaining =
@@ -245,11 +306,79 @@ serveMany listener requests = go
           (connection, _) <- accept listener
           request <- readHttpRequest connection
           modifyIORef' requests (request :)
-          sendAll connection (responseFor request)
+          response <- respond request
+          sendAll connection response
           close connection
           go (remaining - 1)
       )
         `catch` \(_ :: SomeException) -> pure ()
+
+data ExpiringMcpState = ExpiringMcpState
+  { expiringSessions :: IORef [String]
+  , expiringNextSession :: IORef Int
+  }
+
+responseForExpiring :: ExpiringMcpState -> ByteString -> IO ByteString
+responseForExpiring state request
+  | "notifications/initialized" `BS.isInfixOf` request =
+      pure "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+  | "\"method\":\"initialize\"" `BS.isInfixOf` request = do
+      number <-
+        atomicModifyIORef'
+          (expiringNextSession state)
+          (\current -> (current + 1, current + 1))
+      let session = "session-" ++ show number
+      writeIORef (expiringSessions state) [session]
+      pure
+        ( sseResponseSession
+            (Just (BS8.pack session))
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"serverInfo\":{\"name\":\"fake\",\"version\":\"1\"}}}"
+        )
+  | "\"method\":\"tools/list\"" `BS.isInfixOf` request = do
+      valid <- requestHasValidSession state request
+      if valid
+        then do
+          -- Discovery completes and the server then drops the session, as it
+          -- would after the transport's idle timeout.
+          writeIORef (expiringSessions state) []
+          pure
+            ( sseResponseSession
+                Nothing
+                "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"search\",\"description\":\"Search.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}},\"required\":[\"query\"]}}]}}"
+            )
+        else pure notFoundResponse
+  | "\"method\":\"tools/call\"" `BS.isInfixOf` request = do
+      valid <- requestHasValidSession state request
+      if valid
+        then
+          pure
+            ( sseResponseSession
+                Nothing
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Found results\"}]}}"
+            )
+        else pure notFoundResponse
+  | otherwise = pure notFoundResponse
+
+requestHasValidSession :: ExpiringMcpState -> ByteString -> IO Bool
+requestHasValidSession state request = do
+  sessions <- readIORef (expiringSessions state)
+  pure
+    ( any
+        (\session -> ("Mcp-Session-Id: " <> BS8.pack session) `BS.isInfixOf` request)
+        sessions
+    )
+
+notFoundResponse :: ByteString
+notFoundResponse =
+  let body = "Not Found: Session not found"
+   in BS.concat
+        [ "HTTP/1.1 404 Not Found\r\n"
+        , "Content-Type: text/plain\r\n"
+        , "Content-Length: "
+        , BS8.pack (show (BS.length body))
+        , "\r\nConnection: close\r\n\r\n"
+        , body
+        ]
 
 responseFor :: ByteString -> ByteString
 responseFor request
@@ -271,11 +400,16 @@ responseFor request
       "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
 
 sseResponse :: Bool -> ByteString -> ByteString
-sseResponse withSession payload =
+sseResponse withSession =
+  sseResponseSession
+    (if withSession then Just "test-session" else Nothing)
+
+sseResponseSession :: Maybe ByteString -> ByteString -> ByteString
+sseResponseSession withSession payload =
   BS.concat
     [ "HTTP/1.1 200 OK\r\n"
     , "Content-Type: text/event-stream\r\n"
-    , if withSession then "Mcp-Session-Id: test-session\r\n" else ""
+    , maybe "" (\session -> "Mcp-Session-Id: " <> session <> "\r\n") withSession
     , "Connection: close\r\n\r\n"
     , "data: \nid: 0\nretry: 3000\n\n"
     , "event: message\n"

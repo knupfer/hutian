@@ -57,7 +57,7 @@ import Hutian.Llm
   , runLlmWithTools
   )
 import Hutian.Llm.Loop (LlmLoop (..), runToolLoopWithResult)
-import Hutian.Mcp (discoverMcpServers)
+import Hutian.Mcp (McpSessionCache, discoverMcpServers)
 import Hutian.Mcp.Protocol (mcpHandlerName)
 import Hutian.Render (OutputKind (..))
 import Hutian.Shell
@@ -94,6 +94,7 @@ data RuntimeEnv = RuntimeEnv
   , envJobs :: JobRuntime
   , envSettings :: LlmSettings
   , envInterrupt :: InterruptFlag
+  , envMcpSessions :: McpSessionCache
   }
 
 -- | How an agent's prompt is announced. Result handlers use tool-output
@@ -180,6 +181,7 @@ toolRuntime env context =
     , toolRuntimeWorkingDirectory = envWorkingDirectory env
     , toolRuntimeContext = context
     , toolRuntimeVerbosity = settingVerbosity (envSettings env)
+    , toolRuntimeMcpSessions = envMcpSessions env
     , toolRuntimeSubagent = runSubagent env context
     , toolRuntimeHandler = runResultHandler env context
     }

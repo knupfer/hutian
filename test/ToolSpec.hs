@@ -23,6 +23,7 @@ import Hutian.Jobs
   )
 import Hutian.Jobs.Runtime (withJobRuntime)
 import Hutian.Json (jsonText)
+import Hutian.Mcp (newMcpSessionCache)
 import Hutian.Context (TurnContext (..))
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool
@@ -281,12 +282,14 @@ tests =
         withTemporaryDirectory "hutian-verbosity" $ \directory ->
           withJobRuntime directory directory $ \jobs ->
             withPseudoTerminalOutput $ \readOutput -> do
+              mcpSessions <- newMcpSessionCache
               let runtime =
                     ToolRuntime
                       { toolRuntimeJobs = jobs
                       , toolRuntimeWorkingDirectory = directory
                       , toolRuntimeContext = MainContext
                       , toolRuntimeVerbosity = VerbosityNormal
+                      , toolRuntimeMcpSessions = mcpSessions
                       , toolRuntimeSubagent = \_ _ -> pure (Right "final answer\n")
                       , toolRuntimeHandler = \_ _ _ _ -> pure (Left "not configured")
                       }
