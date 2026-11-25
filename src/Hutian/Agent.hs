@@ -4,20 +4,9 @@
 -- interrupt flag through each function.
 module Hutian.Agent
   ( RuntimeEnv (..)
-  , PromptPresentation (..)
-  , discoverCatalog
   , discoverMcpSettings
   , runInput
-  , runLlmInput
   , runBatchInput
-  , runModelTurn
-  , toolRuntime
-  , runSubagent
-  , runResultHandler
-  , runAgent
-  , runTerminalInput
-  , runTerminalScript
-  , runStreamingCommand
   ) where
 
 import Control.Monad (when)
@@ -132,7 +121,13 @@ runLlmInput :: RuntimeEnv -> Conversation -> String -> IO Conversation
 runLlmInput env conversation prompt =
   withoutEcho $ withRespondingCursor $ do
     let runtime = toolRuntime env MainContext
-    fst <$> runModelTurn env (envSettings env) runtime conversation prompt
+    fst
+      <$> runModelTurn
+        (envInterrupt env)
+        (envSettings env)
+        runtime
+        conversation
+        prompt
 
 -- | Run one non-interactive turn and return only the main agent's final answer.
 -- The runtime suppresses reasoning, tool calls, and tool output, while errors
@@ -141,7 +136,12 @@ runBatchInput :: RuntimeEnv -> String -> IO (Either String String)
 runBatchInput env prompt = do
   let runtime = toolRuntime env MainContext
   (_, result) <-
-    runModelTurn env (envSettings env) runtime emptyConversation prompt
+    runModelTurn
+      (envInterrupt env)
+      (envSettings env)
+      runtime
+      emptyConversation
+      prompt
   pure (finalAnswer "hutian: the model returned no answer" result)
 
 -- | The answer text of a finished turn, or the caller's message when the model
@@ -157,25 +157,24 @@ finalAnswer missing result =
 -- The runtime context selects the output palette, so the initial request and
 -- every continuation always agree.
 runModelTurn
-  :: RuntimeEnv
+  :: InterruptFlag
   -> LlmSettings
   -> ToolRuntime
   -> Conversation
   -> String
   -> IO (Conversation, LlmResult)
-runModelTurn env settings runtime conversation prompt = do
+runModelTurn interrupt settings runtime conversation prompt = do
   let output = llmOutputFor runtime
       loop =
         LlmLoop
           { loopRunTools = runToolCallsWith runtime (settingTools settings)
-          , loopContinue =
-              runLlmContinuation output (envInterrupt env) settings
+          , loopContinue = runLlmContinuation output interrupt settings
           }
   result <-
-    runLlmWithTools output (envInterrupt env) settings conversation prompt
+    runLlmWithTools output interrupt settings conversation prompt
   runToolLoopWithResult
     loop
-    (envInterrupt env)
+    interrupt
     (appendResult (Just prompt) (llmResponseText result) (llmToolCalls result) conversation)
     result
 
@@ -270,7 +269,7 @@ runAgent env parent presentation agentName agent prompt = do
       outputPresent output (PresentHandlerPrompt parent childLabel showBody prompt)
   (_, finalResult) <-
     runModelTurn
-      childEnv
+      (envInterrupt childEnv)
       subagentSettings
       runtime
       emptyConversation
