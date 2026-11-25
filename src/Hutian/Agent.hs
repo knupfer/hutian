@@ -15,23 +15,16 @@ module Hutian.Agent
   , runSubagent
   , runResultHandler
   , runAgent
-  , consoleLlmOutputFor
   , runTerminalInput
   , runTerminalScript
   , runStreamingCommand
   ) where
 
-import Control.Monad (unless, when)
+import Control.Monad (when)
 import Hutian.Command (TerminalInput (..), classifyTerminalInput)
 import Hutian.Console
-  ( consoleFlush
-  , consoleIsInteractive
-  , consoleWrite
+  ( consoleIsInteractive
   , consoleWriteErrorLine
-  , consoleWriteHandlerPromptIn
-  , consoleWriteSubagentPrompt
-  , consoleWriteSystemPrompt
-  , consoleWriteToolDefinitions
   , printOutputLabelIn
   , withGrayOutput
   , withRespondingCursor
@@ -60,6 +53,7 @@ import Hutian.Llm
 import Hutian.Llm.Loop (LlmLoop (..), runToolLoopWithResult)
 import Hutian.Mcp (McpSessionCache, discoverMcpServers)
 import Hutian.Mcp.Protocol (mcpHandlerName)
+import Hutian.Output (Output (..), OutputEvent (..))
 import Hutian.Render (OutputKind (..))
 import Hutian.Shell
   ( runShellCommand
@@ -96,9 +90,8 @@ data RuntimeEnv = RuntimeEnv
   , envSettings :: LlmSettings
   , envInterrupt :: InterruptFlag
   , envMcpSessions :: McpSessionCache
-  -- | Batch mode runs one turn without presenting anything except the final
-  -- answer. Errors still go to stderr.
-  , envQuiet :: Bool
+  -- | How turns present their activity. Batch runs use the silent output.
+  , envOutput :: Output
   }
 
 -- | How an agent's prompt is announced. Result handlers use tool-output
@@ -198,7 +191,7 @@ toolRuntime env context =
     , toolRuntimeWorkingDirectory = envWorkingDirectory env
     , toolRuntimeContext = context
     , toolRuntimeVerbosity = settingVerbosity (envSettings env)
-    , toolRuntimeQuiet = envQuiet env
+    , toolRuntimeOutput = envOutput env
     , toolRuntimeMcpSessions = envMcpSessions env
     , toolRuntimeSubagent = runSubagent env context
     , toolRuntimeHandler = runResultHandler env context
@@ -260,19 +253,22 @@ runAgent env parent presentation agentName agent prompt = do
           }
       childEnv = env {envSettings = subagentSettings}
       runtime = toolRuntime childEnv childContext
-  unless (envQuiet env) $ do
-    when (settingVerbosity (envSettings env) == VerbosityHigh) $ do
-      consoleWriteSystemPrompt
-        childContext
-        (agentSystemPrompt agent)
-      consoleWriteToolDefinitions
-        childContext
-        (toolSummaryLines (toolDefinitionsFor (settingTools subagentSettings)))
-    case presentation of
-      SubagentPromptPresentation ->
-        consoleWriteSubagentPrompt childLabel prompt
-      HandlerPromptPresentation showBody ->
-        consoleWriteHandlerPromptIn parent childLabel showBody prompt
+      output = toolRuntimeOutput runtime
+  when (settingVerbosity (envSettings env) == VerbosityHigh) $ do
+    outputPresent
+      output
+      (PresentSystemPrompt childContext (agentSystemPrompt agent))
+    outputPresent
+      output
+      ( PresentToolDefinitions
+          childContext
+          (toolSummaryLines (toolDefinitionsFor (settingTools subagentSettings)))
+      )
+  case presentation of
+    SubagentPromptPresentation ->
+      outputPresent output (PresentSubagentPrompt childLabel prompt)
+    HandlerPromptPresentation showBody ->
+      outputPresent output (PresentHandlerPrompt parent childLabel showBody prompt)
   (_, finalResult) <-
     runModelTurn
       childEnv
@@ -286,27 +282,16 @@ runAgent env parent presentation agentName agent prompt = do
       Nothing -> Left "tool error: the subagent returned no answer"
 
 -- | The output sink for one runtime, so the initial request and every
--- continuation use the same palette and verbosity.
+-- continuation use the same palette and verbosity. The presentation event is
+-- routed through the runtime's output, which drops it in batch mode.
 llmOutputFor :: ToolRuntime -> LlmOutput
 llmOutputFor runtime =
-  consoleLlmOutputFor
-    (toolRuntimeQuiet runtime)
-    (toolRuntimeVerbosity runtime)
-    (toolRuntimeContext runtime)
-
--- | Stream LLM output through the terminal boundary, flushing each piece so a
--- response appears as it arrives. A quiet runtime drops the stream because the
--- caller only prints the final answer.
-consoleLlmOutputFor :: Bool -> Verbosity -> TurnContext -> LlmOutput
-consoleLlmOutputFor quiet verbosity context =
   LlmOutput
     { llmOutputWrite =
-        if quiet
-          then const (pure ())
-          else \text -> unless (null text) (consoleWrite text >> consoleFlush)
+        outputPresent (toolRuntimeOutput runtime) . PresentChunk
     , llmOutputErrorLine = consoleWriteErrorLine
-    , llmOutputContext = context
-    , llmOutputVerbosity = verbosity
+    , llmOutputContext = toolRuntimeContext runtime
+    , llmOutputVerbosity = toolRuntimeVerbosity runtime
     }
 
 runTerminalInput :: FilePath -> Conversation -> String -> IO Conversation

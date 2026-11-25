@@ -37,6 +37,7 @@ import Hutian.Llm
   , loadLlmLaunch
   )
 import Hutian.Mcp (newMcpSessionCache)
+import Hutian.Output (interactiveOutput, silentOutput)
 import Hutian.Render (trailingNewline)
 import Hutian.Session
   ( Session (..)
@@ -84,7 +85,8 @@ main = do
                 , envSettings = settings
                 , envInterrupt = interruptFlag
                 , envMcpSessions = mcpSessions
-                , envQuiet = not interactive
+                , envOutput =
+                    if interactive then interactiveOutput else silentOutput
                 }
         if interactive
           then runInteractive env

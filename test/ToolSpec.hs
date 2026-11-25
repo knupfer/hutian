@@ -24,6 +24,7 @@ import Hutian.Jobs
 import Hutian.Jobs.Runtime (withJobRuntime)
 import Hutian.Json (jsonText)
 import Hutian.Mcp (newMcpSessionCache)
+import Hutian.Output (interactiveOutput, silentOutput)
 import Hutian.Context (TurnContext (..))
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool
@@ -289,7 +290,7 @@ tests =
                       , toolRuntimeWorkingDirectory = directory
                       , toolRuntimeContext = MainContext
                       , toolRuntimeVerbosity = VerbosityHigh
-                      , toolRuntimeQuiet = True
+                      , toolRuntimeOutput = silentOutput
                       , toolRuntimeMcpSessions = mcpSessions
                       , toolRuntimeSubagent = \_ _ -> pure (Right "answer\n")
                       , toolRuntimeHandler = \_ _ _ _ -> pure (Left "not configured")
@@ -313,7 +314,7 @@ tests =
                       , toolRuntimeWorkingDirectory = directory
                       , toolRuntimeContext = MainContext
                       , toolRuntimeVerbosity = VerbosityNormal
-                      , toolRuntimeQuiet = False
+                      , toolRuntimeOutput = interactiveOutput
                       , toolRuntimeMcpSessions = mcpSessions
                       , toolRuntimeSubagent = \_ _ -> pure (Right "final answer\n")
                       , toolRuntimeHandler = \_ _ _ _ -> pure (Left "not configured")

@@ -86,6 +86,7 @@ library
       Hutian.Markdown
       Hutian.Mcp
       Hutian.Mcp.Protocol
+      Hutian.Output
       Hutian.Paths
       Hutian.Policy
       Hutian.Prompt

@@ -16,6 +16,7 @@ import Hutian.Conversation (ConversationEntry (..), ToolCall (..))
 import Hutian.Interrupt (newInterruptFlag)
 import Hutian.Jobs.Runtime (withJobRuntime)
 import Hutian.Mcp (newMcpSessionCache)
+import Hutian.Output (silentOutput)
 import Hutian.Llm
   ( LlmResult (..)
   , LlmSettings (..)
@@ -99,7 +100,7 @@ tests =
                     , envSettings = settingsFor port
                     , envInterrupt = flag
                     , envMcpSessions = mcpSessions
-                    , envQuiet = True
+                    , envOutput = silentOutput
                     }
             captured <-
               timeout 7000000 $

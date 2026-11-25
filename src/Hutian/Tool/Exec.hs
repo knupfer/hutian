@@ -9,42 +9,20 @@ module Hutian.Tool.Exec
   , runToolCallsWith
   ) where
 
-import Hutian.Console
-  ( confirmToolApproval
-  , confirmToolCommandIn
-  , consoleFlush
-  , consoleIsErrorInteractive
-  , consoleIsInteractive
-  , consoleWrite
-  , consoleWriteBytes
-  , consoleWriteErrorBytes
-  , consoleWriteErrorLine
-  , consoleWriteGrayLine
-  , consoleWriteLine
-  , consoleWriteToolCommandIn
-  , consoleWriteToolLabelIn
-  , consoleWriteToolTextIn
-  , printOutputLabelIn
-  , withGrayOutput
-  , withSubagentCursor
-  )
+import Hutian.Console (consoleWriteErrorLine)
 import Hutian.Conversation
   ( Conversation
   , ToolCall (..)
   , abortedToolMessage
   , appendToolResult
   )
-import Control.Monad (unless, when)
+import Control.Monad (when)
 import Hutian.Context (TurnContext (MainContext))
-import Hutian.Highlight (sanitizeOutput, sanitizeOutputBytes)
 import Hutian.Json (jsonText)
 import Hutian.Jobs
-  ( Job
-  , Truncation (..)
-  , jobKillResult
+  ( jobKillResult
   , jobListResult
   , jobOutputResult
-  , jobOutputTruncationNote
   , jobStartedLine
   )
 import Hutian.Jobs.Runtime
@@ -56,18 +34,19 @@ import Hutian.Jobs.Runtime
   )
 import Hutian.Mcp (McpSessionCache, callMcpToolWithSessions, newMcpSessionCache)
 import Hutian.Mcp.Protocol (mcpErrorText, mcpToolDisplayName)
+import Hutian.Output
+  ( Output (..)
+  , OutputEvent (..)
+  , interactiveOutput
+  )
 import Hutian.Policy (ToolPolicy)
 import Hutian.Render
   ( OutputKind (..)
   , ToolApproval (..)
-  , grayOutputBytes
-  , grayOutputText
   , trailingNewline
-  , trailingNewlineBytes
   )
 import Hutian.Shell
-  ( CapturedOutput (..)
-  , capturedOutputText
+  ( capturedOutputText
   , runShellCommandCaptured
   )
 import Hutian.Tool
@@ -94,7 +73,7 @@ import Hutian.Web (fetchResultText, fetchUrl)
 import Hutian.Verbosity
   ( RenderMode (..)
   , Verbosity (..)
-  , Visibility (..)
+  , Visibility
   , outputBodyVisible
   , renderMode
   )
@@ -107,9 +86,8 @@ data ToolRuntime = ToolRuntime
   , toolRuntimeWorkingDirectory :: FilePath
   , toolRuntimeContext :: TurnContext
   , toolRuntimeVerbosity :: Verbosity
-  -- | Suppress every presentation of the call and its result. Errors still go
-  -- to stderr.
-  , toolRuntimeQuiet :: Bool
+  -- | How calls, results, and approval questions are presented.
+  , toolRuntimeOutput :: Output
   , toolRuntimeMcpSessions :: McpSessionCache
   , toolRuntimeSubagent :: SubagentConfig -> String -> IO (Either String String)
   , toolRuntimeHandler :: String -> String -> HandlerConfig -> String -> IO (Either String String)
@@ -127,7 +105,7 @@ runToolCalls jobs workingDirectory policy conversation calls = do
       , toolRuntimeWorkingDirectory = workingDirectory
       , toolRuntimeContext = MainContext
       , toolRuntimeVerbosity = VerbosityHigh
-      , toolRuntimeQuiet = False
+      , toolRuntimeOutput = interactiveOutput
       , toolRuntimeMcpSessions = mcpSessions
       , toolRuntimeSubagent = \_ _ ->
           pure (Left "tool error: the model subagent tool is disabled")
@@ -172,9 +150,7 @@ runToolCall planner runtime conversation call =
       decision <-
         case approval of
           RunNow -> describeAction action >> pure ToolApproved
-          AskUser
-            | quiet -> pure ToolDenied
-            | otherwise -> confirmAction action
+          AskUser -> confirmAction action
       case decision of
         ToolApproved -> executeAction action
         ToolDenied -> refuse (deniedMessage action)
@@ -183,12 +159,11 @@ runToolCall planner runtime conversation call =
     jobs = toolRuntimeJobs runtime
     workingDirectory = toolRuntimeWorkingDirectory runtime
     context = toolRuntimeContext runtime
-    quiet = toolRuntimeQuiet runtime
+    output = toolRuntimeOutput runtime
     toolOutput =
       modeToolOutput (renderMode (toolRuntimeVerbosity runtime) context)
-    showOutputBody = not quiet && outputBodyVisible toolOutput
-    -- Batch mode has no terminal chrome, so it also skips the cursor scopes.
-    inSubagentCursor = if quiet then id else withSubagentCursor
+    showOutputBody = outputBodyVisible toolOutput
+    present = outputPresent output
 
     refuse message =
       pure (ToolsCompleted, appendToolResult (toolCallId call) message conversation)
@@ -211,7 +186,7 @@ runToolCall planner runtime conversation call =
         Nothing -> finishRaw raw
         Just config -> do
           result <-
-            inSubagentCursor
+            outputSubagentCursor output
               (toolRuntimeHandler runtime serverName toolName config raw)
           case result of
             Left message -> finishError message
@@ -221,31 +196,30 @@ runToolCall planner runtime conversation call =
     -- Show a call before it runs. Approval-capable actions show their own label
     -- inside 'confirmAction', so this only handles the immediate path.
     describeAction action =
-      unless quiet $
-        case action of
-          RunShell _ command ->
-            consoleWriteToolCommandIn context (toolCallName call) command
-          FetchUrl url ->
-            consoleWriteToolCommandIn context "webfetch" url
-          CallMcp server tool arguments ->
-            showMcpCall server tool arguments
-          ListJobs -> consoleWriteToolLabelIn context "jobs"
-          ReadJobOutput {} -> consoleWriteToolLabelIn context "job_output"
-          KillJob {} -> consoleWriteToolLabelIn context "job_kill"
-          RunSubagent {} -> pure ()
+      case action of
+        RunShell _ command ->
+          present (PresentToolCommand context (toolCallName call) command)
+        FetchUrl url ->
+          present (PresentToolCommand context "webfetch" url)
+        CallMcp server tool arguments ->
+          showMcpCall server tool arguments
+        ListJobs -> present (PresentToolLabel context "jobs")
+        ReadJobOutput {} -> present (PresentToolLabel context "job_output")
+        KillJob {} -> present (PresentToolLabel context "job_kill")
+        RunSubagent {} -> pure ()
 
     confirmAction action =
       case action of
         RunShell _ command ->
-          confirmToolCommandIn context (toolCallName call) command
+          outputToolCommand output context (toolCallName call) command
         FetchUrl url ->
-          confirmToolCommandIn context "webfetch" url
+          outputToolCommand output context "webfetch" url
         CallMcp server tool arguments -> do
           showMcpCall server tool arguments
-          confirmToolApproval
+          outputApproval output
         KillJob {} -> do
-          consoleWriteToolLabelIn context "job_kill"
-          confirmToolApproval
+          present (PresentToolLabel context "job_kill")
+          outputApproval output
         _ -> pure ToolApproved
 
     deniedMessage action =
@@ -269,65 +243,63 @@ runToolCall planner runtime conversation call =
     runPlanned mode command =
       case mode of
         Foreground -> do
-          unless quiet (printOutputLabelIn context (toolCallName call) ToolOutput)
+          present (PresentResultLabel context (toolCallName call) ToolOutput)
           finish
             =<< executeShellTool
-              (if quiet then LabelOnly else toolOutput)
+              output
+              toolOutput
               workingDirectory
               command
         Background -> do
-          unless quiet (printOutputLabelIn context (toolCallName call) ToolOutput)
+          present (PresentResultLabel context (toolCallName call) ToolOutput)
           result <- startJob jobs command
           case result of
             Left message -> finishError message
             Right job -> do
               let message = jobStartedLine job
-              when showOutputBody (consoleWriteGrayLine message)
+              when showOutputBody (present (PresentGrayLine message))
               finishRaw message
 
     runJobsTool = do
-      unless quiet $ do
-        consoleWriteToolLabelIn context "jobs"
-        printOutputLabelIn context "jobs" ToolOutput
+      present (PresentToolLabel context "jobs")
+      present (PresentResultLabel context "jobs" ToolOutput)
       current <- listJobs jobs
-      when showOutputBody (printJobRows current)
+      when showOutputBody (present (PresentJobList current))
       finishRaw (jobListResult current)
 
     runJobOutputTool target requestedLines = do
-      unless quiet $ do
-        consoleWriteToolLabelIn context "job_output"
-        printOutputLabelIn context "job_output" ToolOutput
+      present (PresentToolLabel context "job_output")
+      present (PresentResultLabel context "job_output" ToolOutput)
       result <- readJobOutput jobs target requestedLines
       case result of
         Left message -> finishError message
         Right (job, output', truncation) -> do
-          when showOutputBody (displayJobOutput output' truncation)
+          when showOutputBody (present (PresentJobLog output' truncation))
           finishRaw (jobOutputResult job output' truncation)
 
     runJobKillTool target = do
-      unless quiet $ do
-        consoleWriteToolLabelIn context "job_kill"
-        printOutputLabelIn context "job_kill" ToolOutput
+      present (PresentToolLabel context "job_kill")
+      present (PresentResultLabel context "job_kill" ToolOutput)
       result <- killJob jobs target
       case result of
         Left message -> finishError message
         Right (job, activity) -> do
           let message = jobKillResult activity job
-          when showOutputBody (consoleWriteGrayLine message)
+          when showOutputBody (present (PresentGrayLine message))
           finishRaw message
 
     runWebfetchTool url = do
-      unless quiet (printOutputLabelIn context "webfetch" ToolOutput)
+      present (PresentResultLabel context "webfetch" ToolOutput)
       result <- fetchUrl url
       case result of
         Left message -> finishError message
         Right fetched -> do
           let text = fetchResultText fetched
-          when showOutputBody (displayToolText text)
+          when showOutputBody (present (PresentTextBlock text))
           finishRaw text
 
     runSubagentTool agent prompt = do
-      result <- inSubagentCursor (toolRuntimeSubagent runtime agent prompt)
+      result <- outputSubagentCursor output (toolRuntimeSubagent runtime agent prompt)
       finish result
 
     runMcpTool server tool arguments = do
@@ -348,65 +320,32 @@ runToolCall planner runtime conversation call =
           let formatted = trailingNewline text
           case handlerConfig of
             Nothing -> do
-              unless quiet (printOutputLabelIn context displayName ToolOutput)
-              when showOutputBody (displayToolText formatted)
+              present (PresentResultLabel context displayName ToolOutput)
+              when showOutputBody (present (PresentTextBlock formatted))
             Just _ -> pure ()
           finishResult handlerConfig serverName localName formatted
 
     showMcpCall server tool arguments =
-      consoleWriteToolTextIn
-        context
-        (mcpToolDisplayName (mcpServerNameOf server) (mcpToolName tool))
-        (jsonText arguments)
+      present
+        ( PresentToolArguments
+            context
+            (mcpToolDisplayName (mcpServerNameOf server) (mcpToolName tool))
+            (jsonText arguments)
+        )
 
 -- | Run a command the model is already allowed to execute and display it.
-executeShellTool :: Visibility -> FilePath -> String -> IO (Either String String)
-executeShellTool toolOutput workingDirectory command = do
+executeShellTool
+  :: Output
+  -> Visibility
+  -> FilePath
+  -> String
+  -> IO (Either String String)
+executeShellTool output toolOutput workingDirectory command = do
   result <- runShellCommandCaptured workingDirectory command
   case result of
     Left message -> pure (Left message)
     Right captured -> do
-      when (outputBodyVisible toolOutput) (displayCapturedOutput captured)
+      when
+        (outputBodyVisible toolOutput)
+        (outputPresent output (PresentCapturedOutput captured))
       pure (Right (capturedOutputText captured))
-
--- | Display captured command output the same way it would appear if the command
--- had inherited the terminal. Bytes are sanitized and written directly, so a
--- large result is not copied through 'String'.
-displayCapturedOutput :: CapturedOutput -> IO ()
-displayCapturedOutput captured = do
-  stdoutInteractive <- consoleIsInteractive
-  stderrInteractive <- consoleIsErrorInteractive
-  consoleWriteBytes
-    ( grayOutputBytes
-        stdoutInteractive
-        (trailingNewlineBytes (sanitizeOutputBytes (capturedStdout captured)))
-    )
-  consoleWriteErrorBytes
-    ( grayOutputBytes
-        stderrInteractive
-        (trailingNewlineBytes (sanitizeOutputBytes (capturedStderr captured)))
-    )
-  consoleFlush
-
--- | Print a web or MCP result in the same muted style as other tool output.
-displayToolText :: String -> IO ()
-displayToolText text =
-  withGrayOutput (consoleWrite (sanitizeOutput text) >> consoleFlush)
-
--- | Print the job table in gray.
-printJobRows :: [Job] -> IO ()
-printJobRows current =
-  withGrayOutput (mapM_ (consoleWriteLine . sanitizeOutput) (lines (jobListResult current)))
-
--- | Print a job log tail, marking a truncated window at the top.
-displayJobOutput :: String -> Truncation -> IO ()
-displayJobOutput output truncation = do
-  interactive <- consoleIsInteractive
-  let note =
-        case truncation of
-          OutputTruncated -> jobOutputTruncationNote ++ "\n"
-          OutputComplete -> ""
-      body = if null output then "(no output)\n" else output
-      text = trailingNewline (sanitizeOutput (note ++ body))
-  consoleWrite (grayOutputText interactive text)
-  consoleFlush

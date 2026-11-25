@@ -28,6 +28,7 @@ import Hutian.Mcp
   , discoverMcpServers
   , newMcpSessionCache
   )
+import Hutian.Output (interactiveOutput)
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool.Catalog
   ( McpServer (..)
@@ -216,7 +217,7 @@ tests =
                         , toolRuntimeWorkingDirectory = directory
                         , toolRuntimeContext = MainContext
                         , toolRuntimeVerbosity = VerbosityNormal
-                        , toolRuntimeQuiet = False
+                        , toolRuntimeOutput = interactiveOutput
                         , toolRuntimeMcpSessions = mcpSessions
                         , toolRuntimeSubagent = \_ _ -> pure (Left "not configured")
                         , toolRuntimeHandler =
