@@ -9,6 +9,7 @@ module Hutian.Llm.Settings
   , LlmSettings (..)
   , parseLlmSettings
   , parseLlmSettingsWithFiles
+  , parseLlmLaunchWithFiles
   , llmFilePaths
   , urlPath
   ) where
@@ -29,7 +30,7 @@ import Hutian.Cli
   , optionSpecPairs
   , optionSpecText
   , optionValueFor
-  , parseOptions
+  , parseOptionsWithPositionals
   , requiredOption
   , usageLine
   )
@@ -97,38 +98,54 @@ parseLlmSettings = parseLlmSettingsWithFiles []
 -- function so the contents never appear in the process listing.
 parseLlmSettingsWithFiles :: [(FilePath, String)] -> [String] -> Either String LlmSettings
 parseLlmSettingsWithFiles loaded arguments = do
-  options <- appendUsage llmUsage (parseOptions llmOptionSpec arguments)
+  (settings, positionals) <- parseLlmLaunchWithFiles loaded arguments
+  case positionals of
+    [] -> Right settings
+    first : _ -> Left ("unknown argument: " ++ first ++ "\n" ++ llmUsage)
+
+-- | Parse settings and return the positional arguments that follow them. The
+-- launcher passes the first user message this way so batch mode needs no
+-- interactive prompt.
+parseLlmLaunchWithFiles
+  :: [(FilePath, String)]
+  -> [String]
+  -> Either String (LlmSettings, [String])
+parseLlmLaunchWithFiles loaded arguments = do
+  (options, positionals) <-
+    appendUsage llmUsage (parseOptionsWithPositionals llmOptionSpec arguments)
   let missingOption inline file =
         [inline | not (hasOption inline options || hasOption file options)]
       missing =
         missingOptions ["--llama-url", "--verbosity"] options
           ++ missingOption "--model" "--model-file"
           ++ missingOption "--system-prompt" "--system-prompt-file"
-  case missing of
-    [] -> do
-      url <- required "--llama-url" options
-      model <- valueOrFile "--model" "--model-file" options
-      systemPrompt <- valueOrFile "--system-prompt" "--system-prompt-file" options
-      verbosityValue <- required "--verbosity" options
-      verbosity <-
-        case verbosityFromArgument verbosityValue of
-          Just value -> Right value
-          Nothing ->
-            Left
-              ( "invalid value for --verbosity: "
-                  ++ verbosityValue
-                  ++ " (expected low, normal, or high)\n"
-                  ++ llmUsage
-              )
-      tools <- toolsOption options
-      settingsFrom
-        (LlmUrl url)
-        (ModelName model)
-        (SystemPrompt systemPrompt)
-        (optionValueFor "--llama-socket" options)
-        verbosity
-        tools
-    _ -> Left (missingOptionsMessage llmUsage missing)
+  settings <-
+    case missing of
+      [] -> do
+        url <- required "--llama-url" options
+        model <- valueOrFile "--model" "--model-file" options
+        systemPrompt <- valueOrFile "--system-prompt" "--system-prompt-file" options
+        verbosityValue <- required "--verbosity" options
+        verbosity <-
+          case verbosityFromArgument verbosityValue of
+            Just value -> Right value
+            Nothing ->
+              Left
+                ( "invalid value for --verbosity: "
+                    ++ verbosityValue
+                    ++ " (expected low, normal, or high)\n"
+                    ++ llmUsage
+                )
+        tools <- toolsOption options
+        settingsFrom
+          (LlmUrl url)
+          (ModelName model)
+          (SystemPrompt systemPrompt)
+          (optionValueFor "--llama-socket" options)
+          verbosity
+          tools
+      _ -> Left (missingOptionsMessage llmUsage missing)
+  pure (settings, positionals)
   where
     required = requiredOption llmUsage
 
@@ -203,11 +220,13 @@ invalidFile flag path message =
     ++ "\n"
     ++ llmUsage
 
--- | File paths the caller must read before 'parseLlmSettingsWithFiles'. The
--- paths are deduplicated so a caller can point both options at one file.
+-- | File paths the caller must read before 'parseLlmSettingsWithFiles' or
+-- 'parseLlmLaunchWithFiles'. The paths are deduplicated so a caller can point
+-- both options at one file.
 llmFilePaths :: [String] -> Either String [FilePath]
 llmFilePaths arguments = do
-  options <- appendUsage llmUsage (parseOptions llmOptionSpec arguments)
+  (options, _) <-
+    appendUsage llmUsage (parseOptionsWithPositionals llmOptionSpec arguments)
   pure . nub $
     catMaybes
       [ optionValueFor "--model-file" options
@@ -307,5 +326,6 @@ llmUsage =
     , optionSpecText verbosityOption
     , "(" ++ optionSpecText modelOption ++ " | " ++ optionSpecText modelFileOption ++ ")"
     , "(" ++ optionSpecText systemPromptOption ++ " | " ++ optionSpecText systemPromptFileOption ++ ")"
+    , "[--] [PROMPT...]"
     ]
     (filter optionSpecOptional llmOptions)

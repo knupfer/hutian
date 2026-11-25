@@ -13,6 +13,7 @@ module Hutian.Cli
   , optionName
   , optionValue
   , parseOptions
+  , parseOptionsWithPositionals
   , hasOption
   , optionValueFor
   , flagPresent
@@ -22,7 +23,7 @@ module Hutian.Cli
   , requiredOption
   ) where
 
-import Data.List (find)
+import Data.List (find, isPrefixOf)
 import Data.Maybe (isJust)
 
 -- | Whether an option takes a value or is a bare flag.
@@ -73,20 +74,40 @@ data Option = Option
 -- flag, matching the usual @--name value@ convention. Repeating any option is
 -- an error so configuration cannot silently depend on argument order.
 parseOptions :: [(String, OptionKind)] -> [String] -> Either String [Option]
-parseOptions spec = go []
+parseOptions spec arguments = do
+  (options, positionals) <- parseOptionsWithPositionals spec arguments
+  case positionals of
+    [] -> Right options
+    first : _ -> Left ("unknown argument: " ++ first)
+
+-- | Parse options and return the non-option arguments in order. A bare @--@
+-- ends option parsing, so a prompt may start with a dash. Unknown flags are
+-- still rejected rather than silently becoming positional arguments.
+parseOptionsWithPositionals
+  :: [(String, OptionKind)]
+  -> [String]
+  -> Either String ([Option], [String])
+parseOptionsWithPositionals spec = go [] []
   where
-    go parsed [] = Right (reverse parsed)
-    go parsed (argument : rest)
+    go parsed positionals [] = Right (reverse parsed, reverse positionals)
+    go parsed positionals ("--" : rest) =
+      Right (reverse parsed, reverse positionals ++ rest)
+    go parsed positionals (argument : rest)
       | Just kind <- lookup argument spec =
           if any ((== argument) . optionName) parsed
             then Left ("duplicate argument: " ++ argument)
             else case kind of
-              OptionFlag -> go (Option argument Nothing : parsed) rest
+              OptionFlag -> go (Option argument Nothing : parsed) positionals rest
               OptionValue ->
                 case rest of
                   [] -> Left ("missing value for " ++ argument)
-                  value : more -> go (Option argument (Just value) : parsed) more
-      | otherwise = Left ("unknown argument: " ++ argument)
+                  value : more ->
+                    go
+                      (Option argument (Just value) : parsed)
+                      positionals
+                      more
+      | "-" `isPrefixOf` argument = Left ("unknown argument: " ++ argument)
+      | otherwise = go parsed (argument : positionals) rest
 
 hasOption :: String -> [Option] -> Bool
 hasOption name = isJust . find ((== name) . optionName)

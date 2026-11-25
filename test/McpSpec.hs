@@ -216,6 +216,7 @@ tests =
                         , toolRuntimeWorkingDirectory = directory
                         , toolRuntimeContext = MainContext
                         , toolRuntimeVerbosity = VerbosityNormal
+                        , toolRuntimeQuiet = False
                         , toolRuntimeMcpSessions = mcpSessions
                         , toolRuntimeSubagent = \_ _ -> pure (Left "not configured")
                         , toolRuntimeHandler =

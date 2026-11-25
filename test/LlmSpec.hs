@@ -92,6 +92,42 @@ unitTests =
           ]
           @?= Right
             (LlmSettings (LlmUrl "http://example.test/completion") (apiFor (LlmUrl "http://example.test/completion")) (ModelName "m") (SystemPrompt "") Nothing VerbosityHigh (shellTools ToolDeny))
+    , testCase "parseLlmLaunchWithFiles returns positional prompt arguments" $ do
+        let base =
+              [ "--llama-url"
+              , "http://example.test/v1/chat/completions"
+              , "--verbosity"
+              , "high"
+              , "--model"
+              , "m"
+              , "--system-prompt"
+              , ""
+              ]
+        case parseLlmLaunchWithFiles [] (base ++ ["hello", "world"]) of
+          Left message -> assertFailure message
+          Right (_, promptWords) -> promptWords @?= ["hello", "world"]
+        case parseLlmLaunchWithFiles [] (base ++ ["--", "--looks-like-a-flag"]) of
+          Left message -> assertFailure message
+          Right (_, promptWords) -> promptWords @?= ["--looks-like-a-flag"]
+        case parseLlmLaunchWithFiles [] (base ++ ["--unknown"]) of
+          Left message -> assertBool "unknown option should be named" ("--unknown" `isInfixOf` message)
+          Right _ -> assertFailure "unknown options must still fail"
+    , testCase "parseLlmSettings rejects positional arguments" $
+        case
+            parseLlmSettings
+              [ "--llama-url"
+              , "http://example.test/v1/chat/completions"
+              , "--verbosity"
+              , "high"
+              , "--model"
+              , "m"
+              , "--system-prompt"
+              , ""
+              , "prompt"
+              ]
+          of
+            Left message -> assertBool "positional should be named" ("unknown argument: prompt" `isInfixOf` message)
+            Right _ -> assertFailure "positional arguments must fail in strict parsing"
     , testCase "parseSettings accepts an optional relay socket" $ do
         parseSettings
           [ "--llama-url"

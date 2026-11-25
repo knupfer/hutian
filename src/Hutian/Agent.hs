@@ -9,6 +9,7 @@ module Hutian.Agent
   , discoverMcpSettings
   , runInput
   , runLlmInput
+  , runBatchInput
   , runModelTurn
   , toolRuntime
   , runSubagent
@@ -95,6 +96,9 @@ data RuntimeEnv = RuntimeEnv
   , envSettings :: LlmSettings
   , envInterrupt :: InterruptFlag
   , envMcpSessions :: McpSessionCache
+  -- | Batch mode runs one turn without presenting anything except the final
+  -- answer. Errors still go to stderr.
+  , envQuiet :: Bool
   }
 
 -- | How an agent's prompt is announced. Result handlers use tool-output
@@ -136,6 +140,19 @@ runLlmInput env conversation prompt =
   withoutEcho $ withRespondingCursor $ do
     let runtime = toolRuntime env MainContext
     fst <$> runModelTurn env (envSettings env) runtime conversation prompt
+
+-- | Run one non-interactive turn and return only the main agent's final answer.
+-- The runtime suppresses reasoning, tool calls, and tool output, while errors
+-- still reach stderr.
+runBatchInput :: RuntimeEnv -> String -> IO (Either String String)
+runBatchInput env prompt = do
+  let runtime = toolRuntime env MainContext
+  (_, result) <-
+    runModelTurn env (envSettings env) runtime emptyConversation prompt
+  pure $
+    case llmResponseText result of
+      Just answer -> Right answer
+      Nothing -> Left "hutian: the model returned no answer"
 
 -- | Send one prompt, then run the tool/continuation loop until the model
 -- answers. Returns the updated conversation and the result that ended the turn.
@@ -181,6 +198,7 @@ toolRuntime env context =
     , toolRuntimeWorkingDirectory = envWorkingDirectory env
     , toolRuntimeContext = context
     , toolRuntimeVerbosity = settingVerbosity (envSettings env)
+    , toolRuntimeQuiet = envQuiet env
     , toolRuntimeMcpSessions = envMcpSessions env
     , toolRuntimeSubagent = runSubagent env context
     , toolRuntimeHandler = runResultHandler env context
@@ -242,18 +260,19 @@ runAgent env parent presentation agentName agent prompt = do
           }
       childEnv = env {envSettings = subagentSettings}
       runtime = toolRuntime childEnv childContext
-  when (settingVerbosity (envSettings env) == VerbosityHigh) $ do
-    consoleWriteSystemPrompt
-      childContext
-      (agentSystemPrompt agent)
-    consoleWriteToolDefinitions
-      childContext
-      (toolSummaryLines (toolDefinitionsFor (settingTools subagentSettings)))
-  case presentation of
-    SubagentPromptPresentation ->
-      consoleWriteSubagentPrompt childLabel prompt
-    HandlerPromptPresentation showBody ->
-      consoleWriteHandlerPromptIn parent childLabel showBody prompt
+  unless (envQuiet env) $ do
+    when (settingVerbosity (envSettings env) == VerbosityHigh) $ do
+      consoleWriteSystemPrompt
+        childContext
+        (agentSystemPrompt agent)
+      consoleWriteToolDefinitions
+        childContext
+        (toolSummaryLines (toolDefinitionsFor (settingTools subagentSettings)))
+    case presentation of
+      SubagentPromptPresentation ->
+        consoleWriteSubagentPrompt childLabel prompt
+      HandlerPromptPresentation showBody ->
+        consoleWriteHandlerPromptIn parent childLabel showBody prompt
   (_, finalResult) <-
     runModelTurn
       childEnv
@@ -271,15 +290,20 @@ runAgent env parent presentation agentName agent prompt = do
 llmOutputFor :: ToolRuntime -> LlmOutput
 llmOutputFor runtime =
   consoleLlmOutputFor
+    (toolRuntimeQuiet runtime)
     (toolRuntimeVerbosity runtime)
     (toolRuntimeContext runtime)
 
 -- | Stream LLM output through the terminal boundary, flushing each piece so a
--- response appears as it arrives.
-consoleLlmOutputFor :: Verbosity -> TurnContext -> LlmOutput
-consoleLlmOutputFor verbosity context =
+-- response appears as it arrives. A quiet runtime drops the stream because the
+-- caller only prints the final answer.
+consoleLlmOutputFor :: Bool -> Verbosity -> TurnContext -> LlmOutput
+consoleLlmOutputFor quiet verbosity context =
   LlmOutput
-    { llmOutputWrite = \text -> unless (null text) (consoleWrite text >> consoleFlush)
+    { llmOutputWrite =
+        if quiet
+          then const (pure ())
+          else \text -> unless (null text) (consoleWrite text >> consoleFlush)
     , llmOutputErrorLine = consoleWriteErrorLine
     , llmOutputContext = context
     , llmOutputVerbosity = verbosity

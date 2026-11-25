@@ -12,14 +12,21 @@ All notable changes to Hutian are documented here. The format follows
   decode), a 1 MiB shell result through the captured and streamed output paths,
   highlighting, SSE parsing, editor and prompt reducers, redraw layout, and the
   startup PATH scan (`bench/`, `nix build .#checks.<system>.benchmark`).
-- `scripts/bench.sh` measures real sandbox startup and one-shot commands with
-  `hyperfine`, then drives the interactive TUI through a pty with `expect` for
+- `scripts/bench.sh` drives the interactive TUI through a pty with `expect` for
   startup-to-prompt and keystroke-echo latency.
 - The executables now accept RTS options, so `+RTS -s` prints allocation and GC
   statistics.
+- Batch mode. When stdin or stdout is not a terminal, or a prompt argument is
+  given, Hutian runs one quiet turn: the positional arguments are the first user
+  message (or stdin is read to EOF), `"ask"` tools are denied, and only the main
+  agent's final answer is printed to stdout.
 
 ### Changed
 
+- **Breaking:** positional arguments after the options are now the first user
+  message for batch mode, not a command run in the sandbox. Use the model's
+  shell tool, or an interactive term-mode command, to run a command. A bare
+  `--` ends option parsing so a prompt may start with a dash.
 - Captured shell output stays as bytes for display and is decoded to text once
   for the model, with no `String` round trip. A 1 MiB tool result takes about
   7 ms instead of about 100 ms, and output is still not capped.

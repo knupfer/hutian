@@ -113,6 +113,7 @@ executable hutian-shell
   hs-source-dirs:   app
   build-depends:
       base
+    , bytestring
     , directory
     , filepath
     , hutian-shell

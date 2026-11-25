@@ -29,11 +29,12 @@ $ cd /some/project
 $ nix run github:knupfer/hutian#hutian
 ```
 
-Run a single command without the interactive shell:
+Ask a single question without the interactive shell. The argument is the first
+user message, and only the main agent's final answer is printed:
 
 ```console
-$ nix run github:knupfer/hutian#hutian -- echo hello
-$ nix run github:knupfer/hutian#hutian -- /bin/sh -c 'echo hello > /tmp/result.txt'
+$ nix run github:knupfer/hutian#hutian -- "Find the failing test"
+$ echo "Find the failing test" | nix run github:knupfer/hutian#hutian > answer.txt
 ```
 
 With `sandbox.writable = true`, writes under `/source` appear in the host working
@@ -98,6 +99,29 @@ MCP tool calls show their JSON arguments with dim JSON highlighting. Error lines
 are bold red when standard error is a terminal.
 
 ## Modes and output
+
+Hutian starts the interactive shell only when stdin and stdout are both
+terminals and no prompt argument is given. Any other invocation runs one batch
+turn instead: the positional arguments are the first user message, or stdin is
+read to EOF when there are none. Batch mode shows no prompt, suppresses
+reasoning, tool calls, and tool output, denies `"ask"` tools because there is no
+approval prompt, and writes only the main agent's final answer to stdout.
+Diagnostics stay on stderr. If stdin is a terminal and no prompt is given, batch
+mode reports how to supply one instead of reading a blind prompt.
+
+```console
+$ nix run github:knupfer/hutian#hutian -- "Summarize this repository"
+$ cat question.txt | nix run github:knupfer/hutian#hutian > answer.txt
+```
+
+The launcher passes prompt arguments after `--`, so a prompt may start with a
+dash:
+
+```console
+$ nix run github:knupfer/hutian#hutian -- --explain-the-question
+```
+
+`output.verbosity` and the approval prompt apply to the interactive shell only.
 
 The prompt starts in LLM mode; `Ctrl+X` switches to term mode. Each mode keeps
 its own input buffer. LLM input is Markdown-highlighted and sent to the model;
@@ -409,10 +433,9 @@ by the time to get tokens per second. Save runs to compare them:
 $ cabal bench --benchmark-options='--timeout=5 --csv=bench.csv'
 ```
 
-`scripts/bench.sh` measures the layers tasty-bench cannot reach. `hyperfine`
-times gVisor startup and one-shot commands, and an Expect script drives the
-interactive TUI through a real pty to report startup-to-prompt and
-keystroke-echo latency. Both tools are fetched through Nix when they are not
+`scripts/bench.sh` measures the layer tasty-bench cannot reach. An Expect script
+drives the interactive TUI through a real pty to report startup-to-prompt and
+keystroke-echo latency. `expect` is fetched through Nix when it is not
 installed. Set `HUTIAN_TUI_RUNS` to change the number of pty runs (default 3):
 
 ```console

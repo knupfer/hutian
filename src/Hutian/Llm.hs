@@ -10,6 +10,7 @@ module Hutian.Llm
   , module Hutian.Llm.Stream
   , LlmOutput (..)
   , loadLlmSettings
+  , loadLlmLaunch
   , runLlm
   , runLlmWithTools
   , runLlmContinuation
@@ -75,14 +76,25 @@ data LlmOutput = LlmOutput
 -- files are removed before parsing succeeds so they are gone before the shell
 -- can run a command.
 loadLlmSettings :: [String] -> IO (Either String LlmSettings)
-loadLlmSettings arguments =
+loadLlmSettings = loadLlmWith parseLlmSettingsWithFiles
+
+-- | Load settings and the positional prompt arguments. Positional arguments
+-- after the options become the batch-mode user message.
+loadLlmLaunch :: [String] -> IO (Either String (LlmSettings, [String]))
+loadLlmLaunch = loadLlmWith parseLlmLaunchWithFiles
+
+loadLlmWith
+  :: ([(FilePath, String)] -> [String] -> Either String a)
+  -> [String]
+  -> IO (Either String a)
+loadLlmWith parse arguments =
   case llmFilePaths arguments of
     Left message -> pure (Left message)
     Right paths -> do
       loaded <- mapM readAndRemove paths
       pure $ do
         files <- sequence loaded
-        parseLlmSettingsWithFiles files arguments
+        parse files arguments
   where
     readAndRemove path = do
       contents <- tryReadText path

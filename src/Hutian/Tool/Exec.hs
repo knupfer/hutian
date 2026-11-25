@@ -34,7 +34,7 @@ import Hutian.Conversation
   , abortedToolMessage
   , appendToolResult
   )
-import Control.Monad (when)
+import Control.Monad (unless, when)
 import Hutian.Context (TurnContext (MainContext))
 import Hutian.Highlight (sanitizeOutput, sanitizeOutputBytes)
 import Hutian.Json (jsonText)
@@ -94,7 +94,7 @@ import Hutian.Web (fetchResultText, fetchUrl)
 import Hutian.Verbosity
   ( RenderMode (..)
   , Verbosity (..)
-  , Visibility
+  , Visibility (..)
   , outputBodyVisible
   , renderMode
   )
@@ -107,6 +107,9 @@ data ToolRuntime = ToolRuntime
   , toolRuntimeWorkingDirectory :: FilePath
   , toolRuntimeContext :: TurnContext
   , toolRuntimeVerbosity :: Verbosity
+  -- | Suppress every presentation of the call and its result. Errors still go
+  -- to stderr.
+  , toolRuntimeQuiet :: Bool
   , toolRuntimeMcpSessions :: McpSessionCache
   , toolRuntimeSubagent :: SubagentConfig -> String -> IO (Either String String)
   , toolRuntimeHandler :: String -> String -> HandlerConfig -> String -> IO (Either String String)
@@ -124,6 +127,7 @@ runToolCalls jobs workingDirectory policy conversation calls = do
       , toolRuntimeWorkingDirectory = workingDirectory
       , toolRuntimeContext = MainContext
       , toolRuntimeVerbosity = VerbosityHigh
+      , toolRuntimeQuiet = False
       , toolRuntimeMcpSessions = mcpSessions
       , toolRuntimeSubagent = \_ _ ->
           pure (Left "tool error: the model subagent tool is disabled")
@@ -168,7 +172,9 @@ runToolCall planner runtime conversation call =
       decision <-
         case approval of
           RunNow -> describeAction action >> pure ToolApproved
-          AskUser -> confirmAction action
+          AskUser
+            | quiet -> pure ToolDenied
+            | otherwise -> confirmAction action
       case decision of
         ToolApproved -> executeAction action
         ToolDenied -> refuse (deniedMessage action)
@@ -177,9 +183,12 @@ runToolCall planner runtime conversation call =
     jobs = toolRuntimeJobs runtime
     workingDirectory = toolRuntimeWorkingDirectory runtime
     context = toolRuntimeContext runtime
+    quiet = toolRuntimeQuiet runtime
     toolOutput =
       modeToolOutput (renderMode (toolRuntimeVerbosity runtime) context)
-    showOutputBody = outputBodyVisible toolOutput
+    showOutputBody = not quiet && outputBodyVisible toolOutput
+    -- Batch mode has no terminal chrome, so it also skips the cursor scopes.
+    inSubagentCursor = if quiet then id else withSubagentCursor
 
     refuse message =
       pure (ToolsCompleted, appendToolResult (toolCallId call) message conversation)
@@ -202,7 +211,7 @@ runToolCall planner runtime conversation call =
         Nothing -> finishRaw raw
         Just config -> do
           result <-
-            withSubagentCursor
+            inSubagentCursor
               (toolRuntimeHandler runtime serverName toolName config raw)
           case result of
             Left message -> finishError message
@@ -212,17 +221,18 @@ runToolCall planner runtime conversation call =
     -- Show a call before it runs. Approval-capable actions show their own label
     -- inside 'confirmAction', so this only handles the immediate path.
     describeAction action =
-      case action of
-        RunShell _ command ->
-          consoleWriteToolCommandIn context (toolCallName call) command
-        FetchUrl url ->
-          consoleWriteToolCommandIn context "webfetch" url
-        CallMcp server tool arguments ->
-          showMcpCall server tool arguments
-        ListJobs -> consoleWriteToolLabelIn context "jobs"
-        ReadJobOutput {} -> consoleWriteToolLabelIn context "job_output"
-        KillJob {} -> consoleWriteToolLabelIn context "job_kill"
-        RunSubagent {} -> pure ()
+      unless quiet $
+        case action of
+          RunShell _ command ->
+            consoleWriteToolCommandIn context (toolCallName call) command
+          FetchUrl url ->
+            consoleWriteToolCommandIn context "webfetch" url
+          CallMcp server tool arguments ->
+            showMcpCall server tool arguments
+          ListJobs -> consoleWriteToolLabelIn context "jobs"
+          ReadJobOutput {} -> consoleWriteToolLabelIn context "job_output"
+          KillJob {} -> consoleWriteToolLabelIn context "job_kill"
+          RunSubagent {} -> pure ()
 
     confirmAction action =
       case action of
@@ -259,10 +269,14 @@ runToolCall planner runtime conversation call =
     runPlanned mode command =
       case mode of
         Foreground -> do
-          printOutputLabelIn context (toolCallName call) ToolOutput
-          finish =<< executeShellTool toolOutput workingDirectory command
+          unless quiet (printOutputLabelIn context (toolCallName call) ToolOutput)
+          finish
+            =<< executeShellTool
+              (if quiet then LabelOnly else toolOutput)
+              workingDirectory
+              command
         Background -> do
-          printOutputLabelIn context (toolCallName call) ToolOutput
+          unless quiet (printOutputLabelIn context (toolCallName call) ToolOutput)
           result <- startJob jobs command
           case result of
             Left message -> finishError message
@@ -272,15 +286,17 @@ runToolCall planner runtime conversation call =
               finishRaw message
 
     runJobsTool = do
-      consoleWriteToolLabelIn context "jobs"
-      printOutputLabelIn context "jobs" ToolOutput
+      unless quiet $ do
+        consoleWriteToolLabelIn context "jobs"
+        printOutputLabelIn context "jobs" ToolOutput
       current <- listJobs jobs
       when showOutputBody (printJobRows current)
       finishRaw (jobListResult current)
 
     runJobOutputTool target requestedLines = do
-      consoleWriteToolLabelIn context "job_output"
-      printOutputLabelIn context "job_output" ToolOutput
+      unless quiet $ do
+        consoleWriteToolLabelIn context "job_output"
+        printOutputLabelIn context "job_output" ToolOutput
       result <- readJobOutput jobs target requestedLines
       case result of
         Left message -> finishError message
@@ -289,8 +305,9 @@ runToolCall planner runtime conversation call =
           finishRaw (jobOutputResult job output' truncation)
 
     runJobKillTool target = do
-      consoleWriteToolLabelIn context "job_kill"
-      printOutputLabelIn context "job_kill" ToolOutput
+      unless quiet $ do
+        consoleWriteToolLabelIn context "job_kill"
+        printOutputLabelIn context "job_kill" ToolOutput
       result <- killJob jobs target
       case result of
         Left message -> finishError message
@@ -300,7 +317,7 @@ runToolCall planner runtime conversation call =
           finishRaw message
 
     runWebfetchTool url = do
-      printOutputLabelIn context "webfetch" ToolOutput
+      unless quiet (printOutputLabelIn context "webfetch" ToolOutput)
       result <- fetchUrl url
       case result of
         Left message -> finishError message
@@ -310,7 +327,7 @@ runToolCall planner runtime conversation call =
           finishRaw text
 
     runSubagentTool agent prompt = do
-      result <- withSubagentCursor (toolRuntimeSubagent runtime agent prompt)
+      result <- inSubagentCursor (toolRuntimeSubagent runtime agent prompt)
       finish result
 
     runMcpTool server tool arguments = do
@@ -331,7 +348,7 @@ runToolCall planner runtime conversation call =
           let formatted = trailingNewline text
           case handlerConfig of
             Nothing -> do
-              printOutputLabelIn context displayName ToolOutput
+              unless quiet (printOutputLabelIn context displayName ToolOutput)
               when showOutputBody (displayToolText formatted)
             Just _ -> pure ()
           finishResult handlerConfig serverName localName formatted

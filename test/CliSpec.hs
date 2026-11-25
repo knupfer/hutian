@@ -35,6 +35,31 @@ tests =
         assertLeftNames "unknown argument" (parseOptions spec ["--other"])
         assertLeftNames "unknown argument" (parseOptions spec ["value"])
         assertLeftNames "missing value" (parseOptions spec ["--model"])
+    , testCase "positional arguments are returned in order" $
+        case
+            parseOptionsWithPositionals
+              spec
+              ["--model", "m", "first", "--flag", "second"]
+          of
+            Left message -> assertFailure message
+            Right (options, positionals) -> do
+              map optionName options @?= ["--model", "--flag"]
+              map optionValue options @?= [Just "m", Nothing]
+              positionals @?= ["first", "second"]
+    , testCase "a bare -- ends option parsing" $
+        case
+            parseOptionsWithPositionals
+              spec
+              ["--model", "m", "--", "--other", "prompt"]
+          of
+            Left message -> assertFailure message
+            Right (options, positionals) -> do
+              map optionName options @?= ["--model"]
+              positionals @?= ["--other", "prompt"]
+    , testCase "unknown flags are rejected instead of becoming prompts" $
+        assertLeftNames
+          "unknown argument"
+          (parseOptionsWithPositionals spec ["--other"])
     , testCase "duplicate options are rejected instead of last-one-wins" $ do
         assertLeftNames
           "duplicate argument"

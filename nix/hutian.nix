@@ -305,21 +305,28 @@ let
         )
       ''}
 
-      if [ "$#" -eq 0 ]; then
-        # Keep the model name and system prompt out of the process listing.
-        # The shell reads these files once and removes them before it can run
-        # any command.
-        config_dir=$(private_dir hutian-config)
-        install -m 600 ${configModel} "$config_dir/model"
-        install -m 600 ${configSystemPrompt} "$config_dir/system-prompt"
-        install -m 600 ${configTools} "$config_dir/tools"
-        config_volumes=(-volume "$config_dir:/run/hutian-config")
+      # Keep the model name and system prompt out of the process listing. The
+      # shell reads these files once and removes them before it can run any
+      # command.
+      config_dir=$(private_dir hutian-config)
+      install -m 600 ${configModel} "$config_dir/model"
+      install -m 600 ${configSystemPrompt} "$config_dir/system-prompt"
+      install -m 600 ${configTools} "$config_dir/tools"
+      config_volumes=(-volume "$config_dir:/run/hutian-config")
 
-        set -- ${hutianShell}/bin/hutian-shell \
-          --llama-url "$(cat ${logicalUrlFile})" \
-          --model-file /run/hutian-config/model \
-          --system-prompt-file /run/hutian-config/system-prompt \
-          "''${llm_args[@]}"
+      # Positional arguments are the first user message for batch mode. The
+      # separator keeps a prompt that starts with a dash from being parsed as
+      # an option. With a prompt argument, or when stdin and stdout are not both
+      # terminals, the shell runs one quiet turn and prints only the final
+      # answer.
+      user_args=("$@")
+      set -- ${hutianShell}/bin/hutian-shell \
+        --llama-url "$(cat ${logicalUrlFile})" \
+        --model-file /run/hutian-config/model \
+        --system-prompt-file /run/hutian-config/system-prompt \
+        "''${llm_args[@]}"
+      if [ "''${#user_args[@]}" -gt 0 ]; then
+        set -- "$@" -- "''${user_args[@]}"
       fi
 
       # runsc resolves -cwd on the host, so start in / and enter /source after

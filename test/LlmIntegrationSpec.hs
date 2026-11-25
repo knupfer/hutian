@@ -11,8 +11,11 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BL
 import Data.List (isInfixOf)
 import Data.Maybe (fromMaybe)
+import Hutian.Agent (RuntimeEnv (..), runBatchInput)
 import Hutian.Conversation (ConversationEntry (..), ToolCall (..))
 import Hutian.Interrupt (newInterruptFlag)
+import Hutian.Jobs.Runtime (withJobRuntime)
+import Hutian.Mcp (newMcpSessionCache)
 import Hutian.Llm
   ( LlmResult (..)
   , LlmSettings (..)
@@ -46,7 +49,12 @@ import Network.Socket.ByteString (recv, sendAll)
 import System.Timeout (timeout)
 import Test.Tasty
 import Test.Tasty.HUnit
-import TestSupport (captureStderr, captureStdout, stdoutLlmOutput)
+import TestSupport
+  ( captureStderr
+  , captureStdout
+  , stdoutLlmOutput
+  , withTemporaryDirectory
+  )
 
 tests :: TestTree
 tests =
@@ -78,6 +86,31 @@ tests =
         assertBool "prior user history missing from HTTP request" ("prior" `isInfixOf` request)
         assertBool "prior assistant history missing from HTTP request" ("previous" `isInfixOf` request)
         assertBool "current prompt missing from HTTP request" ("current" `isInfixOf` request)
+    , testCase "runBatchInput is quiet and returns only the final answer" $ do
+        (port, _) <- startFakeServer streamingChunks
+        flag <- newInterruptFlag
+        mcpSessions <- newMcpSessionCache
+        withTemporaryDirectory "hutian-batch" $ \directory ->
+          withJobRuntime directory directory $ \jobs -> do
+            let env =
+                  RuntimeEnv
+                    { envWorkingDirectory = directory
+                    , envJobs = jobs
+                    , envSettings = settingsFor port
+                    , envInterrupt = flag
+                    , envMcpSessions = mcpSessions
+                    , envQuiet = True
+                    }
+            captured <-
+              timeout 7000000 $
+                captureStdout (runBatchInput env "hello")
+            (result, output) <-
+              maybe
+                (assertFailure "runBatchInput timed out" >> pure (Left "", ""))
+                pure
+                captured
+            output @?= ""
+            result @?= Right "# Answer\n**bold**\n"
     , testCase "runLlmWithTools returns streamed tool calls" $ do
         (port, _) <- startFakeServer toolCallChunks
         flag <- newInterruptFlag

@@ -278,6 +278,30 @@ tests =
               let plain = stripAnsi output
               assertBool "stdout must end its own line" ("out\r\n" `isInfixOf` plain)
               assertBool "stderr must end its own line" ("err\r\n" `isInfixOf` plain)
+    , testCase "quiet tool runs present nothing" $
+        withTemporaryDirectory "hutian-tool-quiet" $ \directory ->
+          withJobRuntime directory directory $ \jobs ->
+            withPseudoTerminalOutput $ \readOutput -> do
+              mcpSessions <- newMcpSessionCache
+              let runtime =
+                    ToolRuntime
+                      { toolRuntimeJobs = jobs
+                      , toolRuntimeWorkingDirectory = directory
+                      , toolRuntimeContext = MainContext
+                      , toolRuntimeVerbosity = VerbosityHigh
+                      , toolRuntimeQuiet = True
+                      , toolRuntimeMcpSessions = mcpSessions
+                      , toolRuntimeSubagent = \_ _ -> pure (Right "answer\n")
+                      , toolRuntimeHandler = \_ _ _ _ -> pure (Left "not configured")
+                      }
+              _ <-
+                runToolCallsWith
+                  runtime
+                  (toolCatalog (defaultToolConfig {toolShell = ToolAllow}))
+                  emptyConversation
+                  [ToolCall "call-1" "shell" "{\"command\":\"printf out; printf err >&2\"}"]
+              output <- readOutput
+              output @?= ""
     , testCase "normal verbosity does not present a subagent as a generic tool call" $
         withTemporaryDirectory "hutian-verbosity" $ \directory ->
           withJobRuntime directory directory $ \jobs ->
@@ -289,6 +313,7 @@ tests =
                       , toolRuntimeWorkingDirectory = directory
                       , toolRuntimeContext = MainContext
                       , toolRuntimeVerbosity = VerbosityNormal
+                      , toolRuntimeQuiet = False
                       , toolRuntimeMcpSessions = mcpSessions
                       , toolRuntimeSubagent = \_ _ -> pure (Right "final answer\n")
                       , toolRuntimeHandler = \_ _ _ _ -> pure (Left "not configured")
