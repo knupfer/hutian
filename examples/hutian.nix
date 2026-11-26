@@ -35,7 +35,7 @@
 
   output = {
     verbosity = "high";
-    # Record each session under .hutian/transcripts/<timestamp>/.
+    # Record each session under $XDG_STATE_HOME/hutian/transcripts/<timestamp>/.
     transcript = false;
   };
 

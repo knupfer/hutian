@@ -132,23 +132,22 @@ output = {
 };
 ```
 
-Each session writes to a fresh directory in the project:
+Each session writes to a fresh directory under the user state directory:
 
 ```text
-.hutian/transcripts/2026-11-26T104217Z/
+$XDG_STATE_HOME/hutian/transcripts/2026-11-26T104217Z/
   transcript.jsonl
   transcript.md
 ```
 
-The launcher reserves the directory atomically, so two sessions starting in the
-same second get a numeric suffix instead of overwriting each other. The JSON
-Lines file is canonical and contains `conversation.snapshot` events after each
-completed turn. The Markdown file gives every prompt and block label a level-one
-heading and demotes top-level ATX headings inside those blocks by one so they
-cannot collide with the labels. It does not wrap content in synthetic code
-fences. Transcripts are copied out of the sandbox when it exits, including after
-Ctrl+C. Add `.hutian/` to the project's `.gitignore` if transcripts should not
-be committed.
+`XDG_STATE_HOME` defaults to `$HOME/.local/state` when unset. The launcher
+reserves the directory atomically, so two sessions starting in the same second
+get a numeric suffix instead of overwriting each other. The JSON Lines file is
+canonical and contains `conversation.snapshot` events after each completed turn.
+The Markdown file gives every prompt and block label a level-one heading and
+demotes top-level ATX headings inside those blocks by one so they cannot collide
+with the labels. It does not wrap content in synthetic code fences. Transcripts
+are copied out of the sandbox when it exits, including after Ctrl+C.
 
 `output.verbosity` and the approval prompt apply to the interactive shell only.
 
@@ -210,7 +209,7 @@ map.
 | `endpoint.url` | OpenAI-compatible chat or native `/completion` URL. |
 | `endpoint.apiKeyCommand` | Command that prints the upstream key, or `null`. |
 | `output.verbosity` | `"low"`, `"normal"`, or `"high"`. |
-| `output.transcript` | Record each session under `.hutian/transcripts/`. |
+| `output.transcript` | Record each session under `$XDG_STATE_HOME/hutian/transcripts/`. |
 | `agent.model` | Model name sent to the endpoint. |
 | `agent.systemPrompt` | System message for every request. |
 | `agent.tools` | `shell`, `webfetch`, `subagent`, and `mcp` policies. |

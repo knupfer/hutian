@@ -812,22 +812,31 @@
           ];
 
           transcript-directory = pkgs.runCommand "hutian-transcript-directory-check" { } ''
-            root=$(${coreutils}/bin/mktemp -d)
-            trap '${coreutils}/bin/rm -rf "$root"' EXIT
-            first=$(${transcriptDirectory}/bin/hutian-transcript-dir "$root")
-            second=$(${transcriptDirectory}/bin/hutian-transcript-dir "$root")
-            test -d "$root/.hutian/transcripts"
+            state=$(${coreutils}/bin/mktemp -d)
+            home=$(${coreutils}/bin/mktemp -d)
+            trap '${coreutils}/bin/rm -rf "$state" "$home"' EXIT
+
+            export XDG_STATE_HOME="$state"
+            first=$(${transcriptDirectory}/bin/hutian-transcript-dir)
+            second=$(${transcriptDirectory}/bin/hutian-transcript-dir)
+            test -d "$state/hutian/transcripts"
             case "$first" in
-              */transcript) ;;
+              "$state"/hutian/transcripts/*/transcript) ;;
               *) echo "unexpected transcript path: $first" >&2; exit 1 ;;
             esac
-            test -d "$(${coreutils}/bin/dirname "$first")"
-            test -d "$(${coreutils}/bin/dirname "$second")"
             test "$first" != "$second"
             ${coreutils}/bin/touch "$first"
-            third=$(${transcriptDirectory}/bin/hutian-transcript-dir "$root")
+            third=$(${transcriptDirectory}/bin/hutian-transcript-dir)
             test -f "$first"
             test "$first" != "$third"
+
+            unset XDG_STATE_HOME
+            export HOME="$home"
+            fallback=$(${transcriptDirectory}/bin/hutian-transcript-dir)
+            case "$fallback" in
+              "$home"/.local/state/hutian/transcripts/*/transcript) ;;
+              *) echo "unexpected fallback transcript path: $fallback" >&2; exit 1 ;;
+            esac
             ${coreutils}/bin/touch $out
           '';
 

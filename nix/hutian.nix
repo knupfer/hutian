@@ -188,7 +188,7 @@ let
       transcript_host=""
 
       ${optionalString transcript ''
-        transcript_host=$(${transcriptDirectory}/bin/hutian-transcript-dir "$source_dir")
+        transcript_host=$(${transcriptDirectory}/bin/hutian-transcript-dir)
       ''}
 
       platform="''${GVISOR_PLATFORM:-systrap}"

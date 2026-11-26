@@ -1,6 +1,6 @@
-# Reserve a fresh transcript directory under the project's .hutian directory.
+# Reserve a fresh transcript directory under the user's state directory.
 #
-# Usage: hutian-transcript-dir SOURCE_DIR
+# Usage: hutian-transcript-dir
 #
 # Prints the base path for the two transcript files. The timestamp gives a
 # predictable name; mkdir makes the reservation atomic, and the numeric suffix
@@ -13,7 +13,15 @@ pkgs.writeShellApplication {
     coreutils
   ];
   text = ''
-    root="$1/.hutian/transcripts"
+    if [ -n "''${XDG_STATE_HOME:-}" ]; then
+      state_home=$XDG_STATE_HOME
+    elif [ -n "''${HOME:-}" ]; then
+      state_home="$HOME/.local/state"
+    else
+      echo "hutian: cannot determine state directory for transcripts" >&2
+      exit 1
+    fi
+    root="$state_home/hutian/transcripts"
     if ! mkdir -p "$root"; then
       echo "hutian: could not create transcript directory: $root" >&2
       exit 1

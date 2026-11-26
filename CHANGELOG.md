@@ -21,16 +21,16 @@ All notable changes to Hutian are documented here. The format follows
   message (or stdin is read to EOF), `"ask"` tools are denied, and only the main
   agent's final answer is printed to stdout.
 - Opt-in session transcripts with the mandatory `output.transcript` option.
-  Each session gets a fresh `.hutian/transcripts/<timestamp>/` directory,
-  reserved atomically so existing transcripts are never overwritten. The
-  launcher stages the files in a writable private directory and copies them out
-  on exit, so it works even when `/source` is read-only. A JSON Lines file
-  records prompts, reasoning, assistant text, tool requests, approvals, results,
-  subagent prompts, and diagnostics, plus `conversation.snapshot` events after
-  each completed turn that preserve the exact conversation for a later session.
-  A Markdown sibling gives every prompt and block label a level-one heading,
-  demotes headings inside those blocks by one, and does not add synthetic code
-  fences.
+  Each session gets a fresh `$XDG_STATE_HOME/hutian/transcripts/<timestamp>/`
+  directory, reserved atomically so existing transcripts are never overwritten.
+  The launcher stages the files in a writable private directory and copies them
+  out on exit, so it works even when `/source` is read-only and never writes
+  transcripts into the project. A JSON Lines file records prompts, reasoning,
+  assistant text, tool requests, approvals, results, subagent prompts, and
+  diagnostics, plus `conversation.snapshot` events after each completed turn
+  that preserve the exact conversation for a later session. A Markdown sibling
+  gives every prompt and block label a level-one heading, demotes headings
+  inside those blocks by one, and does not add synthetic code fences.
 
 ### Changed
 
