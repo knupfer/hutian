@@ -7,7 +7,7 @@ module Hutian.Context
   , contextPath
   , subagentContext
   , pathPrefix
-  , pathLabel
+  , askLabel
   ) where
 
 import Data.List (intercalate)
@@ -42,6 +42,7 @@ pathPrefix context =
     [] -> ""
     path -> intercalate "." path ++ "."
 
--- | The path without a trailing dot, used for the subagent announcement.
-pathLabel :: TurnContext -> String
-pathLabel = intercalate "." . contextPath
+-- | The label for a model input prompt. The main agent's empty path yields
+-- @ask@; a subagent @foo@ yields @foo.ask@.
+askLabel :: TurnContext -> String
+askLabel context = pathPrefix context ++ "ask"

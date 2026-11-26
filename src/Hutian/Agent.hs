@@ -19,7 +19,11 @@ import Hutian.Console
   , withRespondingCursor
   , withoutEcho
   )
-import Hutian.Context (TurnContext (MainContext), pathLabel, subagentContext)
+import Hutian.Context
+  ( TurnContext (MainContext)
+  , askLabel
+  , subagentContext
+  )
 import Hutian.Conversation
   ( Conversation
   , appendResult
@@ -65,9 +69,7 @@ import Hutian.Tool.Exec (ToolRuntime (..), runToolCallsWith)
 import Hutian.Tool.Summary (toolSummaryLines)
 import Hutian.Verbosity
   ( Verbosity (..)
-  , modeToolOutput
-  , outputBodyVisible
-  , renderMode
+  , handlerBodyVisible
   )
 import System.IO (stderr, stdout)
 
@@ -84,7 +86,8 @@ data RuntimeEnv = RuntimeEnv
   }
 
 -- | How an agent's prompt is announced. Result handlers use tool-output
--- styling and visibility because their prompt is the raw tool result.
+-- styling and show their body only at high verbosity because it is the raw
+-- tool result.
 data PromptPresentation
   = SubagentPromptPresentation
   | HandlerPromptPresentation Bool
@@ -228,8 +231,7 @@ runResultHandler env parent serverName localName =
     (mcpHandlerName serverName localName)
   where
     displayedOutput =
-      outputBodyVisible
-        (modeToolOutput (renderMode (settingVerbosity (envSettings env)) parent))
+      handlerBodyVisible (settingVerbosity (envSettings env))
 
 runAgent
   :: RuntimeEnv
@@ -242,7 +244,6 @@ runAgent
 runAgent env parent presentation agentName agent prompt = do
   tools <- discoverTools (agentTools agent)
   let childContext = subagentContext parent agentName
-      childLabel = pathLabel childContext
       subagentSettings =
         (envSettings env)
           { settingModel = ModelName (agentModel agent)
@@ -264,9 +265,12 @@ runAgent env parent presentation agentName agent prompt = do
       )
   case presentation of
     SubagentPromptPresentation ->
-      outputPresent output (PresentSubagentPrompt childLabel prompt)
+      outputPresent output (PresentSubagentPrompt (askLabel childContext) prompt)
     HandlerPromptPresentation showBody ->
-      outputPresent output (PresentHandlerPrompt parent childLabel showBody prompt)
+      -- The handler runs as a subagent, so its label uses the child palette.
+      outputPresent
+        output
+        (PresentHandlerPrompt childContext (askLabel childContext) showBody prompt)
   (_, finalResult) <-
     runModelTurn
       (envInterrupt childEnv)

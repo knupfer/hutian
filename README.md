@@ -138,10 +138,10 @@ fresh shell, so `cd` and exported variables do not persist.
 | `Ctrl+D` | Exit on empty input; in LLM mode, submit non-empty input. |
 | `Ctrl+C` | Clear the current input; in term mode, cancel the running command. |
 
-Prompt labels are dotted paths: the main agent prints `think`, `answer`,
-`output`, and the tool name; a subagent `foo` prefixes them with `foo.`
-(`foo.think`, `foo.answer`, `foo.shell`, `foo.shell.output`); nesting extends the
-path (`foo.bar.think`).
+Prompt labels are dotted paths: the main agent prints `ask` for its input,
+`think`, `answer`, `output`, and the tool name; a subagent `foo` prefixes them
+with `foo.` (`foo.ask`, `foo.think`, `foo.answer`, `foo.shell`,
+`foo.shell.output`); nesting extends the path (`foo.bar.ask`).
 
 `output.verbosity` controls detail:
 
@@ -150,6 +150,10 @@ path (`foo.bar.think`).
 - `"normal"`: adds main-agent thinking; a subagent's final answer streams dim.
 - `"high"`: everything, including full reasoning and every subagent block, plus
   the exact system message and a `# name(...)` description per tool.
+
+Only the user's prompt and the top-level answer use normal emphasis. Reasoning,
+tool calls, tool output, subagents, and handlers are dimmed. Handler input is
+shown only at high verbosity.
 
 In `"ask"` mode an `approve` prompt appears with `[y] Yes` and `[n] No`; only
 `y`/`n` decide, and `Ctrl+C` aborts the turn. Shell output appears under a dimmed
@@ -268,13 +272,13 @@ tools.mcp.szmcp = {
 };
 ```
 
-The handler has no `name`; its label is `mcp.<server>.<tool>.handler`, nested
-under the tool call. When the agent calls `mcp__szmcp__zim_get` (shown as
-`mcp.szmcp.zim_get`), the raw result becomes the handler's entire prompt and
-only its answer is appended as the tool result. There is no separate
-`<tool>.output` block: the prompt body is shown under the handler label and
-follows tool-output visibility. Handlers can use real tools and their own MCP
-handlers; they never inherit the caller's.
+The handler has no `name`; its input prompt is
+`mcp.<server>.<tool>.handler.ask`, nested under the tool call. When the agent
+calls `mcp__szmcp__zim_get` (shown as `mcp.szmcp.zim_get`), the raw result
+becomes the handler's entire prompt and only its answer is appended as the tool
+result. There is no separate `<tool>.output` block: the prompt body is shown
+under the handler label and follows tool-output visibility. Handlers can use
+real tools and their own MCP handlers; they never inherit the caller's.
 
 The handler's `description` is appended to the tool description after a newline.
 An unknown handler is reported after discovery and ignored. Built-in tools and

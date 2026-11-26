@@ -3,7 +3,7 @@ module RenderSpec (tests) where
 import Data.List (isInfixOf, isSuffixOf)
 import Hutian.Ansi (darkenColour, rgb)
 import qualified Hutian.Ansi as Ansi
-import Hutian.Context (TurnContext (MainContext), subagentContext)
+import Hutian.Context (TurnContext (MainContext), askLabel, subagentContext)
 import Hutian.Editor (cursorPosition, initialPrompt, setPromptText)
 import Hutian.Render
 import Test.Tasty
@@ -61,10 +61,12 @@ tests =
         assertBool
           "shell input keeps its text below the label"
           ("shell\nif true; then echo \"hi\"; fi" `isInfixOf` stripAnsi output)
-    , testCase "tool prompt highlights shell input" $ do
+    , testCase "tool prompt dims shell input" $ do
         let prompt = setPromptText "if true; then echo \"hi\"; fi" initialPrompt
             (output, _) = promptRenderText (ToolPrompt MainContext "shell") 0 80 prompt
-        assertBool "expected a shell syntax style" ("\ESC[38;2;" `isInfixOf` output)
+        assertBool
+          "tool input is gray"
+          ((grayForeground ++ "if true; then echo \"hi\"; fi") `isInfixOf` output)
         assertBool
           "tool input keeps its text below the label"
           ("shell\nif true; then echo \"hi\"; fi" `isInfixOf` stripAnsi output)
@@ -103,19 +105,20 @@ tests =
         moveCursorText (2, 0) (2, 1) @?= "\r\ESC[1C"
     , testCase "startPromptText clears the line" $
         startPromptText @?= "\ESC[K"
-    , testCase "tool prompts use the answer teal on its own line" $ do
+    , testCase "tool prompts use the dim teal on its own line" $ do
         let prompt = setPromptText "ls" initialPrompt
             (output, position) = promptRenderText (ToolPrompt MainContext "shell") 0 80 prompt
-        assertBool "teal prefix" ((boldTeal ++ "shell") `isInfixOf` output)
+        assertBool "dim teal prefix" ((dimTealForeground ++ "shell") `isInfixOf` output)
         assertBool "label text" ("shell" `isInfixOf` output)
         assertBool "label sits above the command" ("shell\nls" `isInfixOf` stripAnsi output)
         position @?= cursorPosition 80 toolLine prompt
         position @?= (1, 2)
-    , testCase "toolPromptTextIn MainContext renders a command with the tool label" $ do
+    , testCase "toolPromptTextIn MainContext renders a dim command" $ do
         let output = toolPromptTextIn MainContext "shell" 80 "echo hi"
-        assertBool "teal prefix" ((boldTeal ++ "shell") `isInfixOf` output)
+        assertBool "dim teal prefix" ((dimTealForeground ++ "shell") `isInfixOf` output)
         assertBool "label text" ("shell" `isInfixOf` output)
         assertBool "command text" ("echo hi" `isInfixOf` stripAnsi output)
+        assertBool "command is gray" ((grayForeground ++ "echo hi") `isInfixOf` output)
         assertBool "label sits above the command" ("shell\necho hi" `isInfixOf` stripAnsi output)
         assertBool "resets colors" (resetSequence `isInfixOf` output)
     , testCase "tool data prompts use JSON syntax highlighting" $ do
@@ -125,22 +128,26 @@ tests =
                 "mcp.demo.search"
                 80
                 "{\"query\":\"haskell\"}"
-        assertBool "teal prefix" ((boldTeal ++ "mcp.demo.search") `isInfixOf` output)
+        assertBool "dim teal prefix" ((dimTealForeground ++ "mcp.demo.search") `isInfixOf` output)
         assertBool
           "arguments sit below the label"
           ("mcp.demo.search\n{\"query\":\"haskell\"}" `isInfixOf` stripAnsi output)
         assertBool "json syntax style" ("\ESC[38;2;" `isInfixOf` output)
     , testCase "toolLabelTextIn MainContext labels commandless tool calls" $
-        toolLabelTextIn MainContext "jobs" @?= boldTeal ++ "jobs" ++ reset
-    , testCase "subagent prompts use blue and show the submitted task" $ do
+        toolLabelTextIn MainContext "jobs" @?= dimTealForeground ++ "jobs" ++ reset
+    , testCase "subagent prompts use dim blue and a gray task" $ do
         let output = subagentPromptText "cheap" 80 "summarize the page"
-        assertBool "blue prefix" ((boldBlue ++ "cheap") `isInfixOf` output)
+        assertBool "dim blue prefix" ((dimBlueForeground ++ "cheap") `isInfixOf` output)
+        assertBool
+          "the task is gray"
+          ((grayForeground ++ "summarize the page") `isInfixOf` output)
         assertBool
           "task sits below the label"
           ("cheap\nsummarize the page" `isInfixOf` stripAnsi output)
         let prompt = setPromptText "work" initialPrompt
             (rendered, position) = promptRenderText (SubagentPrompt "cheap") 0 80 prompt
-        assertBool "blue prefix" ((boldBlue ++ "cheap") `isInfixOf` rendered)
+        assertBool "dim blue prefix" ((dimBlueForeground ++ "cheap") `isInfixOf` rendered)
+        assertBool "work is gray" ((grayForeground ++ "work") `isInfixOf` rendered)
         assertBool "label sits above the work" ("cheap\nwork" `isInfixOf` stripAnsi rendered)
         position @?= cursorPosition 80 "cheap\n" prompt
     , testCase "subagent tool prompts use blue labels with dim inputs" $ do
@@ -199,6 +206,11 @@ tests =
         assertBool
           "shell and tool labels differ"
           (outputForegroundIn MainContext TermOutput /= outputForegroundIn MainContext ToolOutput)
+    , testCase "agent input labels mirror the top-level ask label" $ do
+        askLabel MainContext @?= "ask"
+        askLabel (subagentContext MainContext "cheap") @?= "cheap.ask"
+        askLabel (subagentContext (subagentContext MainContext "foo") "bar")
+          @?= "foo.bar.ask"
     , testCase "reasoning, answer, and tool labels are dim blue for a subagent" $ do
         reasoningLabelText MainContext @?= dimTealForeground ++ "think" ++ reset
         reasoningLabelText (subagentContext MainContext "cheap")

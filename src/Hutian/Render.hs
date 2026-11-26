@@ -32,7 +32,6 @@ module Hutian.Render
   , grayForeground
   , boldVibrantPink
   , boldTeal
-  , boldBlue
   , boldRed
   , dimTealForeground
   , dimBlueForeground
@@ -130,13 +129,16 @@ promptRenderText kind previousRow width prompt =
             | prefixCount > 0 = prefixForegroundFor kind ++ prefixPart ++ reset
             | otherwise = ""
           restRendered
-            | plainTextRows = rest
+            | plainTextRows = dimPlainRow rest
             | index < inputRowCount = inputRow rest
             | otherwise = rest
+          dimPlainRow text =
+            case kind of
+              SubagentPrompt _ -> grayForeground ++ text ++ reset
+              _ -> text
           inputRow text =
             case kind of
-              ToolPrompt context _ | isSubagentContext context ->
-                grayForeground ++ text ++ reset
+              ToolPrompt _ _ -> grayForeground ++ text ++ reset
               _ -> highlightShellLine text
           styleReset
             | '\ESC' `elem` restRendered = reset
@@ -146,9 +148,8 @@ promptRenderText kind previousRow width prompt =
             | otherwise = ""
        in prefixOutput ++ restRendered ++ styleReset ++ clearLine ++ newline
 
--- | Render a command requested by the model as a prompt line, followed by a
--- newline. Tool calls use a bright teal prompt so they stand out from
--- user-entered commands; tools run by a subagent use the subagent blue.
+-- | Render a command requested by the model as a dimmed prompt line, followed
+-- by a newline. Only user prompts and the top-level answer are not dimmed.
 toolPromptTextIn :: TurnContext -> String -> Int -> String -> String
 toolPromptTextIn context toolName width command =
   fst (promptRenderText (ToolPrompt context toolName) 0 width (setPromptText command initialPrompt))
@@ -190,13 +191,11 @@ prefixFor (SubagentPrompt label) = label ++ "\n"
 
 prefixForegroundFor :: PromptKind -> String
 prefixForegroundFor (ToolPrompt context _) = toolPromptForeground context
-prefixForegroundFor (SubagentPrompt _) = boldBlue
+prefixForegroundFor (SubagentPrompt _) = dimBlueForeground
 prefixForegroundFor _ = boldVibrantPink
 
 toolPromptForeground :: TurnContext -> String
-toolPromptForeground context
-  | isSubagentContext context = dimBlueForeground
-  | otherwise = boldTeal
+toolPromptForeground = dimForegroundFor
 
 -- | Dim foreground shared by reasoning, request blocks, and tool output: teal
 -- for the main agent and blue for a subagent.
@@ -386,7 +385,6 @@ resetCursorText = showCursorText ++ resetCursorColor ++ defaultCursorShape
 
 boldVibrantPink,
   boldTeal,
-  boldBlue,
   boldRed,
   dimPinkForeground,
   dimTealForeground,
@@ -422,7 +420,6 @@ grayStyle = Ansi.darkenStyle Ansi.dimFactor $ Ansi.foreground (Ansi.rgb 255 255 
 
 boldVibrantPink = Ansi.styleCode pinkStyle
 boldTeal = Ansi.styleCode tealStyle
-boldBlue = Ansi.styleCode blueStyle
 boldRed = Ansi.styleCode redStyle
 dimPinkForeground = Ansi.styleCode dimPinkStyle
 dimTealForeground = Ansi.styleCode dimTealStyle

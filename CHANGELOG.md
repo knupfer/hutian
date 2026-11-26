@@ -27,6 +27,13 @@ All notable changes to Hutian are documented here. The format follows
   message for batch mode, not a command run in the sandbox. Use the model's
   shell tool, or an interactive term-mode command, to run a command. A bare
   `--` ends option parsing so a prompt may start with a dash.
+- Tool commands, tool labels, subagent prompts, and handler blocks are dimmed;
+  only the user's prompt and the top-level agent answer keep normal emphasis.
+- Agent input prompts use the same `<path>.ask` label as the top-level user
+  prompt, so a subagent's task is `foo.ask` and a handler's input is
+  `mcp.<server>.<tool>.handler.ask`.
+- Handler input is shown only at high verbosity. Normal and low print the
+  handler label without the raw tool result.
 - Captured shell output stays as bytes for display and is decoded to text once
   for the model, with no `String` round trip. A 1 MiB tool result takes about
   7 ms instead of about 100 ms, and output is still not capped.

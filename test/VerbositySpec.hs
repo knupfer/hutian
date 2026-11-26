@@ -59,6 +59,10 @@ tests =
         outputBodyVisible Full @?= True
     , testCase "label-only visibility hides the body" $
         outputBodyVisible LabelOnly @?= False
+    , testCase "handler input is only shown at high verbosity" $ do
+        handlerBodyVisible VerbosityLow @?= False
+        handlerBodyVisible VerbosityNormal @?= False
+        handlerBodyVisible VerbosityHigh @?= True
     , testCase "arguments round-trip" $
         mapM_
           ( \verbosity ->

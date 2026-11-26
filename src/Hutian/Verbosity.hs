@@ -9,6 +9,7 @@ module Hutian.Verbosity
   , RenderMode (..)
   , renderMode
   , outputBodyVisible
+  , handlerBodyVisible
   ) where
 
 import Hutian.Context (TurnContext (..), isSubagentContext)
@@ -80,3 +81,9 @@ renderMode verbosity context =
 outputBodyVisible :: Visibility -> Bool
 outputBodyVisible Full = True
 outputBodyVisible LabelOnly = False
+
+-- | Handler input is debugging detail. Show it only at high verbosity; normal
+-- and low keep the label but not the raw tool result.
+handlerBodyVisible :: Verbosity -> Bool
+handlerBodyVisible VerbosityHigh = True
+handlerBodyVisible _ = False
