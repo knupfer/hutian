@@ -8,6 +8,7 @@
   modelName,
   llamaUrl,
   verbosity,
+  transcript,
   writable,
   nixDaemon,
   network,
@@ -32,6 +33,7 @@ let
 
   hutianShell = pkgs.callPackage ./hutian-shell.nix { inherit src; };
   sandboxLauncher = import ./sandbox.nix { inherit pkgs; };
+  transcriptDirectory = import ./transcript.nix { inherit pkgs; };
   relayBin = "${hutianShell}/bin/hutian-llm-relay";
 
   # The shell only needs the path to choose the chat or completion request
@@ -182,65 +184,12 @@ let
       closure=${closure}
       source_dir=$(pwd -P)
 
-      # --transcript is a launcher option because the user's remaining arguments
-      # become the first batch prompt. Resolve its host target now, while the
-      # launcher is still in the project directory.
-      transcript_path=""
-      transcript_host=""
-      transcript_name=""
-      while [ "$#" -gt 0 ]; do
-        case "$1" in
-          --transcript)
-            [ "$#" -ge 2 ] || {
-              echo "hutian: --transcript needs a path" >&2
-              exit 2
-            }
-            [ -z "$transcript_path" ] || {
-              echo "hutian: --transcript was given more than once" >&2
-              exit 2
-            }
-            transcript_path=$2
-            [ -n "$transcript_path" ] || {
-              echo "hutian: --transcript needs a path" >&2
-              exit 2
-            }
-            shift 2
-            ;;
-          --transcript=*)
-            [ -z "$transcript_path" ] || {
-              echo "hutian: --transcript was given more than once" >&2
-              exit 2
-            }
-            transcript_path="''${1#--transcript=}"
-            [ -n "$transcript_path" ] || {
-              echo "hutian: --transcript needs a path" >&2
-              exit 2
-            }
-            shift
-            ;;
-          --)
-            shift
-            break
-            ;;
-          *)
-            break
-            ;;
-        esac
-      done
       user_args=("$@")
-      if [ -n "$transcript_path" ]; then
-        case "$transcript_path" in
-          */)
-            echo "hutian: --transcript needs a file path, not a directory" >&2
-            exit 2
-            ;;
-        esac
-        case "$transcript_path" in
-          /*) transcript_host=$transcript_path ;;
-          *) transcript_host="$source_dir/$transcript_path" ;;
-        esac
-        transcript_name=$(basename "$transcript_host")
-      fi
+      transcript_host=""
+
+      ${optionalString transcript ''
+        transcript_host=$(${transcriptDirectory}/bin/hutian-transcript-dir "$source_dir")
+      ''}
 
       platform="''${GVISOR_PLATFORM:-systrap}"
       saved_tty=$(stty -g 2>/dev/null || true)
@@ -312,7 +261,7 @@ let
           for file in "$transcript_dir"/*; do
             [ -f "$file" ] || continue
             if ! install -m 600 "$file" "$target_dir/$(basename "$file")"; then
-              echo "hutian: could not copy transcript file to: $target_dir" >&2
+              echo "hutian: could not copy transcript file: $file" >&2
             fi
           done
         fi
@@ -407,10 +356,10 @@ let
       # Stage the transcript in a writable private directory. The shell writes
       # there, and cleanup copies the files to the host path. This keeps
       # /source usable even when sandbox.writable is false.
-      if [ -n "$transcript_path" ]; then
+      if [ -n "$transcript_host" ]; then
         transcript_dir=$(private_dir hutian-transcript)
         transcript_volumes=(-volume "$transcript_dir:/run/hutian-transcript")
-        transcript_args=(--transcript "/run/hutian-transcript/$transcript_name")
+        transcript_args=(--transcript /run/hutian-transcript/transcript)
       fi
 
       # Remaining positional arguments are the first user message for batch

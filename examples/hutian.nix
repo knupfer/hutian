@@ -35,6 +35,8 @@
 
   output = {
     verbosity = "high";
+    # Record each session under .hutian/transcripts/<timestamp>/.
+    transcript = false;
   };
 
   agent = {

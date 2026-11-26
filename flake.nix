@@ -37,6 +37,7 @@
         ];
         output = [
           "verbosity"
+          "transcript"
         ];
         agent = [
           "model"
@@ -311,6 +312,7 @@
               "high"
             ]
           ) output.verbosity;
+          transcript = checked "output.transcript" "a boolean" builtins.isBool output.transcript;
           modelName = checked "agent.model" "a non-empty string" isNonEmptyString agent.model;
           systemPrompt = checked "agent.systemPrompt" "a string" builtins.isString agent.systemPrompt;
           tools = checkedTools "agent.tools" agent.tools;
@@ -331,6 +333,7 @@
         };
         output = {
           verbosity = "high";
+          transcript = false;
         };
         agent = {
           model = "default";
@@ -430,6 +433,7 @@
           };
           relayPackage = pkgs.callPackage ./nix/hutian-shell.nix { src = self; };
           sandboxScript = import ./nix/sandbox.nix { inherit pkgs; };
+          transcriptDirectory = import ./nix/transcript.nix { inherit pkgs; };
 
           # Probe values differ from the flake defaults so the checks can tell
           # configured values from hard-coded ones.
@@ -439,6 +443,7 @@
             };
             output = {
               verbosity = "low";
+              transcript = true;
             };
             agent = {
               model = "probe-model";
@@ -799,42 +804,32 @@
           ];
 
           transcript-configuration = check "transcript-configuration" [
-            (contains "--transcript" probeLauncher)
+            (contains "hutian-transcript-dir" probeLauncher)
+            (contains "transcript_host=" probeLauncher)
             (contains "copy_transcript" probeLauncher)
             (contains "/run/hutian-transcript" probeLauncher)
             (contains "install -m 600" probeLauncher)
           ];
 
-          transcript-arguments = check "transcript-arguments" [
-            ''
-              output=$(${probeLauncher} --transcript 2>&1 || true)
-              case "$output" in
-                *"hutian: --transcript needs a path"*) ;;
-                *) echo "unexpected --transcript error: $output" >&2; exit 1 ;;
-              esac
-            ''
-            ''
-              output=$(${probeLauncher} --transcript= 2>&1 || true)
-              case "$output" in
-                *"hutian: --transcript needs a path"*) ;;
-                *) echo "unexpected --transcript= error: $output" >&2; exit 1 ;;
-              esac
-            ''
-            ''
-              output=$(${probeLauncher} --transcript one --transcript two 2>&1 || true)
-              case "$output" in
-                *"hutian: --transcript was given more than once"*) ;;
-                *) echo "unexpected duplicate --transcript error: $output" >&2; exit 1 ;;
-              esac
-            ''
-            ''
-              output=$(${probeLauncher} --transcript directory/ 2>&1 || true)
-              case "$output" in
-                *"hutian: --transcript needs a file path"*) ;;
-                *) echo "unexpected directory --transcript error: $output" >&2; exit 1 ;;
-              esac
-            ''
-          ];
+          transcript-directory = pkgs.runCommand "hutian-transcript-directory-check" { } ''
+            root=$(${coreutils}/bin/mktemp -d)
+            trap '${coreutils}/bin/rm -rf "$root"' EXIT
+            first=$(${transcriptDirectory}/bin/hutian-transcript-dir "$root")
+            second=$(${transcriptDirectory}/bin/hutian-transcript-dir "$root")
+            test -d "$root/.hutian/transcripts"
+            case "$first" in
+              */transcript) ;;
+              *) echo "unexpected transcript path: $first" >&2; exit 1 ;;
+            esac
+            test -d "$(${coreutils}/bin/dirname "$first")"
+            test -d "$(${coreutils}/bin/dirname "$second")"
+            test "$first" != "$second"
+            ${coreutils}/bin/touch "$first"
+            third=$(${transcriptDirectory}/bin/hutian-transcript-dir "$root")
+            test -f "$first"
+            test "$first" != "$third"
+            ${coreutils}/bin/touch $out
+          '';
 
           api-key-configuration = check "api-key" (
             map (pattern: contains pattern keyCommandLauncher) [
