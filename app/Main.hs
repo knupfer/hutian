@@ -5,6 +5,7 @@ module Main (main) where
 import Control.Exception (finally)
 import Control.Monad (when)
 import qualified Data.ByteString as BS
+import Data.Foldable (for_)
 import Hutian.Agent
   ( RuntimeEnv (..)
   , discoverMcpSettings
@@ -33,6 +34,7 @@ import Hutian.Jobs.Runtime (withJobRuntime)
 import Hutian.Json (decodeUtf8Lenient)
 import Hutian.Llm
   ( LlmSettings (..)
+  , ModelName (..)
   , SystemPrompt (..)
   , loadLlmLaunch
   )
@@ -48,6 +50,14 @@ import Hutian.Shell (executableCommands)
 import Hutian.Terminal (promptForInput)
 import Hutian.Tool (toolDefinitionsFor)
 import Hutian.Tool.Summary (toolSummaryLines)
+import Hutian.Transcript
+  ( SessionInfo (..)
+  , TranscriptEvent (..)
+  , closeTranscript
+  , openTranscript
+  , recordTranscript
+  , recordTranscriptMaybe
+  )
 import Hutian.Verbosity (Verbosity (..))
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.Environment (getArgs, lookupEnv)
@@ -68,29 +78,49 @@ main = do
       -- begins so the long-lived process does not pin that mount in gVisor;
       -- each command enters the working directory for its own lifetime.
       workingDirectory <- getCurrentDirectory
+      -- Open the transcript before leaving the session directory so a relative
+      -- --transcript path means the same place as the user's other paths.
+      transcript <- traverse openTranscript (settingTranscript settings)
       setCurrentDirectory "/"
       terminals <-
         (&&) <$> hIsTerminalDevice stdin <*> hIsTerminalDevice stdout
       -- An explicit prompt always means one batch turn, even on a terminal.
       let interactive = terminals && null promptWords
+      let sessionInfo =
+            SessionInfo
+              { sessionInfoModel = unModelName (settingModel settings)
+              }
+          startTranscript =
+            for_ transcript $ \recorder ->
+              recordTranscript
+                recorder
+                (TranscriptSessionStarted sessionInfo)
+          finishTranscript =
+            for_ transcript $ \recorder -> do
+              recordTranscript recorder (TranscriptSessionEnded "exit")
+              closeTranscript recorder
+      startTranscript
       interruptFlag <- newInterruptFlag
       installInterruptHandler interruptFlag
       mcpSessions <- newMcpSessionCache
       directory <- jobDirectory
-      withJobRuntime directory workingDirectory $ \jobs -> do
-        let env =
-              RuntimeEnv
-                { envWorkingDirectory = workingDirectory
-                , envJobs = jobs
-                , envSettings = settings
-                , envInterrupt = interruptFlag
-                , envMcpSessions = mcpSessions
-                , envOutput =
-                    if interactive then interactiveOutput else silentOutput
-                }
-        if interactive
-          then runInteractive env
-          else runBatch env promptWords
+      let withEnvironment jobs = do
+            let env =
+                  RuntimeEnv
+                    { envWorkingDirectory = workingDirectory
+                    , envJobs = jobs
+                    , envSettings = settings
+                    , envInterrupt = interruptFlag
+                    , envMcpSessions = mcpSessions
+                    , envTranscript = transcript
+                    , envOutput =
+                        if interactive then interactiveOutput else silentOutput
+                    }
+            if interactive
+              then runInteractive env
+              else runBatch env promptWords
+      withJobRuntime directory workingDirectory withEnvironment
+        `finally` finishTranscript
 
 -- | The normal two-mode shell. Only used when stdin and stdout are terminals
 -- and no prompt argument was given.
@@ -168,6 +198,8 @@ sessionEffects env commands =
     { sessionPrompt = promptForInput (envWorkingDirectory env) commands
     , sessionClearInterrupt = clearInterrupt (envInterrupt env)
     , sessionRunInput = runInput env
+    , sessionSnapshot =
+        recordTranscriptMaybe (envTranscript env) . TranscriptConversationSnapshot
     }
 
 -- | Keep job logs under the session's runtime directory when one is

@@ -53,6 +53,9 @@ data LlmSettings = LlmSettings
   -- | The model's tool policies, nested subagent configuration, and discovered
   -- MCP tools. Term mode is unaffected.
   , settingTools :: ToolCatalog
+  -- | Where to write the session transcript. The shell appends @.jsonl@ and
+  -- @.md@ if the path has neither extension.
+  , settingTranscript :: Maybe FilePath
   }
   deriving stock (Eq, Show)
 
@@ -143,6 +146,7 @@ parseLlmLaunchWithFiles loaded arguments = do
           (optionValueFor "--llama-socket" options)
           verbosity
           tools
+          (optionValueFor "--transcript" options)
       _ -> Left (missingOptionsMessage llmUsage missing)
   pure (settings, positionals)
   where
@@ -250,6 +254,7 @@ llmOptions =
   , modelShellOption
   , modelWebfetchOption
   , subagentOption
+  , transcriptOption
   ]
 
 llmUrlOption, verbosityOption, modelOption, modelFileOption :: OptionSpec
@@ -264,19 +269,21 @@ systemPromptFileOption = OptionSpec "--system-prompt-file" OptionValue "PATH" Fa
 socketOption = OptionSpec "--llama-socket" OptionValue "PATH" True
 toolsFileOption = OptionSpec "--tools-file" OptionValue "PATH" True
 
-modelShellOption, modelWebfetchOption, subagentOption :: OptionSpec
+modelShellOption, modelWebfetchOption, subagentOption, transcriptOption :: OptionSpec
 modelShellOption = OptionSpec "--model-shell" OptionValue "deny|ask|allow" True
 modelWebfetchOption = OptionSpec "--model-webfetch" OptionValue "deny|ask|allow" True
 subagentOption = OptionSpec "--subagent-file" OptionValue "PATH" True
+transcriptOption = OptionSpec "--transcript" OptionValue "PATH" True
 
--- | Reject malformed URLs, empty model names, and empty socket paths; an empty
--- system prompt is allowed.
-settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Maybe FilePath -> Verbosity -> ToolConfig -> Either String LlmSettings
-settingsFrom url model systemPrompt socket verbosity tools = do
+-- | Reject malformed URLs, empty model names, empty socket paths, and empty
+-- transcript paths; an empty system prompt is allowed.
+settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Maybe FilePath -> Verbosity -> ToolConfig -> Maybe FilePath -> Either String LlmSettings
+settingsFrom url model systemPrompt socket verbosity tools transcript = do
   validateLlmUrl url
   validateNonEmpty "--model" (unModelName model)
   maybe (Right ()) (validateNonEmpty "--llama-socket") socket
-  pure (LlmSettings url model systemPrompt socket verbosity (toolCatalog tools))
+  maybe (Right ()) (validateNonEmpty "--transcript") transcript
+  pure (LlmSettings url model systemPrompt socket verbosity (toolCatalog tools) transcript)
   where
     validateNonEmpty name value
       | null value = Left ("empty value for " ++ name ++ "\n" ++ llmUsage)

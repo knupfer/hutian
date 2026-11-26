@@ -50,6 +50,7 @@ common dependencies
     , process
     , skylighting
     , text
+    , time
     , unix
     , vector
 
@@ -101,6 +102,7 @@ library
       Hutian.Tool.Config
       Hutian.Tool.Exec
       Hutian.Tool.Summary
+      Hutian.Transcript
       Hutian.Verbosity
       Hutian.Web
   build-depends:
@@ -165,6 +167,7 @@ test-suite hutian-shell-test
       TestSupport
       ToolConfigSpec
       ToolSpec
+      TranscriptSpec
       VerbositySpec
       WebSpec
       WireSpec

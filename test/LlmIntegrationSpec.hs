@@ -99,6 +99,7 @@ tests =
                     , envSettings = settingsFor port
                     , envInterrupt = flag
                     , envMcpSessions = mcpSessions
+                    , envTranscript = Nothing
                     , envOutput = silentOutput
                     }
             captured <-
@@ -169,6 +170,7 @@ settingsFor port =
     , settingSocket = Nothing
     , settingVerbosity = VerbosityHigh
     , settingTools = toolCatalog (defaultToolConfig {toolShell = ToolAllow})
+    , settingTranscript = Nothing
     }
 
 emptyResult :: LlmResult

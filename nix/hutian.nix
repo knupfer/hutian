@@ -143,6 +143,8 @@ let
     mkdir -p "$out/run/hutian"
     # Mountpoint for the short-lived model and system-prompt files.
     mkdir -p "$out/run/hutian-config"
+    # Mountpoint for the session transcript, when one was requested.
+    mkdir -p "$out/run/hutian-transcript"
 
     # gVisor recursively binds the rootfs into the sandbox, so the launcher can
     # bind each closure path under its mountpoint instead of passing one gVisor
@@ -179,6 +181,67 @@ let
       rootfs=${rootfs}
       closure=${closure}
       source_dir=$(pwd -P)
+
+      # --transcript is a launcher option because the user's remaining arguments
+      # become the first batch prompt. Resolve its host target now, while the
+      # launcher is still in the project directory.
+      transcript_path=""
+      transcript_host=""
+      transcript_name=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --transcript)
+            [ "$#" -ge 2 ] || {
+              echo "hutian: --transcript needs a path" >&2
+              exit 2
+            }
+            [ -z "$transcript_path" ] || {
+              echo "hutian: --transcript was given more than once" >&2
+              exit 2
+            }
+            transcript_path=$2
+            [ -n "$transcript_path" ] || {
+              echo "hutian: --transcript needs a path" >&2
+              exit 2
+            }
+            shift 2
+            ;;
+          --transcript=*)
+            [ -z "$transcript_path" ] || {
+              echo "hutian: --transcript was given more than once" >&2
+              exit 2
+            }
+            transcript_path="''${1#--transcript=}"
+            [ -n "$transcript_path" ] || {
+              echo "hutian: --transcript needs a path" >&2
+              exit 2
+            }
+            shift
+            ;;
+          --)
+            shift
+            break
+            ;;
+          *)
+            break
+            ;;
+        esac
+      done
+      user_args=("$@")
+      if [ -n "$transcript_path" ]; then
+        case "$transcript_path" in
+          */)
+            echo "hutian: --transcript needs a file path, not a directory" >&2
+            exit 2
+            ;;
+        esac
+        case "$transcript_path" in
+          /*) transcript_host=$transcript_path ;;
+          *) transcript_host="$source_dir/$transcript_path" ;;
+        esac
+        transcript_name=$(basename "$transcript_host")
+      fi
+
       platform="''${GVISOR_PLATFORM:-systrap}"
       saved_tty=$(stty -g 2>/dev/null || true)
       writable=${boolToString writable}
@@ -225,18 +288,40 @@ let
       nix_volumes=()
       runsc_args=()
       config_volumes=()
+      transcript_volumes=()
       relay_runsc_args=()
       llm_args=()
+      transcript_args=()
 
       relay_pid=""
       relay_dir=""
       config_dir=""
+      transcript_dir=""
+
+      # Copy the staged transcript to its host target. This runs from cleanup so
+      # a normal exit, a failed turn, and Ctrl+C all keep the transcript.
+      # shellcheck disable=SC2329
+      copy_transcript() {
+        if [ -n "''${transcript_dir:-}" ] && [ -n "''${transcript_host:-}" ]; then
+          local target_dir
+          target_dir=$(dirname "$transcript_host")
+          mkdir -p "$target_dir" 2>/dev/null || true
+          for file in "$transcript_dir"/*; do
+            [ -f "$file" ] || continue
+            install -m 600 "$file" "$target_dir/$(basename "$file")" 2>/dev/null || true
+          done
+        fi
+      }
 
       # shellcheck disable=SC2329
       cleanup() {
         if [ -n "''${relay_pid:-}" ]; then
           kill "$relay_pid" 2>/dev/null || true
           wait "$relay_pid" 2>/dev/null || true
+        fi
+        copy_transcript
+        if [ -n "''${transcript_dir:-}" ]; then
+          rm -rf "$transcript_dir"
         fi
         if [ -n "''${relay_dir:-}" ]; then
           rm -rf "$relay_dir"
@@ -314,17 +399,26 @@ let
       install -m 600 ${configTools} "$config_dir/tools"
       config_volumes=(-volume "$config_dir:/run/hutian-config")
 
-      # Positional arguments are the first user message for batch mode. The
-      # separator keeps a prompt that starts with a dash from being parsed as
-      # an option. With a prompt argument, or when stdin and stdout are not both
-      # terminals, the shell runs one quiet turn and prints only the final
-      # answer.
-      user_args=("$@")
+      # Stage the transcript in a writable private directory. The shell writes
+      # there, and cleanup copies the files to the host path. This keeps
+      # /source usable even when sandbox.writable is false.
+      if [ -n "$transcript_path" ]; then
+        transcript_dir=$(private_dir hutian-transcript)
+        transcript_volumes=(-volume "$transcript_dir:/run/hutian-transcript")
+        transcript_args=(--transcript "/run/hutian-transcript/$transcript_name")
+      fi
+
+      # Remaining positional arguments are the first user message for batch
+      # mode. The separator keeps a prompt that starts with a dash from being
+      # parsed as an option. With a prompt argument, or when stdin and stdout are
+      # not both terminals, the shell runs one quiet turn and prints only the
+      # final answer.
       set -- ${hutianShell}/bin/hutian-shell \
         --llama-url "$(cat ${logicalUrlFile})" \
         --model-file /run/hutian-config/model \
         --system-prompt-file /run/hutian-config/system-prompt \
-        "''${llm_args[@]}"
+        "''${llm_args[@]}" \
+        "''${transcript_args[@]}"
       if [ "''${#user_args[@]}" -gt 0 ]; then
         set -- "$@" -- "''${user_args[@]}"
       fi
@@ -360,6 +454,7 @@ let
             -force-overlay=false
             "''${nix_volumes[@]}"
             "''${config_volumes[@]}"
+            "''${transcript_volumes[@]}"
             "$@"
       )
 

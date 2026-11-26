@@ -36,6 +36,7 @@ testSettings api tools model systemPrompt =
     , settingSocket = Nothing
     , settingVerbosity = VerbosityHigh
     , settingTools = tools
+    , settingTranscript = Nothing
     }
   where
     url =
@@ -79,6 +80,7 @@ unitTests =
                 Nothing
                 VerbosityHigh
                 (shellTools ToolDeny)
+                Nothing
             )
         parseSettings
           [ "--llama-url"
@@ -89,7 +91,7 @@ unitTests =
           , ""
           ]
           @?= Right
-            (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt "") Nothing VerbosityHigh (shellTools ToolDeny))
+            (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt "") Nothing VerbosityHigh (shellTools ToolDeny) Nothing)
     , testCase "parseLlmLaunchWithFiles returns positional prompt arguments" $ do
         let base =
               [ "--llama-url"
@@ -145,7 +147,44 @@ unitTests =
                 (Just "/run/hutian/llm.sock")
                 VerbosityHigh
                 (shellTools ToolDeny)
+                Nothing
             )
+    , testCase "parseSettings accepts an optional transcript path" $
+        parseSettings
+          [ "--llama-url"
+          , "http://example.test/v1/chat/completions"
+          , "--model"
+          , "m"
+          , "--system-prompt"
+          , ""
+          , "--transcript"
+          , "/tmp/session.md"
+          ]
+          @?= Right
+            ( LlmSettings
+                (LlmUrl "http://example.test/v1/chat/completions")
+                (ModelName "m")
+                (SystemPrompt "")
+                Nothing
+                VerbosityHigh
+                (shellTools ToolDeny)
+                (Just "/tmp/session.md")
+            )
+    , testCase "parseSettings rejects an empty transcript path" $
+        case
+            parseSettings
+              [ "--llama-url"
+              , "http://example.test/v1/chat/completions"
+              , "--model"
+              , "m"
+              , "--system-prompt"
+              , ""
+              , "--transcript"
+              , ""
+              ]
+          of
+            Left message -> assertBool "names the option" ("--transcript" `isInfixOf` message)
+            Right _ -> assertFailure "an empty transcript path must be rejected"
     , testCase "parseLlmSettingsWithFiles reads model and prompt contents" $
         parseLlmSettingsWithFiles
           [ ("/run/model", "file-model")
@@ -168,6 +207,7 @@ unitTests =
                 Nothing
                 VerbosityHigh
                 (shellTools ToolDeny)
+                Nothing
             )
     , testCase "loadLlmLaunch removes the model and prompt files" $ do
         temporary <- getTemporaryDirectory
@@ -197,6 +237,7 @@ unitTests =
                 Nothing
                 VerbosityHigh
                 (shellTools ToolDeny)
+                Nothing
             )
         modelExists <- doesFileExist modelPath
         promptExists <- doesFileExist promptPath
@@ -244,6 +285,7 @@ unitTests =
                         }
                     )
                 )
+                Nothing
             )
     , testCase "parseLlmSettings parses verbosity" $ do
         let parseVerbosity extra =
@@ -291,6 +333,7 @@ unitTests =
                     Nothing
                     VerbosityHigh
                     (shellTools policy)
+                    Nothing
                 )
         parsePolicy [] @?= settings ToolDeny
         parsePolicy ["--model-shell", "deny"] @?= settings ToolDeny
@@ -592,6 +635,7 @@ prop_parseSettings model systemPrompt =
           Nothing
           VerbosityHigh
           (shellTools ToolDeny)
+          Nothing
       )
   where
     urlText = "http://example.test/v1/chat/completions"
@@ -617,6 +661,7 @@ prop_parseSettingsWithSocket model systemPrompt socket =
           (Just socketText)
           VerbosityHigh
           (shellTools ToolDeny)
+          Nothing
       )
   where
     urlText = "http://example.test/v1/chat/completions"

@@ -88,6 +88,7 @@ stdoutLlmOutput =
     , llmOutputErrorLine = hPutStrLn stderr
     , llmOutputContext = MainContext
     , llmOutputVerbosity = VerbosityHigh
+    , llmOutputTranscript = Nothing
     }
 
 -- | Captures install a process-wide redirection, so two of them must never be

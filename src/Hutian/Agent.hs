@@ -9,7 +9,9 @@ module Hutian.Agent
   , runBatchInput
   ) where
 
-import Control.Monad (when)
+import Control.Monad (unless, when)
+import Data.Char (isSpace)
+import Data.Maybe (fromMaybe)
 import Hutian.Command (TerminalInput (..), classifyTerminalInput)
 import Hutian.Console
   ( consoleIsInteractive
@@ -67,6 +69,11 @@ import Hutian.Tool.Config
   )
 import Hutian.Tool.Exec (ToolRuntime (..), runToolCallsWith)
 import Hutian.Tool.Summary (toolSummaryLines)
+import Hutian.Transcript
+  ( Transcript
+  , TranscriptEvent (..)
+  , recordTranscriptMaybe
+  )
 import Hutian.Verbosity
   ( Verbosity (..)
   , handlerBodyVisible
@@ -81,6 +88,8 @@ data RuntimeEnv = RuntimeEnv
   , envSettings :: LlmSettings
   , envInterrupt :: InterruptFlag
   , envMcpSessions :: McpSessionCache
+  -- | Structured session recording, if the user requested a transcript.
+  , envTranscript :: Maybe Transcript
   -- | How turns present their activity. Batch runs use the silent output.
   , envOutput :: Output
   }
@@ -115,8 +124,19 @@ discoverMcpSettings settings = do
 runInput :: RuntimeEnv -> InputMode -> String -> Conversation -> IO Conversation
 runInput env mode text conversation =
   case mode of
-    LlmInput -> runLlmInput env conversation text
-    TermInput -> runTerminalInput (envWorkingDirectory env) conversation text
+    LlmInput -> do
+      unless (all isSpace text) $
+        recordEvent env (TranscriptInput LlmInput text)
+      runLlmInput env conversation text
+    TermInput ->
+      runTerminalInput
+        (envWorkingDirectory env)
+        (envTranscript env)
+        conversation
+        text
+
+recordEvent :: RuntimeEnv -> TranscriptEvent -> IO ()
+recordEvent env = recordTranscriptMaybe (envTranscript env)
 
 -- | Run a prompt through the model, executing any tools it requests and
 -- feeding the results back until it produces a final answer.
@@ -137,14 +157,17 @@ runLlmInput env conversation prompt =
 -- still reach stderr.
 runBatchInput :: RuntimeEnv -> String -> IO (Either String String)
 runBatchInput env prompt = do
+  unless (all isSpace prompt) $
+    recordEvent env (TranscriptInput LlmInput prompt)
   let runtime = toolRuntime env MainContext
-  (_, result) <-
+  (conversation, result) <-
     runModelTurn
       (envInterrupt env)
       (envSettings env)
       runtime
       emptyConversation
       prompt
+  recordEvent env (TranscriptConversationSnapshot conversation)
   pure (finalAnswer "hutian: the model returned no answer" result)
 
 -- | The answer text of a finished turn, or the caller's message when the model
@@ -168,13 +191,26 @@ runModelTurn
   -> IO (Conversation, LlmResult)
 runModelTurn interrupt settings runtime conversation prompt = do
   let output = llmOutputFor runtime
+      transcript = toolRuntimeTranscript runtime
+      context = toolRuntimeContext runtime
+      recordAssistant result =
+        case (llmResponseText result, llmToolCalls result) of
+          (Nothing, []) -> pure ()
+          (answer, calls) ->
+            recordTranscriptMaybe
+              transcript
+              (TranscriptAssistant context (fromMaybe "" answer) calls)
       loop =
         LlmLoop
           { loopRunTools = runToolCallsWith runtime (settingTools settings)
-          , loopContinue = runLlmContinuation output interrupt settings
+          , loopContinue = \current -> do
+              next <- runLlmContinuation output interrupt settings current
+              recordAssistant next
+              pure next
           }
   result <-
     runLlmWithTools output interrupt settings conversation prompt
+  recordAssistant result
   runToolLoopWithResult
     loop
     interrupt
@@ -194,6 +230,7 @@ toolRuntime env context =
     , toolRuntimeVerbosity = settingVerbosity (envSettings env)
     , toolRuntimeOutput = envOutput env
     , toolRuntimeMcpSessions = envMcpSessions env
+    , toolRuntimeTranscript = envTranscript env
     , toolRuntimeSubagent = runSubagent env context
     , toolRuntimeHandler = runResultHandler env context
     }
@@ -271,6 +308,9 @@ runAgent env parent presentation agentName agent prompt = do
       outputPresent
         output
         (PresentHandlerPrompt childContext (askLabel childContext) showBody prompt)
+  recordTranscriptMaybe
+    (envTranscript env)
+    (TranscriptAgentPrompt childContext (askLabel childContext) prompt)
   (_, finalResult) <-
     runModelTurn
       (envInterrupt childEnv)
@@ -288,29 +328,35 @@ llmOutputFor runtime =
   LlmOutput
     { llmOutputWrite =
         outputPresent (toolRuntimeOutput runtime) . PresentChunk
-    , llmOutputErrorLine = consoleWriteErrorLine
+    , llmOutputErrorLine = \message -> do
+        recordTranscriptMaybe
+          (toolRuntimeTranscript runtime)
+          (TranscriptDiagnostic message)
+        consoleWriteErrorLine message
     , llmOutputContext = toolRuntimeContext runtime
     , llmOutputVerbosity = toolRuntimeVerbosity runtime
+    , llmOutputTranscript = toolRuntimeTranscript runtime
     }
 
-runTerminalInput :: FilePath -> Conversation -> String -> IO Conversation
-runTerminalInput workingDirectory conversation text =
+runTerminalInput :: FilePath -> Maybe Transcript -> Conversation -> String -> IO Conversation
+runTerminalInput workingDirectory transcript conversation text =
   case classifyTerminalInput text of
     NoTerminalInput -> pure conversation
-    SingleLineInput line -> runTerminalScript workingDirectory conversation line
-    MultiLineInput script -> runTerminalScript workingDirectory conversation script
+    SingleLineInput line -> runTerminalScript workingDirectory transcript conversation line
+    MultiLineInput script -> runTerminalScript workingDirectory transcript conversation script
 
-runTerminalScript :: FilePath -> Conversation -> String -> IO Conversation
-runTerminalScript workingDirectory conversation command = do
+runTerminalScript :: FilePath -> Maybe Transcript -> Conversation -> String -> IO Conversation
+runTerminalScript workingDirectory transcript conversation command = do
+  recordTranscriptMaybe transcript (TranscriptTerminalCommand command)
   printOutputLabelIn MainContext "shell" TermOutput
-  withGrayOutput (runStreamingCommand workingDirectory command)
+  withGrayOutput (runStreamingCommand transcript workingDirectory command)
   pure (appendTerminal command conversation)
 
 -- | Run a command the user typed. A terminal gets inherited stdio so
 -- full-screen programs work; otherwise output is streamed through the
 -- sanitizer so escape sequences do not reach logs.
-runStreamingCommand :: FilePath -> String -> IO ()
-runStreamingCommand workingDirectory command = do
+runStreamingCommand :: Maybe Transcript -> FilePath -> String -> IO ()
+runStreamingCommand transcript workingDirectory command = do
   interactive <- consoleIsInteractive
   result <-
     if interactive
@@ -322,4 +368,8 @@ runStreamingCommand workingDirectory command = do
           stderr
           workingDirectory
           command
-  either consoleWriteErrorLine pure result
+  case result of
+    Left message -> do
+      recordTranscriptMaybe transcript (TranscriptDiagnostic message)
+      consoleWriteErrorLine message
+    Right () -> pure ()

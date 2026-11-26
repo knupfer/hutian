@@ -219,6 +219,7 @@ tests =
                         , toolRuntimeVerbosity = VerbosityNormal
                         , toolRuntimeOutput = interactiveOutput
                         , toolRuntimeMcpSessions = mcpSessions
+                        , toolRuntimeTranscript = Nothing
                         , toolRuntimeSubagent = \_ _ -> pure (Left "not configured")
                         , toolRuntimeHandler =
                             \_ _ _ raw -> do

@@ -69,6 +69,11 @@ import Hutian.Tool.Config
   , SubagentConfig (..)
   , handlerConfigFor
   )
+import Hutian.Transcript
+  ( Transcript
+  , TranscriptEvent (..)
+  , recordTranscriptMaybe
+  )
 import Hutian.Web (fetchResultText, fetchUrl)
 import Hutian.Verbosity
   ( RenderMode (..)
@@ -88,6 +93,8 @@ data ToolRuntime = ToolRuntime
   -- | How calls, results, and approval questions are presented.
   , toolRuntimeOutput :: Output
   , toolRuntimeMcpSessions :: McpSessionCache
+  -- | Structured recording, independent of what the terminal displays.
+  , toolRuntimeTranscript :: Maybe Transcript
   , toolRuntimeSubagent :: SubagentConfig -> String -> IO (Either String String)
   , toolRuntimeHandler :: String -> String -> HandlerConfig -> String -> IO (Either String String)
   }
@@ -106,6 +113,7 @@ runToolCalls jobs workingDirectory policy conversation calls = do
       , toolRuntimeVerbosity = VerbosityHigh
       , toolRuntimeOutput = interactiveOutput
       , toolRuntimeMcpSessions = mcpSessions
+      , toolRuntimeTranscript = Nothing
       , toolRuntimeSubagent = \_ _ ->
           pure (Left "tool error: the model subagent tool is disabled")
       , toolRuntimeHandler = \_ _ _ _ ->
@@ -121,6 +129,18 @@ runToolCallsWith :: ToolRuntime -> ToolCatalog -> Conversation -> [ToolCall] -> 
 runToolCallsWith runtime catalog =
   runToolCallsPlanned (planToolWith catalog) runtime
 
+recordTool :: ToolRuntime -> TranscriptEvent -> IO ()
+recordTool runtime = recordTranscriptMaybe (toolRuntimeTranscript runtime)
+
+-- | The human-facing tool name. MCP calls use the dotted display name in the
+-- transcript, matching the handler and subagent context paths.
+planDisplayName :: ToolPlan -> ToolCall -> String
+planDisplayName plan call =
+  case plan of
+    PlanExecute _ (CallMcp server tool _) ->
+      mcpToolDisplayName (mcpServerNameOf server) (mcpToolName tool)
+    _ -> toolCallName call
+
 runToolCallsPlanned
   :: (ToolCall -> ToolPlan)
   -> ToolRuntime
@@ -130,7 +150,18 @@ runToolCallsPlanned
 runToolCallsPlanned planner runtime = go ToolsCompleted
   where
     go status conversation [] = pure (status, conversation)
-    go ToolsAborted conversation (call : rest) =
+    go ToolsAborted conversation (call : rest) = do
+      let displayName = planDisplayName (planner call) call
+      recordTool runtime
+        (TranscriptToolRequest (toolRuntimeContext runtime) displayName call)
+      recordTool runtime
+        ( TranscriptToolResult
+            (toolRuntimeContext runtime)
+            (toolCallId call)
+            displayName
+            False
+            abortedToolMessage
+        )
       go ToolsAborted (appendToolResult (toolCallId call) abortedToolMessage conversation) rest
     go ToolsCompleted conversation (call : rest) = do
       (status, conversation') <- runToolCall planner runtime conversation call
@@ -142,19 +173,28 @@ runToolCall
   -> Conversation
   -> ToolCall
   -> IO (ToolRun, Conversation)
-runToolCall planner runtime conversation call =
-  case planner call of
+runToolCall planner runtime conversation call = do
+  recordTool runtime (TranscriptToolRequest context transcriptName call)
+  case plan of
     PlanRefuse message -> refuse message
     PlanExecute approval action -> do
       decision <-
         case approval of
           RunNow -> describeAction action >> pure ToolApproved
           AskUser -> confirmAction action
+      -- Only an interactive approval has a decision worth recording. RunNow is
+      -- the policy's automatic path, not a user response.
+      case approval of
+        AskUser ->
+          recordTool runtime (TranscriptToolDecision context (toolCallId call) decision)
+        RunNow -> pure ()
       case decision of
         ToolApproved -> executeAction action
         ToolDenied -> refuse (deniedMessage action)
         ToolAborted -> aborted
   where
+    plan = planner call
+    transcriptName = planDisplayName plan call
     jobs = toolRuntimeJobs runtime
     workingDirectory = toolRuntimeWorkingDirectory runtime
     context = toolRuntimeContext runtime
@@ -164,10 +204,12 @@ runToolCall planner runtime conversation call =
     showOutputBody = outputBodyVisible toolOutput
     present = outputPresent output
 
-    refuse message =
+    refuse message = do
+      recordToolResult False message
       pure (ToolsCompleted, appendToolResult (toolCallId call) message conversation)
 
-    aborted =
+    aborted = do
+      recordToolResult False abortedToolMessage
       pure (ToolsAborted, appendToolResult (toolCallId call) abortedToolMessage conversation)
 
     finish :: Either String String -> IO (ToolRun, Conversation)
@@ -175,10 +217,22 @@ runToolCall planner runtime conversation call =
 
     finishError message = do
       consoleWriteErrorLine message
+      recordToolResult False message
       pure (ToolsCompleted, appendToolResult (toolCallId call) message conversation)
 
-    finishRaw raw =
+    finishRaw raw = do
+      recordToolResult True raw
       pure (ToolsCompleted, appendToolResult (toolCallId call) raw conversation)
+
+    recordToolResult ok message =
+      recordTool runtime
+        ( TranscriptToolResult
+            context
+            (toolCallId call)
+            transcriptName
+            ok
+            message
+        )
 
     finishResult handlerConfig serverName toolName raw =
       case handlerConfig of

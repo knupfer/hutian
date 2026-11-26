@@ -32,6 +32,7 @@ import Test.Tasty (testGroup)
 import TestReporter (bufferedMain)
 import qualified ToolConfigSpec
 import qualified ToolSpec
+import qualified TranscriptSpec
 import qualified VerbositySpec
 import qualified WebSpec
 import qualified WireSpec
@@ -77,6 +78,7 @@ main = do
         , ShellSpec.tests
         , ToolConfigSpec.tests
         , ToolSpec.tests
+        , TranscriptSpec.tests
         , VerbositySpec.tests
         , WebSpec.tests
         , WireSpec.tests

@@ -55,6 +55,11 @@ import Hutian.Llm.Settings
 import Hutian.Llm.Stream
 import Hutian.Llm.UnixSocket (postUnixStream)
 import Hutian.Render (TurnContext)
+import Hutian.Transcript
+  ( Transcript
+  , TranscriptEvent (..)
+  , recordTranscriptMaybe
+  )
 import Hutian.Verbosity (Verbosity)
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
@@ -69,6 +74,8 @@ data LlmOutput = LlmOutput
   , llmOutputErrorLine :: String -> IO ()
   , llmOutputContext :: TurnContext
   , llmOutputVerbosity :: Verbosity
+  -- | Structured recording is independent of what the terminal displays.
+  , llmOutputTranscript :: Maybe Transcript
   }
 
 -- | Load settings and the positional prompt arguments. File-backed model and
@@ -130,18 +137,27 @@ runRequest :: LlmOutput -> InterruptFlag -> LlmSettings -> Value -> IO LlmResult
 runRequest output interruptFlag settings body = do
   interrupted <- isInterrupted interruptFlag
   if interrupted
-    then pure emptyLlmResult
+    then do
+      recordInterrupted output
+      pure emptyLlmResult
     else do
       result <-
         raceInterrupt
           interruptFlag
           (streamCompletion output interruptFlag settings body)
       case result of
-        Nothing -> pure emptyLlmResult
+        Nothing -> do
+          recordInterrupted output
+          pure emptyLlmResult
         Just (Left message) -> do
           llmOutputErrorLine output ("llm: " ++ message)
           pure emptyLlmResult
         Just (Right response) -> pure response
+  where
+    recordInterrupted current =
+      recordTranscriptMaybe
+        (llmOutputTranscript current)
+        (TranscriptInterrupted (llmOutputContext current))
 
 -- | Run a request in a worker thread and stop waiting as soon as the interrupt
 -- flag is set. Killing the worker unblocks a body read that is waiting on the
@@ -293,6 +309,7 @@ processLine output rawLine state presenter =
   case parseStreamLine rawLine of
     Nothing -> pure (state, presenter)
     Just event -> do
+      recordReasoning output event
       let (presenter', text) = presentStreamEvent event presenter
       emitText output text
       maybe
@@ -300,6 +317,18 @@ processLine output rawLine state presenter =
         (llmOutputErrorLine output . ("llm: " ++) . Text.unpack)
         (eventError event)
       pure (applyStreamEvent event state, presenter')
+  where
+    recordReasoning current streamEvent =
+      case eventReasoning streamEvent of
+        Just text
+          | not (Text.null text) ->
+              recordTranscriptMaybe
+                (llmOutputTranscript current)
+                ( TranscriptReasoning
+                    (llmOutputContext current)
+                    (Text.unpack text)
+                )
+        _ -> pure ()
 
 emitText :: LlmOutput -> String -> IO ()
 emitText output text =

@@ -292,6 +292,7 @@ tests =
                       , toolRuntimeVerbosity = VerbosityHigh
                       , toolRuntimeOutput = silentOutput
                       , toolRuntimeMcpSessions = mcpSessions
+                      , toolRuntimeTranscript = Nothing
                       , toolRuntimeSubagent = \_ _ -> pure (Right "answer\n")
                       , toolRuntimeHandler = \_ _ _ _ -> pure (Left "not configured")
                       }
@@ -316,6 +317,7 @@ tests =
                       , toolRuntimeVerbosity = VerbosityNormal
                       , toolRuntimeOutput = interactiveOutput
                       , toolRuntimeMcpSessions = mcpSessions
+                      , toolRuntimeTranscript = Nothing
                       , toolRuntimeSubagent = \_ _ -> pure (Right "final answer\n")
                       , toolRuntimeHandler = \_ _ _ _ -> pure (Left "not configured")
                       }

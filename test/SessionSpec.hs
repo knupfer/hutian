@@ -6,7 +6,8 @@ module SessionSpec (tests) where
 import Control.Monad (when)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Hutian.Conversation
-  ( ConversationEntry (..)
+  ( Conversation
+  , ConversationEntry (..)
   , appendTerminal
   , emptyConversation
   )
@@ -109,6 +110,28 @@ tests =
           )
           initialSession
         readIORef prompts >>= (@?= 3)
+    , testCase "the final conversation is snapshotted when input ends" $ do
+        snapshots <- newIORef ([] :: [Conversation])
+        prompts <- newIORef (0 :: Int)
+        runSession
+          ( noEffects
+              { sessionPrompt = \mode _ _ -> do
+                  count <- readIORef prompts
+                  modifyIORef' prompts (+ 1)
+                  pure
+                    ( mode
+                    , if count == 0 then Just "ls" else Nothing
+                    , initialPromptBuffers
+                    )
+              , sessionClearInterrupt = pure ()
+              , sessionRunInput = \_ text conversation ->
+                  pure (appendTerminal text conversation)
+              , sessionSnapshot = \conversation ->
+                  modifyIORef' snapshots (++ [conversation])
+              }
+          )
+          initialSession
+        readIORef snapshots >>= (@?= [[TerminalEntry "ls"]])
     , testCase "rememberInput records non-blank entries in the matching history" $ do
         let history = rememberInput TermInput "ls" (History [] [])
         history @?= History ["ls"] []
@@ -131,4 +154,5 @@ noEffects =
     { sessionPrompt = \_ _ _ -> assertFailure "prompt must not run"
     , sessionClearInterrupt = assertFailure "interrupt must not be cleared"
     , sessionRunInput = \_ _ _ -> assertFailure "input must not run"
+    , sessionSnapshot = \_ -> pure ()
     }

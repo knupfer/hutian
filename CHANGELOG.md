@@ -20,6 +20,14 @@ All notable changes to Hutian are documented here. The format follows
   given, Hutian runs one quiet turn: the positional arguments are the first user
   message (or stdin is read to EOF), `"ask"` tools are denied, and only the main
   agent's final answer is printed to stdout.
+- Opt-in session transcripts with `--transcript PATH`. The launcher stages the
+  files in a writable private directory and copies them out on exit, so it works
+  even when `/source` is read-only. A JSON Lines file records prompts,
+  reasoning, assistant text, tool requests, approvals, results, subagent
+  prompts, and diagnostics, plus a final `conversation.snapshot` that preserves
+  the exact conversation for a later session. A Markdown sibling gives every
+  prompt and block label a level-one heading, demotes headings inside those
+  blocks by one, and does not add synthetic code fences.
 
 ### Changed
 

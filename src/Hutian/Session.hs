@@ -33,6 +33,9 @@ data SessionEffects = SessionEffects
     sessionClearInterrupt :: IO ()
   , -- | Run a submitted input and return the updated conversation.
     sessionRunInput :: InputMode -> String -> Conversation -> IO Conversation
+  , -- | Record the final conversation when input ends. This is the exact state
+    -- a later session needs, including aborted tool results.
+    sessionSnapshot :: Conversation -> IO ()
   }
 
 -- | Prompt until input ends. Each submitted input is remembered, clears the
@@ -50,7 +53,7 @@ runSession effects session = do
           , sessionBuffers = nextBuffers
           }
   case input of
-    Nothing -> pure ()
+    Nothing -> sessionSnapshot effects (sessionConversation session)
     Just text -> do
       let history' = rememberInput nextMode text (sessionHistory session)
       sessionClearInterrupt effects

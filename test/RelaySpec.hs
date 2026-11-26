@@ -391,6 +391,7 @@ endToEndTests =
                     (Just socketPath)
                     VerbosityHigh
                     (toolCatalog (defaultToolConfig {toolShell = ToolAllow}))
+                    Nothing
             runtime <-
               newRelayRuntime
                 silentLogger
