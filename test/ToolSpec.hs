@@ -24,8 +24,9 @@ import Hutian.Jobs
 import Hutian.Jobs.Runtime (withJobRuntime)
 import Hutian.Json (jsonText)
 import Hutian.Mcp (newMcpSessionCache)
-import Hutian.Output (interactiveOutput, silentOutput)
+import Hutian.Output (Output (..), interactiveOutput, silentOutput)
 import Hutian.Context (TurnContext (..))
+import Hutian.Render (ToolApproval (..))
 import Hutian.Policy (ToolPolicy (..))
 import Hutian.Tool
 import Hutian.Tool.Catalog
@@ -45,7 +46,9 @@ import Hutian.Tool.Config
   )
 import Hutian.Tool.Exec (ToolRuntime (..), runToolCalls, runToolCallsWith)
 import Hutian.Tool.Summary (toolSummaryLines)
+import Hutian.Transcript.Recorder (closeTranscript, openTranscript)
 import Hutian.Verbosity (Verbosity (..))
+import System.FilePath ((</>))
 import Test.Tasty
 import Test.Tasty.HUnit
 import TestSupport (stripAnsi, testJobId, withPseudoTerminalOutput, withTemporaryDirectory)
@@ -335,6 +338,97 @@ tests =
               assertBool
                 "the subagent is not shown as a generic tool call"
                 (not ("subagent" `isInfixOf` plain))
+    , testCase "auto-approved tools record no decision event" $
+        withTemporaryDirectory "hutian-transcript-tool" $ \directory ->
+          withJobRuntime directory directory $ \jobs -> do
+            mcpSessions <- newMcpSessionCache
+            transcript <- openTranscript (directory </> "session")
+            let runtime =
+                  ToolRuntime
+                    { toolRuntimeJobs = jobs
+                    , toolRuntimeWorkingDirectory = directory
+                    , toolRuntimeContext = MainContext
+                    , toolRuntimeVerbosity = VerbosityHigh
+                    , toolRuntimeOutput = silentOutput
+                    , toolRuntimeMcpSessions = mcpSessions
+                    , toolRuntimeTranscript = Just transcript
+                    , toolRuntimeSubagent = \_ _ -> pure (Left "not configured")
+                    , toolRuntimeHandler = \_ _ _ _ -> pure (Left "not configured")
+                    }
+            _ <-
+              runToolCallsWith
+                runtime
+                (toolCatalog (defaultToolConfig {toolShell = ToolAllow}))
+                emptyConversation
+                [ToolCall "call-1" "shell" "{\"command\":\"true\"}"]
+            closeTranscript transcript
+            jsonl <- readFile (directory </> "session.jsonl")
+            assertBool "the request is recorded" $
+              "\"type\":\"tool.request\"" `isInfixOf` jsonl
+            assertBool "the result is recorded" $
+              "\"type\":\"tool.result\"" `isInfixOf` jsonl
+            assertBool "automatic approval is not a decision" $
+              not ("\"type\":\"tool.decision\"" `isInfixOf` jsonl)
+    , testCase "an aborted batch uses dotted MCP display names" $
+        withTemporaryDirectory "hutian-transcript-mcp" $ \directory ->
+          withJobRuntime directory directory $ \jobs -> do
+            mcpSessions <- newMcpSessionCache
+            transcript <- openTranscript (directory </> "session")
+            let serverConfig =
+                  McpServerConfig
+                    { mcpServerName = "demo"
+                    , mcpServerUrl = "http://127.0.0.1:1/mcp"
+                    , mcpServerPolicy = ToolAllow
+                    , mcpHandlers = HandlerConfigs Map.empty
+                    }
+                server =
+                  McpServer
+                    serverConfig
+                    [McpTool "search" "Search" (object [])]
+                    Nothing
+                catalog =
+                  withMcpServers
+                    [server]
+                    ( toolCatalog
+                        ( defaultToolConfig
+                            { toolShell = ToolAsk
+                            , toolMcp = [serverConfig]
+                            }
+                        )
+                    )
+                abortedOutput =
+                  silentOutput
+                    { outputConfirmToolCommand = \_ _ _ -> pure ToolAborted
+                    , outputConfirmApproval = pure ToolAborted
+                    }
+                runtime =
+                  ToolRuntime
+                    { toolRuntimeJobs = jobs
+                    , toolRuntimeWorkingDirectory = directory
+                    , toolRuntimeContext = MainContext
+                    , toolRuntimeVerbosity = VerbosityHigh
+                    , toolRuntimeOutput = abortedOutput
+                    , toolRuntimeMcpSessions = mcpSessions
+                    , toolRuntimeTranscript = Just transcript
+                    , toolRuntimeSubagent = \_ _ -> pure (Left "not configured")
+                    , toolRuntimeHandler = \_ _ _ _ -> pure (Left "not configured")
+                    }
+            _ <-
+              runToolCallsWith
+                runtime
+                catalog
+                emptyConversation
+                [ ToolCall "call-1" "shell" "{\"command\":\"true\"}"
+                , ToolCall "call-2" "mcp__demo__search" "{\"query\":\"x\"}"
+                ]
+            closeTranscript transcript
+            jsonl <- readFile (directory </> "session.jsonl")
+            assertBool "the MCP request uses the dotted display name" $
+              "\"displayName\":\"mcp.demo.search\"" `isInfixOf` jsonl
+            assertBool "the MCP result uses the dotted display name" $
+              "\"name\":\"mcp.demo.search\"" `isInfixOf` jsonl
+            assertBool "the raw function name stays in the call payload" $
+              "\"name\":\"mcp__demo__search\"" `isInfixOf` jsonl
     , testCase "result handler descriptions are appended to MCP tool definitions" $ do
         let handlerConfig =
               AgentConfig

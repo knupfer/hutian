@@ -55,9 +55,9 @@ import Hutian.Llm.Settings
 import Hutian.Llm.Stream
 import Hutian.Llm.UnixSocket (postUnixStream)
 import Hutian.Render (TurnContext)
-import Hutian.Transcript
+import Hutian.Transcript (TranscriptEvent (..))
+import Hutian.Transcript.Recorder
   ( Transcript
-  , TranscriptEvent (..)
   , recordTranscriptMaybe
   )
 import Hutian.Verbosity (Verbosity)
@@ -81,7 +81,7 @@ data LlmOutput = LlmOutput
 -- | Load settings and the positional prompt arguments. File-backed model and
 -- system-prompt values are read and removed before parsing succeeds, so they
 -- are gone before the shell can run a command.
-loadLlmLaunch :: [String] -> IO (Either String (LlmSettings, [String]))
+loadLlmLaunch :: [String] -> IO (Either String (LaunchSettings, [String]))
 loadLlmLaunch = loadLlmWith parseLlmLaunchWithFiles
 
 loadLlmWith

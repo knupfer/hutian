@@ -36,7 +36,6 @@ testSettings api tools model systemPrompt =
     , settingSocket = Nothing
     , settingVerbosity = VerbosityHigh
     , settingTools = tools
-    , settingTranscript = Nothing
     }
   where
     url =
@@ -80,7 +79,6 @@ unitTests =
                 Nothing
                 VerbosityHigh
                 (shellTools ToolDeny)
-                Nothing
             )
         parseSettings
           [ "--llama-url"
@@ -91,7 +89,7 @@ unitTests =
           , ""
           ]
           @?= Right
-            (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt "") Nothing VerbosityHigh (shellTools ToolDeny) Nothing)
+            (LlmSettings (LlmUrl "http://example.test/completion") (ModelName "m") (SystemPrompt "") Nothing VerbosityHigh (shellTools ToolDeny))
     , testCase "parseLlmLaunchWithFiles returns positional prompt arguments" $ do
         let base =
               [ "--llama-url"
@@ -147,29 +145,35 @@ unitTests =
                 (Just "/run/hutian/llm.sock")
                 VerbosityHigh
                 (shellTools ToolDeny)
-                Nothing
             )
-    , testCase "parseSettings accepts an optional transcript path" $
-        parseSettings
-          [ "--llama-url"
-          , "http://example.test/v1/chat/completions"
-          , "--model"
-          , "m"
-          , "--system-prompt"
-          , ""
-          , "--transcript"
-          , "/tmp/session.md"
-          ]
-          @?= Right
-            ( LlmSettings
-                (LlmUrl "http://example.test/v1/chat/completions")
-                (ModelName "m")
-                (SystemPrompt "")
-                Nothing
-                VerbosityHigh
-                (shellTools ToolDeny)
-                (Just "/tmp/session.md")
-            )
+    , testCase "parseLlmLaunchWithFiles accepts an optional transcript path" $
+        case
+            parseLlmLaunchWithFiles
+              []
+              [ "--llama-url"
+              , "http://example.test/v1/chat/completions"
+              , "--verbosity"
+              , "high"
+              , "--model"
+              , "m"
+              , "--system-prompt"
+              , ""
+              , "--transcript"
+              , "/tmp/session.md"
+              ]
+          of
+            Left message -> assertFailure message
+            Right (launch, []) -> do
+              launchLlm launch
+                @?= LlmSettings
+                  (LlmUrl "http://example.test/v1/chat/completions")
+                  (ModelName "m")
+                  (SystemPrompt "")
+                  Nothing
+                  VerbosityHigh
+                  (shellTools ToolDeny)
+              launchTranscript launch @?= Just "/tmp/session.md"
+            Right (_, extra) -> assertFailure ("unexpected positionals: " ++ show extra)
     , testCase "parseSettings rejects an empty transcript path" $
         case
             parseSettings
@@ -207,7 +211,6 @@ unitTests =
                 Nothing
                 VerbosityHigh
                 (shellTools ToolDeny)
-                Nothing
             )
     , testCase "loadLlmLaunch removes the model and prompt files" $ do
         temporary <- getTemporaryDirectory
@@ -228,7 +231,7 @@ unitTests =
             , "--verbosity"
             , "high"
             ]
-        fmap fst result
+        fmap (launchLlm . fst) result
           @?= Right
             ( LlmSettings
                 (LlmUrl "http://example.test/v1/chat/completions")
@@ -237,7 +240,6 @@ unitTests =
                 Nothing
                 VerbosityHigh
                 (shellTools ToolDeny)
-                Nothing
             )
         modelExists <- doesFileExist modelPath
         promptExists <- doesFileExist promptPath
@@ -285,7 +287,6 @@ unitTests =
                         }
                     )
                 )
-                Nothing
             )
     , testCase "parseLlmSettings parses verbosity" $ do
         let parseVerbosity extra =
@@ -333,7 +334,6 @@ unitTests =
                     Nothing
                     VerbosityHigh
                     (shellTools policy)
-                    Nothing
                 )
         parsePolicy [] @?= settings ToolDeny
         parsePolicy ["--model-shell", "deny"] @?= settings ToolDeny
@@ -635,7 +635,6 @@ prop_parseSettings model systemPrompt =
           Nothing
           VerbosityHigh
           (shellTools ToolDeny)
-          Nothing
       )
   where
     urlText = "http://example.test/v1/chat/completions"
@@ -661,7 +660,6 @@ prop_parseSettingsWithSocket model systemPrompt socket =
           (Just socketText)
           VerbosityHigh
           (shellTools ToolDeny)
-          Nothing
       )
   where
     urlText = "http://example.test/v1/chat/completions"

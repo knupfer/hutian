@@ -8,6 +8,7 @@ module Hutian.Session
   , rememberInput
   ) where
 
+import Control.Monad (unless)
 import Hutian.Conversation (Conversation)
 import Hutian.Editor (InputMode, PromptBuffers)
 import Hutian.History
@@ -33,38 +34,45 @@ data SessionEffects = SessionEffects
     sessionClearInterrupt :: IO ()
   , -- | Run a submitted input and return the updated conversation.
     sessionRunInput :: InputMode -> String -> Conversation -> IO Conversation
-  , -- | Record the final conversation when input ends. This is the exact state
-    -- a later session needs, including aborted tool results.
+  , -- | Record the conversation after every completed turn. This is the exact
+    -- state a later session needs, including aborted tool results.
     sessionSnapshot :: Conversation -> IO ()
   }
 
 -- | Prompt until input ends. Each submitted input is remembered, clears the
--- interrupt, runs, and leaves its conversation for the next turn.
+-- interrupt, runs, and leaves its conversation for the next turn. The
+-- conversation is snapshotted after each turn so a crash still leaves the last
+-- completed state; an empty session gets one snapshot on exit.
 runSession :: SessionEffects -> Session -> IO ()
-runSession effects session = do
-  (nextMode, input, nextBuffers) <-
-    sessionPrompt effects
-      (sessionMode session)
-      (sessionHistory session)
-      (sessionBuffers session)
-  let prompted =
-        session
-          { sessionMode = nextMode
-          , sessionBuffers = nextBuffers
-          }
-  case input of
-    Nothing -> sessionSnapshot effects (sessionConversation session)
-    Just text -> do
-      let history' = rememberInput nextMode text (sessionHistory session)
-      sessionClearInterrupt effects
-      conversation <-
-        sessionRunInput effects nextMode text (sessionConversation session)
-      runSession
-        effects
-        prompted
-          { sessionHistory = history'
-          , sessionConversation = conversation
-          }
+runSession effects = loop False
+  where
+    loop snapshotted session = do
+      (nextMode, input, nextBuffers) <-
+        sessionPrompt effects
+          (sessionMode session)
+          (sessionHistory session)
+          (sessionBuffers session)
+      let prompted =
+            session
+              { sessionMode = nextMode
+              , sessionBuffers = nextBuffers
+              }
+      case input of
+        Nothing ->
+          unless snapshotted $
+            sessionSnapshot effects (sessionConversation session)
+        Just text -> do
+          let history' = rememberInput nextMode text (sessionHistory session)
+          sessionClearInterrupt effects
+          conversation <-
+            sessionRunInput effects nextMode text (sessionConversation session)
+          sessionSnapshot effects conversation
+          loop
+            True
+            prompted
+              { sessionHistory = history'
+              , sessionConversation = conversation
+              }
 
 -- | Record a non-blank input in the history for its mode.
 rememberInput :: InputMode -> String -> History -> History

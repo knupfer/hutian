@@ -305,10 +305,15 @@ let
         if [ -n "''${transcript_dir:-}" ] && [ -n "''${transcript_host:-}" ]; then
           local target_dir
           target_dir=$(dirname "$transcript_host")
-          mkdir -p "$target_dir" 2>/dev/null || true
+          if ! mkdir -p "$target_dir"; then
+            echo "hutian: could not create transcript directory: $target_dir" >&2
+            return
+          fi
           for file in "$transcript_dir"/*; do
             [ -f "$file" ] || continue
-            install -m 600 "$file" "$target_dir/$(basename "$file")" 2>/dev/null || true
+            if ! install -m 600 "$file" "$target_dir/$(basename "$file")"; then
+              echo "hutian: could not copy transcript file to: $target_dir" >&2
+            fi
           done
         fi
       }

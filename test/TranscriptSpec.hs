@@ -2,25 +2,34 @@
 
 module TranscriptSpec (tests) where
 
+import Control.Monad (forM_)
 import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.List (isInfixOf, isPrefixOf)
+import qualified Data.Text as Text
 import Hutian.Context (TurnContext (MainContext))
 import Hutian.Conversation
   ( ConversationEntry (..)
   , ToolCall (..)
   )
 import Hutian.Editor (InputMode (..))
+import Hutian.Render (ToolApproval (..))
 import Hutian.Transcript
   ( SessionInfo (..)
+  , ToolOutcome (..)
+  , ToolResult (..)
   , TranscriptEvent (..)
-  , closeTranscript
+  , TranscriptPaths (..)
   , encodeTranscriptEvent
-  , openTranscript
-  , recordTranscript
   , renderTranscriptEvent
   , shiftMarkdownHeadings
   , transcriptPaths
+  )
+import Hutian.Transcript.Recorder
+  ( closeTranscript
+  , openTranscript
+  , recordTranscript
   )
 import System.FilePath ((</>))
 import Test.Tasty
@@ -32,10 +41,14 @@ tests =
   testGroup
     "transcript"
     [ testCase "transcript paths pair the two files" $ do
-        transcriptPaths "session.md" @?= ("session.jsonl", "session.md")
-        transcriptPaths "session.jsonl" @?= ("session.jsonl", "session.md")
-        transcriptPaths "session" @?= ("session.jsonl", "session.md")
-        transcriptPaths "sessions/" @?= ("sessions/transcript.jsonl", "sessions/transcript.md")
+        transcriptPaths "session.md"
+          @?= TranscriptPaths "session.jsonl" "session.md"
+        transcriptPaths "session.jsonl"
+          @?= TranscriptPaths "session.jsonl" "session.md"
+        transcriptPaths "session"
+          @?= TranscriptPaths "session.jsonl" "session.md"
+        transcriptPaths "sessions/"
+          @?= TranscriptPaths "sessions/transcript.jsonl" "sessions/transcript.md"
     , testCase "prompt headings use the ask and shell labels and are not fenced" $ do
         renderTranscriptEvent "now" (TranscriptInput LlmInput "hello")
           @?= "\n# ask\nhello\n"
@@ -76,7 +89,10 @@ tests =
     , testCase "tool results are not fenced and their headings are demoted" $
         renderTranscriptEvent
           "now"
-          (TranscriptToolResult MainContext "call-1" "shell" True "# out\n")
+          ( TranscriptToolResult
+              MainContext
+              (ToolResult "call-1" "shell" ToolSucceeded "# out\n")
+          )
           @?= "\n# shell result\n## out\n"
     , testCase "assistant markdown cannot collide with prompt headings" $ do
         let rendered =
@@ -97,6 +113,39 @@ tests =
                 , "text" .= ("hi" :: String)
                 ]
             )
+    , testCase "every event type encodes its envelope and type" $
+        forM_
+          [ (TranscriptSessionStarted (SessionInfo "model"), "session.start")
+          , (TranscriptSessionEnded "exit", "session.end")
+          , (TranscriptInput LlmInput "hi", "input")
+          , (TranscriptTerminalCommand "ls", "term.command")
+          , (TranscriptReasoning MainContext "why", "reasoning")
+          , (TranscriptAssistant MainContext "answer" [], "assistant")
+          , (TranscriptAgentPrompt MainContext "ask" "task", "agent.prompt")
+          , ( TranscriptToolRequest
+                MainContext
+                "shell"
+                (ToolCall "call-1" "shell" "{}")
+            , "tool.request"
+            )
+          , (TranscriptToolDecision MainContext "call-1" ToolApproved, "tool.decision")
+          , ( TranscriptToolResult
+                MainContext
+                (ToolResult "call-1" "shell" ToolSucceeded "ok")
+            , "tool.result"
+            )
+          , (TranscriptDiagnostic "warning", "diagnostic")
+          , (TranscriptInterrupted MainContext, "interrupted")
+          , (TranscriptConversationSnapshot [UserEntry "hi"], "conversation.snapshot")
+          ]
+          $ \(event, expectedType) ->
+            case Aeson.decode (encodeTranscriptEvent "now" event) :: Maybe Value of
+              Just (Aeson.Object fields) -> do
+                KeyMap.lookup "type" fields
+                  @?= Just (Aeson.String (Text.pack expectedType))
+                KeyMap.lookup "schema" fields @?= Just (Aeson.toJSON (1 :: Int))
+                KeyMap.lookup "at" fields @?= Just (Aeson.String "now")
+              _ -> assertFailure ("event did not encode as an object: " ++ expectedType)
     , testCase "conversation snapshots preserve every entry kind" $ do
         let conversation =
               [ UserEntry "hi"
@@ -150,16 +199,14 @@ tests =
           closeTranscript transcript
           jsonLines <- lines <$> readFile (base ++ ".jsonl")
           markdown <- readFile (base ++ ".md")
-          length jsonLines @?= 4
+          length jsonLines @?= 5
           assertBool "the final snapshot is written" $
             any ("\"type\":\"conversation.snapshot\"" `isInfixOf`) jsonLines
-          assertBool "reasoning is buffered into one event" $
-            any
-              ( \line ->
-                  "\"type\":\"reasoning\"" `isInfixOf` line
-                    && "think more" `isInfixOf` line
-              )
-              jsonLines
+          countInfix "\"type\":\"reasoning\"" (unlines jsonLines) @?= 2
+          assertBool "the first reasoning chunk is durable" $
+            any ("think " `isInfixOf`) jsonLines
+          assertBool "the second reasoning chunk is durable" $
+            any ("more" `isInfixOf`) jsonLines
           assertBool "the prompt heading is present" ("# ask" `isInfixOf` markdown)
           countInfix "# thinking" markdown @?= 1
           assertBool "the answer is present" ("answer" `isInfixOf` markdown)

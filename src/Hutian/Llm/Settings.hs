@@ -1,5 +1,5 @@
--- | Launcher settings for the model connection. Parsing is pure so the shell
--- can reject bad arguments before any IO or request happens.
+-- | Launcher settings for the model connection and session launch. Parsing is
+-- pure so the shell can reject bad arguments before any IO or request happens.
 module Hutian.Llm.Settings
   ( Api (..)
   , apiFor
@@ -7,6 +7,7 @@ module Hutian.Llm.Settings
   , ModelName (..)
   , SystemPrompt (..)
   , LlmSettings (..)
+  , LaunchSettings (..)
   , parseLlmSettings
   , parseLlmSettingsWithFiles
   , parseLlmLaunchWithFiles
@@ -53,9 +54,15 @@ data LlmSettings = LlmSettings
   -- | The model's tool policies, nested subagent configuration, and discovered
   -- MCP tools. Term mode is unaffected.
   , settingTools :: ToolCatalog
-  -- | Where to write the session transcript. The shell appends @.jsonl@ and
-  -- @.md@ if the path has neither extension.
-  , settingTranscript :: Maybe FilePath
+  }
+  deriving stock (Eq, Show)
+
+-- | Per-launch settings that are not part of the model connection.
+data LaunchSettings = LaunchSettings
+  { launchLlm :: LlmSettings
+  , -- | Where to write the session transcript. The shell appends @.jsonl@ and
+    -- @.md@ if the path has neither extension.
+    launchTranscript :: Maybe FilePath
   }
   deriving stock (Eq, Show)
 
@@ -100,18 +107,21 @@ parseLlmSettings = parseLlmSettingsWithFiles []
 -- function so the contents never appear in the process listing.
 parseLlmSettingsWithFiles :: [(FilePath, String)] -> [String] -> Either String LlmSettings
 parseLlmSettingsWithFiles loaded arguments = do
-  (settings, positionals) <- parseLlmLaunchWithFiles loaded arguments
+  (launch, positionals) <- parseLlmLaunchWithFiles loaded arguments
   case positionals of
-    [] -> Right settings
+    [] ->
+      case launchTranscript launch of
+        Nothing -> Right (launchLlm launch)
+        Just _ -> Left ("unknown argument: --transcript\n" ++ llmUsage)
     first : _ -> Left ("unknown argument: " ++ first ++ "\n" ++ llmUsage)
 
--- | Parse settings and return the positional arguments that follow them. The
--- launcher passes the first user message this way so batch mode needs no
+-- | Parse launch settings and return the positional arguments that follow them.
+-- The launcher passes the first user message this way so batch mode needs no
 -- interactive prompt.
 parseLlmLaunchWithFiles
   :: [(FilePath, String)]
   -> [String]
-  -> Either String (LlmSettings, [String])
+  -> Either String (LaunchSettings, [String])
 parseLlmLaunchWithFiles loaded arguments = do
   (options, positionals) <-
     appendUsage llmUsage (parseOptionsWithPositionals llmOptionSpec arguments)
@@ -121,7 +131,7 @@ parseLlmLaunchWithFiles loaded arguments = do
         missingOptions ["--llama-url", "--verbosity"] options
           ++ missingOption "--model" "--model-file"
           ++ missingOption "--system-prompt" "--system-prompt-file"
-  settings <-
+  launch <-
     case missing of
       [] -> do
         url <- required "--llama-url" options
@@ -139,18 +149,27 @@ parseLlmLaunchWithFiles loaded arguments = do
                     ++ llmUsage
                 )
         tools <- toolsOption options
-        settingsFrom
-          (LlmUrl url)
-          (ModelName model)
-          (SystemPrompt systemPrompt)
-          (optionValueFor "--llama-socket" options)
-          verbosity
-          tools
-          (optionValueFor "--transcript" options)
+        settings <-
+          settingsFrom
+            (LlmUrl url)
+            (ModelName model)
+            (SystemPrompt systemPrompt)
+            (optionValueFor "--llama-socket" options)
+            verbosity
+            tools
+        transcript <- parseTranscriptOption options
+        pure (LaunchSettings settings transcript)
       _ -> Left (missingOptionsMessage llmUsage missing)
-  pure (settings, positionals)
+  pure (launch, positionals)
   where
     required = requiredOption llmUsage
+
+    parseTranscriptOption options =
+      case optionValueFor "--transcript" options of
+        Nothing -> Right Nothing
+        Just path -> do
+          validateNonEmpty "--transcript" path
+          Right (Just path)
 
     loadedContents flag path =
       case lookup path loaded of
@@ -275,19 +294,19 @@ modelWebfetchOption = OptionSpec "--model-webfetch" OptionValue "deny|ask|allow"
 subagentOption = OptionSpec "--subagent-file" OptionValue "PATH" True
 transcriptOption = OptionSpec "--transcript" OptionValue "PATH" True
 
--- | Reject malformed URLs, empty model names, empty socket paths, and empty
--- transcript paths; an empty system prompt is allowed.
-settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Maybe FilePath -> Verbosity -> ToolConfig -> Maybe FilePath -> Either String LlmSettings
-settingsFrom url model systemPrompt socket verbosity tools transcript = do
+-- | Reject malformed URLs, empty model names, and empty socket paths; an empty
+-- system prompt is allowed.
+settingsFrom :: LlmUrl -> ModelName -> SystemPrompt -> Maybe FilePath -> Verbosity -> ToolConfig -> Either String LlmSettings
+settingsFrom url model systemPrompt socket verbosity tools = do
   validateLlmUrl url
   validateNonEmpty "--model" (unModelName model)
   maybe (Right ()) (validateNonEmpty "--llama-socket") socket
-  maybe (Right ()) (validateNonEmpty "--transcript") transcript
-  pure (LlmSettings url model systemPrompt socket verbosity (toolCatalog tools) transcript)
-  where
-    validateNonEmpty name value
-      | null value = Left ("empty value for " ++ name ++ "\n" ++ llmUsage)
-      | otherwise = Right ()
+  pure (LlmSettings url model systemPrompt socket verbosity (toolCatalog tools))
+
+validateNonEmpty :: String -> String -> Either String ()
+validateNonEmpty name value
+  | null value = Left ("empty value for " ++ name ++ "\n" ++ llmUsage)
+  | otherwise = Right ()
 
 -- | A URL must use http or https, name a host, and, if it has a path, start
 -- that path with a slash. Validation happens before any request is attempted.

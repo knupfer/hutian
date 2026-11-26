@@ -103,6 +103,7 @@ library
       Hutian.Tool.Exec
       Hutian.Tool.Summary
       Hutian.Transcript
+      Hutian.Transcript.Recorder
       Hutian.Verbosity
       Hutian.Web
   build-depends:

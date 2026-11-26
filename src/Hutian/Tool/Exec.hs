@@ -70,8 +70,12 @@ import Hutian.Tool.Config
   , handlerConfigFor
   )
 import Hutian.Transcript
-  ( Transcript
+  ( ToolOutcome (..)
+  , ToolResult (..)
   , TranscriptEvent (..)
+  )
+import Hutian.Transcript.Recorder
+  ( Transcript
   , recordTranscriptMaybe
   )
 import Hutian.Web (fetchResultText, fetchUrl)
@@ -157,10 +161,7 @@ runToolCallsPlanned planner runtime = go ToolsCompleted
       recordTool runtime
         ( TranscriptToolResult
             (toolRuntimeContext runtime)
-            (toolCallId call)
-            displayName
-            False
-            abortedToolMessage
+            (ToolResult (toolCallId call) displayName ToolFailed abortedToolMessage)
         )
       go ToolsAborted (appendToolResult (toolCallId call) abortedToolMessage conversation) rest
     go ToolsCompleted conversation (call : rest) = do
@@ -205,11 +206,11 @@ runToolCall planner runtime conversation call = do
     present = outputPresent output
 
     refuse message = do
-      recordToolResult False message
+      recordToolResult ToolFailed message
       pure (ToolsCompleted, appendToolResult (toolCallId call) message conversation)
 
     aborted = do
-      recordToolResult False abortedToolMessage
+      recordToolResult ToolFailed abortedToolMessage
       pure (ToolsAborted, appendToolResult (toolCallId call) abortedToolMessage conversation)
 
     finish :: Either String String -> IO (ToolRun, Conversation)
@@ -217,21 +218,18 @@ runToolCall planner runtime conversation call = do
 
     finishError message = do
       consoleWriteErrorLine message
-      recordToolResult False message
+      recordToolResult ToolFailed message
       pure (ToolsCompleted, appendToolResult (toolCallId call) message conversation)
 
     finishRaw raw = do
-      recordToolResult True raw
+      recordToolResult ToolSucceeded raw
       pure (ToolsCompleted, appendToolResult (toolCallId call) raw conversation)
 
-    recordToolResult ok message =
+    recordToolResult outcome message =
       recordTool runtime
         ( TranscriptToolResult
             context
-            (toolCallId call)
-            transcriptName
-            ok
-            message
+            (ToolResult (toolCallId call) transcriptName outcome message)
         )
 
     finishResult handlerConfig serverName toolName raw =

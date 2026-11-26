@@ -5,7 +5,6 @@ module Main (main) where
 import Control.Exception (finally)
 import Control.Monad (when)
 import qualified Data.ByteString as BS
-import Data.Foldable (for_)
 import Hutian.Agent
   ( RuntimeEnv (..)
   , discoverMcpSettings
@@ -33,7 +32,8 @@ import Hutian.Interrupt
 import Hutian.Jobs.Runtime (withJobRuntime)
 import Hutian.Json (decodeUtf8Lenient)
 import Hutian.Llm
-  ( LlmSettings (..)
+  ( LaunchSettings (..)
+  , LlmSettings (..)
   , ModelName (..)
   , SystemPrompt (..)
   , loadLlmLaunch
@@ -53,10 +53,10 @@ import Hutian.Tool.Summary (toolSummaryLines)
 import Hutian.Transcript
   ( SessionInfo (..)
   , TranscriptEvent (..)
-  , closeTranscript
-  , openTranscript
-  , recordTranscript
-  , recordTranscriptMaybe
+  )
+import Hutian.Transcript.Recorder
+  ( recordTranscriptMaybe
+  , withTranscript
   )
 import Hutian.Verbosity (Verbosity (..))
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
@@ -72,55 +72,48 @@ main = do
   parsed <- loadLlmLaunch arguments
   case parsed of
     Left message -> failLaunch message
-    Right (loaded, promptWords) -> do
-      settings <- discoverMcpSettings loaded
+    Right (launch, promptWords) -> do
+      settings <- discoverMcpSettings (launchLlm launch)
       -- The launcher starts the shell in /source. Leave it before the session
       -- begins so the long-lived process does not pin that mount in gVisor;
       -- each command enters the working directory for its own lifetime.
       workingDirectory <- getCurrentDirectory
       -- Open the transcript before leaving the session directory so a relative
       -- --transcript path means the same place as the user's other paths.
-      transcript <- traverse openTranscript (settingTranscript settings)
-      setCurrentDirectory "/"
-      terminals <-
-        (&&) <$> hIsTerminalDevice stdin <*> hIsTerminalDevice stdout
-      -- An explicit prompt always means one batch turn, even on a terminal.
-      let interactive = terminals && null promptWords
-      let sessionInfo =
-            SessionInfo
-              { sessionInfoModel = unModelName (settingModel settings)
-              }
-          startTranscript =
-            for_ transcript $ \recorder ->
-              recordTranscript
-                recorder
-                (TranscriptSessionStarted sessionInfo)
-          finishTranscript =
-            for_ transcript $ \recorder -> do
-              recordTranscript recorder (TranscriptSessionEnded "exit")
-              closeTranscript recorder
-      startTranscript
-      interruptFlag <- newInterruptFlag
-      installInterruptHandler interruptFlag
-      mcpSessions <- newMcpSessionCache
-      directory <- jobDirectory
-      let withEnvironment jobs = do
-            let env =
-                  RuntimeEnv
-                    { envWorkingDirectory = workingDirectory
-                    , envJobs = jobs
-                    , envSettings = settings
-                    , envInterrupt = interruptFlag
-                    , envMcpSessions = mcpSessions
-                    , envTranscript = transcript
-                    , envOutput =
-                        if interactive then interactiveOutput else silentOutput
-                    }
-            if interactive
-              then runInteractive env
-              else runBatch env promptWords
-      withJobRuntime directory workingDirectory withEnvironment
-        `finally` finishTranscript
+      withTranscript (launchTranscript launch) $ \transcript -> do
+        setCurrentDirectory "/"
+        terminals <-
+          (&&) <$> hIsTerminalDevice stdin <*> hIsTerminalDevice stdout
+        -- An explicit prompt always means one batch turn, even on a terminal.
+        let interactive = terminals && null promptWords
+            sessionInfo =
+              SessionInfo
+                { sessionInfoModel = unModelName (settingModel settings)
+                }
+            finishTranscript =
+              recordTranscriptMaybe transcript (TranscriptSessionEnded "exit")
+        recordTranscriptMaybe transcript (TranscriptSessionStarted sessionInfo)
+        interruptFlag <- newInterruptFlag
+        installInterruptHandler interruptFlag
+        mcpSessions <- newMcpSessionCache
+        directory <- jobDirectory
+        let withEnvironment jobs = do
+              let env =
+                    RuntimeEnv
+                      { envWorkingDirectory = workingDirectory
+                      , envJobs = jobs
+                      , envSettings = settings
+                      , envInterrupt = interruptFlag
+                      , envMcpSessions = mcpSessions
+                      , envTranscript = transcript
+                      , envOutput =
+                          if interactive then interactiveOutput else silentOutput
+                      }
+              if interactive
+                then runInteractive env
+                else runBatch env promptWords
+        withJobRuntime directory workingDirectory withEnvironment
+          `finally` finishTranscript
 
 -- | The normal two-mode shell. Only used when stdin and stdout are terminals
 -- and no prompt argument was given.

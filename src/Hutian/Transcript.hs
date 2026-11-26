@@ -1,32 +1,26 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Structured session transcripts. Events are written as JSON Lines for tools
--- and as Markdown for people. Every prompt and block label is a level-one
--- heading, and model-authored headings inside a block are shifted down by one
--- unless they are inside a fenced code block.
+-- | Pure transcript model, JSON encoding, Markdown rendering, and path
+-- derivation. The recorder in "Hutian.Transcript.Recorder" performs the IO.
 module Hutian.Transcript
-  ( Transcript
-  , SessionInfo (..)
+  ( SessionInfo (..)
+  , ToolOutcome (..)
+  , ToolResult (..)
   , TranscriptEvent (..)
-  , openTranscript
-  , closeTranscript
-  , recordTranscript
-  , recordTranscriptMaybe
+  , TranscriptPaths (..)
   , transcriptPaths
-  , shiftMarkdownHeadings
   , encodeTranscriptEvent
   , renderTranscriptEvent
+  , shiftMarkdownHeadings
   ) where
 
-import Control.Exception (finally, onException)
-import Data.Aeson (Value, object, (.=))
+import Data.Aeson (ToJSON (..), Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Key (Key)
+import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (isSpace, toLower)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List (dropWhileEnd, intercalate)
-import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
 import Hutian.Context (TurnContext, contextPath)
 import Hutian.Conversation
   ( Conversation
@@ -35,30 +29,32 @@ import Hutian.Conversation
   )
 import Hutian.Editor (InputMode (..))
 import Hutian.Render (ToolApproval (..))
-import System.Directory (createDirectoryIfMissing)
 import System.FilePath
   ( hasTrailingPathSeparator
   , replaceExtension
-  , takeDirectory
   , takeExtension
   , (</>)
   , (<.>)
   )
-import System.IO
-  ( BufferMode (LineBuffering)
-  , Handle
-  , IOMode (WriteMode)
-  , hClose
-  , hFlush
-  , hPutStr
-  , hSetBuffering
-  , openFile
-  )
-import System.Posix.Files (setFileMode)
 
 -- | Metadata recorded when a session starts.
 newtype SessionInfo = SessionInfo
   { sessionInfoModel :: String
+  }
+  deriving stock (Eq, Show)
+
+-- | Whether a tool call succeeded, independent of the output text.
+data ToolOutcome
+  = ToolSucceeded
+  | ToolFailed
+  deriving stock (Eq, Show)
+
+-- | One finished tool call.
+data ToolResult = ToolResult
+  { toolResultCallId :: String
+  , toolResultName :: String
+  , toolResultOutcome :: ToolOutcome
+  , toolResultText :: String
   }
   deriving stock (Eq, Show)
 
@@ -74,142 +70,59 @@ data TranscriptEvent
   | TranscriptAgentPrompt TurnContext String String
   | TranscriptToolRequest TurnContext String ToolCall
   | TranscriptToolDecision TurnContext String ToolApproval
-  | TranscriptToolResult TurnContext String String Bool String
+  | TranscriptToolResult TurnContext ToolResult
   | TranscriptDiagnostic String
   | TranscriptInterrupted TurnContext
   | TranscriptConversationSnapshot Conversation
   deriving stock (Eq, Show)
 
--- | Two open files and the reasoning chunks that have not been flushed yet.
--- Reasoning arrives in stream fragments; buffering it yields one Markdown block
--- instead of one block per token.
-data Transcript = Transcript
-  { transcriptJsonHandle :: Handle
-  , transcriptMarkdownHandle :: Handle
-  , transcriptPendingReasoning :: IORef (Maybe (TurnContext, [String]))
+-- | The two transcript files.
+data TranscriptPaths = TranscriptPaths
+  { transcriptJsonPath :: FilePath
+  , transcriptMarkdownPath :: FilePath
   }
+  deriving stock (Eq, Show)
 
--- | Open the JSON Lines and Markdown files for a transcript path. A path ending
--- in @.jsonl@ or @.md@ names that file, and the sibling gets the other
--- extension; any other path gets both extensions.
-openTranscript :: FilePath -> IO Transcript
-openTranscript path = do
-  let (jsonPath, markdownPath) = transcriptPaths path
-  createDirectoryIfMissing True (takeDirectory jsonPath)
-  jsonHandle <- openFile jsonPath WriteMode
-  markdownHandle <-
-    openFile markdownPath WriteMode `onException` hClose jsonHandle
-  let closeBoth = hClose markdownHandle >> hClose jsonHandle
-  ( do
-      setFileMode jsonPath 0o600
-      setFileMode markdownPath 0o600
-      hSetBuffering jsonHandle LineBuffering
-      hSetBuffering markdownHandle LineBuffering
-    )
-    `onException` closeBoth
-  pending <- newIORef Nothing
-  pure
-    Transcript
-      { transcriptJsonHandle = jsonHandle
-      , transcriptMarkdownHandle = markdownHandle
-      , transcriptPendingReasoning = pending
-      }
-
--- | Flush any buffered reasoning and close both files.
-closeTranscript :: Transcript -> IO ()
-closeTranscript transcript = flushAndClose `finally` closeBoth
-  where
-    flushAndClose = do
-      flushReasoning transcript
-      hFlush (transcriptJsonHandle transcript)
-      hFlush (transcriptMarkdownHandle transcript)
-    closeBoth = do
-      hClose (transcriptJsonHandle transcript)
-      hClose (transcriptMarkdownHandle transcript)
-
--- | Record one event. Reasoning is buffered until the next event, so its
--- streamed fragments become one transcript block.
-recordTranscript :: Transcript -> TranscriptEvent -> IO ()
-recordTranscript transcript event =
-  case event of
-    TranscriptReasoning context text
-      | not (null text) -> appendReasoning transcript context text
-      | otherwise -> pure ()
-    _ -> do
-      flushReasoning transcript
-      writeEvent transcript event
-
--- | 'recordTranscript' for an optional recorder.
-recordTranscriptMaybe :: Maybe Transcript -> TranscriptEvent -> IO ()
-recordTranscriptMaybe Nothing _ = pure ()
-recordTranscriptMaybe (Just transcript) event = recordTranscript transcript event
-
--- | The JSON Lines and Markdown paths for a user-supplied transcript path.
-transcriptPaths :: FilePath -> (FilePath, FilePath)
+-- | The JSON Lines and Markdown paths for a user-supplied transcript path. A
+-- path ending in @.jsonl@ or @.md@ names that file, and the sibling gets the
+-- other extension; any other path gets both extensions.
+transcriptPaths :: FilePath -> TranscriptPaths
 transcriptPaths path
   | hasTrailingPathSeparator path =
-      (path </> "transcript.jsonl", path </> "transcript.md")
+      TranscriptPaths
+        (path </> "transcript.jsonl")
+        (path </> "transcript.md")
   | otherwise =
       case map toLower (takeExtension path) of
-        ".jsonl" -> (path, replaceExtension path "md")
-        ".md" -> (replaceExtension path "jsonl", path)
-        _ -> (path <.> "jsonl", path <.> "md")
-
-appendReasoning :: Transcript -> TurnContext -> String -> IO ()
-appendReasoning transcript context text = do
-  pending <- readIORef (transcriptPendingReasoning transcript)
-  case pending of
-    Just (pendingContext, chunks)
-      | pendingContext == context ->
-          writeIORef
-            (transcriptPendingReasoning transcript)
-            (Just (pendingContext, text : chunks))
-      | otherwise -> do
-          flushReasoning transcript
-          writeIORef
-            (transcriptPendingReasoning transcript)
-            (Just (context, [text]))
-    Nothing ->
-      writeIORef
-        (transcriptPendingReasoning transcript)
-        (Just (context, [text]))
-
-flushReasoning :: Transcript -> IO ()
-flushReasoning transcript = do
-  pending <- readIORef (transcriptPendingReasoning transcript)
-  case pending of
-    Nothing -> pure ()
-    Just (context, chunks) -> do
-      writeIORef (transcriptPendingReasoning transcript) Nothing
-      writeEvent transcript (TranscriptReasoning context (concat (reverse chunks)))
-
-writeEvent :: Transcript -> TranscriptEvent -> IO ()
-writeEvent transcript event = do
-  now <- getCurrentTime
-  let at = formatTime defaultTimeLocale "%FT%T%QZ" now
-  BL.hPut
-    (transcriptJsonHandle transcript)
-    (encodeTranscriptEvent at event)
-  hFlush (transcriptJsonHandle transcript)
-  hPutStr
-    (transcriptMarkdownHandle transcript)
-    (renderTranscriptEvent at event)
-  hFlush (transcriptMarkdownHandle transcript)
+        ".jsonl" ->
+          TranscriptPaths path (replaceExtension path "md")
+        ".md" ->
+          TranscriptPaths (replaceExtension path "jsonl") path
+        _ ->
+          TranscriptPaths (path <.> "jsonl") (path <.> "md")
 
 -- | Encode one event as a JSON Lines record, including its trailing newline.
 encodeTranscriptEvent :: String -> TranscriptEvent -> BL.ByteString
 encodeTranscriptEvent at event =
-  Aeson.encode (transcriptEventJSON at event) <> "\n"
+  Aeson.encode (TranscriptEnvelope at event) <> "\n"
 
-transcriptEventJSON :: String -> TranscriptEvent -> Value
-transcriptEventJSON at event =
-  object
-    ( [ "schema" .= (1 :: Int)
-      , "at" .= at
-      , "type" .= eventType event
-      ]
-        ++ eventFields event
-    )
+data TranscriptEnvelope = TranscriptEnvelope String TranscriptEvent
+
+instance ToJSON TranscriptEnvelope where
+  toJSON (TranscriptEnvelope at event) =
+    case toJSON event of
+      Object fields ->
+        Object
+          ( KeyMap.insert
+              "schema"
+              (toJSON (1 :: Int))
+              (KeyMap.insert "at" (toJSON at) fields)
+          )
+      value -> value
+
+instance ToJSON TranscriptEvent where
+  toJSON event =
+    object (("type" .= eventType event) : eventFields event)
 
 eventType :: TranscriptEvent -> String
 eventType event =
@@ -259,12 +172,12 @@ eventFields event =
       , "callId" .= callId
       , "decision" .= approvalName decision
       ]
-    TranscriptToolResult context callId name ok text ->
+    TranscriptToolResult context result ->
       [ "context" .= contextName context
-      , "callId" .= callId
-      , "name" .= name
-      , "ok" .= ok
-      , "text" .= text
+      , "callId" .= toolResultCallId result
+      , "name" .= toolResultName result
+      , "ok" .= toolOutcomeOk (toolResultOutcome result)
+      , "text" .= toolResultText result
       ]
     TranscriptDiagnostic text -> ["text" .= text]
     TranscriptInterrupted context -> ["context" .= contextName context]
@@ -298,17 +211,15 @@ renderTranscriptEvent at event =
       section (contextLabel context displayName) (toolCallArguments call)
     TranscriptToolDecision _ _ decision ->
       "\n" ++ decisionText decision ++ "\n"
-    TranscriptToolResult context _ name ok text ->
+    TranscriptToolResult context result ->
       section
-        (contextLabel context (name ++ if ok then " result" else " error"))
-        text
+        (contextLabel context (toolResultName result ++ outcomeLabel (toolResultOutcome result)))
+        (toolResultText result)
     TranscriptDiagnostic text
       | all isSpace text -> ""
       | otherwise -> "\n" ++ blockquote text
     TranscriptInterrupted context ->
       "\n> " ++ contextLabel context "interrupted" ++ ".\n"
-    -- The snapshot duplicates the Markdown above. It is the JSON Lines
-    -- representation a later process uses to restore the conversation.
     TranscriptConversationSnapshot _ -> ""
 
 -- | One labelled Markdown block.
@@ -354,6 +265,14 @@ decisionText ToolApproved = "_Approved._"
 decisionText ToolDenied = "_Denied._"
 decisionText ToolAborted = "_Aborted._"
 
+outcomeLabel :: ToolOutcome -> String
+outcomeLabel ToolSucceeded = " result"
+outcomeLabel ToolFailed = " error"
+
+toolOutcomeOk :: ToolOutcome -> Bool
+toolOutcomeOk ToolSucceeded = True
+toolOutcomeOk ToolFailed = False
+
 toolCallJSON :: ToolCall -> Value
 toolCallJSON call =
   object
@@ -387,8 +306,9 @@ conversationEntryJSON entry =
 blockquote :: String -> String
 blockquote text = unlines (map ("> " ++) (lines text))
 
--- | Shift ATX headings outside fenced code blocks. Headings at level six stay
--- at level six because Markdown has no level seven.
+-- | Shift top-level ATX headings outside fenced code blocks. Setext headings and
+-- headings nested in blockquotes or lists are left unchanged. Headings at level
+-- six stay at level six because Markdown has no level seven.
 shiftMarkdownHeadings :: Int -> String -> String
 shiftMarkdownHeadings amount = unlines . go Nothing . lines
   where
@@ -450,5 +370,3 @@ shiftLine amount line =
                     ++ after
                 else line
     _ -> line
-
-

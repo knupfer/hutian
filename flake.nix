@@ -798,6 +798,44 @@
             (contains "hutian-sandbox" probeLauncher)
           ];
 
+          transcript-configuration = check "transcript-configuration" [
+            (contains "--transcript" probeLauncher)
+            (contains "copy_transcript" probeLauncher)
+            (contains "/run/hutian-transcript" probeLauncher)
+            (contains "install -m 600" probeLauncher)
+          ];
+
+          transcript-arguments = check "transcript-arguments" [
+            ''
+              output=$(${probeLauncher} --transcript 2>&1 || true)
+              case "$output" in
+                *"hutian: --transcript needs a path"*) ;;
+                *) echo "unexpected --transcript error: $output" >&2; exit 1 ;;
+              esac
+            ''
+            ''
+              output=$(${probeLauncher} --transcript= 2>&1 || true)
+              case "$output" in
+                *"hutian: --transcript needs a path"*) ;;
+                *) echo "unexpected --transcript= error: $output" >&2; exit 1 ;;
+              esac
+            ''
+            ''
+              output=$(${probeLauncher} --transcript one --transcript two 2>&1 || true)
+              case "$output" in
+                *"hutian: --transcript was given more than once"*) ;;
+                *) echo "unexpected duplicate --transcript error: $output" >&2; exit 1 ;;
+              esac
+            ''
+            ''
+              output=$(${probeLauncher} --transcript directory/ 2>&1 || true)
+              case "$output" in
+                *"hutian: --transcript needs a file path"*) ;;
+                *) echo "unexpected directory --transcript error: $output" >&2; exit 1 ;;
+              esac
+            ''
+          ];
+
           api-key-configuration = check "api-key" (
             map (pattern: contains pattern keyCommandLauncher) [
               "hutian-llm-relay"

@@ -176,7 +176,6 @@ settingsForSocket socketPath =
     , settingSocket = Just socketPath
     , settingVerbosity = VerbosityHigh
     , settingTools = toolCatalog (defaultToolConfig {toolShell = ToolAllow})
-    , settingTranscript = Nothing
     }
 
 streamingResponse :: BS.ByteString

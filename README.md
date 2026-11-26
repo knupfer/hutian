@@ -131,12 +131,12 @@ $ nix run github:knupfer/hutian#hutian -- --transcript session
 
 This writes `session.jsonl` and `session.md` in the directory where the launcher
 started. A path ending in `.md` or `.jsonl` selects that file and writes the
-sibling with the other extension. The JSON Lines file is canonical and ends with
-a `conversation.snapshot` event containing the exact conversation state. The
+sibling with the other extension. The JSON Lines file is canonical and contains
+`conversation.snapshot` events after each completed turn. The
 Markdown file gives every prompt and block label a level-one heading and demotes
-headings inside those blocks by one so they cannot collide with the labels. It
-does not wrap content in synthetic code fences. Transcripts are copied out of
-the sandbox when it exits, including after Ctrl+C.
+top-level ATX headings inside those blocks by one so they cannot collide with
+the labels. It does not wrap content in synthetic code fences. Transcripts are
+copied out of the sandbox when it exits, including after Ctrl+C.
 
 `output.verbosity` and the approval prompt apply to the interactive shell only.
 

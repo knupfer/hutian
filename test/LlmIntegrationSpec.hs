@@ -170,7 +170,6 @@ settingsFor port =
     , settingSocket = Nothing
     , settingVerbosity = VerbosityHigh
     , settingTools = toolCatalog (defaultToolConfig {toolShell = ToolAllow})
-    , settingTranscript = Nothing
     }
 
 emptyResult :: LlmResult

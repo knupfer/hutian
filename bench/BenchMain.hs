@@ -290,7 +290,6 @@ settingsFor port =
     , settingSocket = Nothing
     , settingVerbosity = VerbosityHigh
     , settingTools = toolCatalog defaultToolConfig
-    , settingTranscript = Nothing
     }
   where
     url = LlmUrl ("http://127.0.0.1:" ++ show port ++ "/v1/chat/completions")

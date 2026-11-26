@@ -40,6 +40,17 @@ tests =
           )
           initialSession
         readIORef prompts >>= (@?= 1)
+    , testCase "an empty session is snapshotted on exit" $ do
+        snapshots <- newIORef ([] :: [Conversation])
+        runSession
+          ( noEffects
+              { sessionPrompt = \_ _ _ -> pure (LlmInput, Nothing, initialPromptBuffers)
+              , sessionSnapshot = \conversation ->
+                  modifyIORef' snapshots (++ [conversation])
+              }
+          )
+          initialSession
+        readIORef snapshots >>= (@?= [emptyConversation])
     , testCase "submitted input is remembered, clears the interrupt, and runs" $ do
         trace <- newIORef ([] :: [String])
         prompts <- newIORef (0 :: Int)
@@ -110,7 +121,7 @@ tests =
           )
           initialSession
         readIORef prompts >>= (@?= 3)
-    , testCase "the final conversation is snapshotted when input ends" $ do
+    , testCase "the conversation is snapshotted after each completed turn" $ do
         snapshots <- newIORef ([] :: [Conversation])
         prompts <- newIORef (0 :: Int)
         runSession
@@ -120,7 +131,10 @@ tests =
                   modifyIORef' prompts (+ 1)
                   pure
                     ( mode
-                    , if count == 0 then Just "ls" else Nothing
+                    , case count of
+                        0 -> Just "one"
+                        1 -> Just "two"
+                        _ -> Nothing
                     , initialPromptBuffers
                     )
               , sessionClearInterrupt = pure ()
@@ -131,7 +145,10 @@ tests =
               }
           )
           initialSession
-        readIORef snapshots >>= (@?= [[TerminalEntry "ls"]])
+        readIORef snapshots
+          >>= (@?= [ [TerminalEntry "one"]
+                   , [TerminalEntry "one", TerminalEntry "two"]
+                   ])
     , testCase "rememberInput records non-blank entries in the matching history" $ do
         let history = rememberInput TermInput "ls" (History [] [])
         history @?= History ["ls"] []

@@ -69,9 +69,9 @@ import Hutian.Tool.Config
   )
 import Hutian.Tool.Exec (ToolRuntime (..), runToolCallsWith)
 import Hutian.Tool.Summary (toolSummaryLines)
-import Hutian.Transcript
+import Hutian.Transcript (TranscriptEvent (..))
+import Hutian.Transcript.Recorder
   ( Transcript
-  , TranscriptEvent (..)
   , recordTranscriptMaybe
   )
 import Hutian.Verbosity
